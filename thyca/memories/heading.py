@@ -138,7 +138,7 @@ def validate_task_meta(
     if kind == "checkpoint" and habit is not None:
         raise ValueError("kind='checkpoint' does not take a habit label")
     if habit is not None and kind is None:
-        raise ValueError("habit requires kind")
+        raise ValueError("habit requires kind='habit'")
     if habit is not None:
         if "\n" in habit or "\r" in habit:
             raise ValueError("habit must be a single line")

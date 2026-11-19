@@ -611,8 +611,15 @@ def append_other_journal(
                     continue
                 existing_meta, existing_lines = located
                 matched_cross_day = any(
-                    incoming_norm == norm_words(full_raw)
-                    or (not content_lines and incoming_norm == norm_words(first_raw))
+                    (
+                        incoming_norm == norm_words(full_raw)
+                        and not _polarity_conflict(incoming_raw, full_raw)
+                    )
+                    or (
+                        not content_lines
+                        and incoming_norm == norm_words(first_raw)
+                        and not _polarity_conflict(incoming_raw, first_raw)
+                    )
                     for first_raw, _cand_content_raw, full_raw in _journal_entries(existing_lines)
                 )
                 if not matched_cross_day:

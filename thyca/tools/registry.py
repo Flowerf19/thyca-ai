@@ -92,13 +92,19 @@ def _validate_args(schema: dict, arguments: dict) -> str | None:
             if not isinstance(subschema, dict):
                 continue
             expected = subschema.get("type")
-            if expected is None:
+            if expected is not None:
                 # Untyped properties (some MCP schemas) skip type checks;
                 # handlers keep their domain validation.
-                continue
-            error = _type_error(name, value, expected)
-            if error is not None:
-                return error
+                error = _type_error(name, value, expected)
+                if error is not None:
+                    return error
+            allowed_enum = subschema.get("enum")
+            if isinstance(allowed_enum, list) and allowed_enum:
+                if not _matches_enum(value, allowed_enum):
+                    return (
+                        f"argument {name!r} must be one of {allowed_enum}, "
+                        f"got {value!r}"
+                    )
     return None
 
 
@@ -142,6 +148,13 @@ def _matches_type(value: object, expected: str) -> bool:
         return value is None
     # Unknown type names stay forward-compatible: never reject on them.
     return True
+
+
+def _matches_enum(value: object, allowed: list) -> bool:
+    return any(
+        value == item and (isinstance(value, bool) == isinstance(item, bool))
+        for item in allowed
+    )
 
 
 def _type_error(name: str, value: object, expected: object) -> str | None:

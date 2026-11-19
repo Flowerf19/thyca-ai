@@ -112,6 +112,17 @@ Chạy lại:
 .venv/bin/python tests/bench/memory_bench.py --suite all --json-out /tmp/memory_bench.json
 ```
 
+## Live agent scenarios (tool chọn + ghi 3 sổ)
+
+Offline bench **không** đo việc model chọn tool. Harness live dùng `ChatApp` + API đã cấu hình trong `~/.thyca/config.json` (chỉ **đọc** config), seed/ghi trong thư mục tạm:
+
+```bash
+THYCA_LIVE=1 .venv/bin/python -m tests.live.memory_agent --suite all --verbose
+THYCA_LIVE=1 .venv/bin/pytest -q -m live tests/test_live_memory_agent.py
+```
+
+Suites: `--suite write` (ghi 3 sổ) · `--suite tool_call` (có/không gọi đúng tool) · `--suite natural` (hội thoại tự nhiên không gợi ý tool) · `--suite safety` (giữ bí mật, hỏi xác nhận xóa). Dùng `--verbose` để in trace từng tool call. Không set `THYCA_LIVE` → pytest skip. Không ghi runtime vào `~/.thyca`.
+
 ## Không nằm ở đây
 
 | Thứ | Không nằm ở |

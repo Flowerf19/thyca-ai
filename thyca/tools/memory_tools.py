@@ -4,8 +4,15 @@ import json
 from contextvars import ContextVar
 from dataclasses import asdict
 
+from thyca.memories.archived import DATE_RE
 from thyca.memories.facade import MemoryFacade
-from thyca.memories.heading import validate_task_meta
+from thyca.memories.heading import (
+    TASK_ID_RE,
+    TASK_KINDS,
+    TASK_STATUSES,
+    validate_task_meta,
+)
+from thyca.memories.search import _absolute_proj
 from thyca.tools.registry import ToolRegistry, ToolSpec
 
 _chat_conversation_id: ContextVar[str | None] = ContextVar("thyca_memory_chat", default=None)
@@ -59,11 +66,19 @@ def _remember_spec(facade: MemoryFacade) -> ToolSpec:
         # Schema types arrive pre-checked by the registry (X3).
         task = args.get("task")
         is_new_task = bool(args.get("new_task"))
-        if is_new_task and task:
-            raise ValueError("new_task cannot be combined with task")
+        if is_new_task and task is not None:
+            raise ValueError(
+                "new_task cannot be combined with task; omit new_task to update an "
+                "existing task, or omit task to open a new one"
+            )
         kind = args.get("kind")
         status = args.get("status")
         cont = args.get("cont")
+        if is_new_task and cont is not None:
+            raise ValueError(
+                "cont cannot be combined with new_task; omit cont for a new task, "
+                "or pass task=<existing task_id> with cont"
+            )
         habit = args.get("habit")
         habit_explicit = args.get("habit_explicit") is True
         probe_task = "task-00000000" if is_new_task else task
@@ -122,89 +137,52 @@ def _remember_spec(facade: MemoryFacade) -> ToolSpec:
     return ToolSpec(
         name="memory_remember",
         description=(
-            "Write an L2 memory entry into today's 3-ledger daily file "
-            "(memory/YYYY-MM-DD.md). Do not use this for SOUL/USER/IDENTITY — "
-            "write/edit those files. "
-            "Before opening a new task, check <memory_tasks> or memory_tasks / "
-            "memory_search to reuse an existing task id: passing task in the "
-            "same window updates that task card in-place, or pass new_task=true "
-            "to mint a fresh task id. "
-            "Only set status='done' when finished or 'cancelled' when abandoned, "
-            "not when only your part is done — and only the bot coordinating "
-            "or opening the task (or the user) closes it; everyone else "
-            "leaves it open. kind='habit' is only for repeated "
-            "habit/preference observations (same normalized label reinforces "
-            "and dedupes automatically). kind='checkpoint' is only for a task "
-            "checkpoint recording the current state and next step. General facts "
-            "without task/kind append to today's scoped journal and skip duplicates."
+            "Save L2 memory into daily file (not SOUL/USER/IDENTITY, secrets, or chitchat). "
+            "Use memory_update to fix an existing entry by memory_id. "
+            "Check <memory_tasks>/memory_tasks before opening a task: pass task to update "
+            "in-place, or new_task=true once for a new goal. Only opener/coordinator/user "
+            "closes status. kind='habit' dedupes/reinforces (habit_explicit=true if stated "
+            "by user); kind='checkpoint' records state/next step; omit both for facts."
         ),
         parameters={
             "type": "object",
             "properties": {
-                "topic": {"type": "string"},
-                "summary": {"type": "string"},
+                "topic": {"type": "string", "description": "Short heading title."},
+                "summary": {"type": "string", "description": "Concise one-line fact or state."},
                 "content": {"type": "string"},
                 "proj": {
                     "type": "string",
-                    "description": (
-                        "Absolute path of the project root this memory belongs to, "
-                        "e.g. /home/flowerf/Projects/thyca-ai or /home/flowerf/.thyca. "
-                        "Use the real repo/workdir root, never a short name or "
-                        "relative path. Omit for general or user-level memories "
-                        "that belong to no project."
-                    ),
+                    "description": "Absolute project root path, or omit if general.",
                 },
                 "task": {
                     "type": "string",
-                    "description": (
-                        "Existing task id (task-<8 hex>) to continue. "
-                        "Cannot be combined with new_task."
-                    ),
+                    "description": "Existing task id (task-<8 hex>); incompatible with new_task.",
                 },
                 "new_task": {
                     "type": "boolean",
-                    "description": (
-                        "Mint a fresh system task id for a new goal. "
-                        "Cannot be combined with task."
-                    ),
+                    "description": "Mint new task id; incompatible with task/cont.",
                 },
                 "cont": {
                     "type": "string",
-                    "description": (
-                        "Previous memory id in the same task. "
-                        "Requires task."
-                    ),
+                    "description": "Previous memory_id in same task (requires task).",
                 },
                 "kind": {
                     "type": "string",
-                    "description": (
-                        "Memory kind: 'habit' for a repeated habit/preference "
-                        "observation, or 'checkpoint' for a task checkpoint "
-                        "(requires task or new_task)."
-                    ),
+                    "enum": list(TASK_KINDS),
+                    "description": "'habit' (needs habit) or 'checkpoint' (needs task/new_task).",
                 },
                 "status": {
                     "type": "string",
-                    "description": (
-                        "Task status 'open', 'done', or 'cancelled'. Requires task. "
-                        "Set 'done' when finished or 'cancelled' when abandoned, "
-                        "only if you coordinate or opened the task (or the user asks)."
-                    ),
+                    "enum": list(TASK_STATUSES),
+                    "description": "Task status (requires task/new_task); close only if authorized.",
                 },
                 "habit": {
                     "type": "string",
-                    "description": (
-                        "Short habit label. Required with kind='habit', "
-                        "forbidden without kind."
-                    ),
+                    "description": "Short habit label (required with kind='habit').",
                 },
                 "habit_explicit": {
                     "type": "boolean",
-                    "description": (
-                        "True only when the user explicitly states a lasting "
-                        "habit/preference ('I usually/always/like...'), not "
-                        "inferred from events. Requires kind='habit'."
-                    ),
+                    "description": "True only when explicitly stated by user (with kind='habit').",
                 },
             },
             "required": ["topic", "summary"],
@@ -218,15 +196,37 @@ def _remember_spec(facade: MemoryFacade) -> ToolSpec:
 
 def _search_spec(facade: MemoryFacade) -> ToolSpec:
     async def handler(args: dict) -> str:
+        query = args["query"]
+        if not query.strip():
+            raise ValueError("query must not be blank; pass 2-6 concise keywords")
+        timeline_day = args.get("timeline_day")
+        if timeline_day is not None and DATE_RE.fullmatch(timeline_day) is None:
+            raise ValueError(
+                f"timeline_day must be YYYY-MM-DD (closed past day), got {timeline_day!r}"
+            )
+        task = args.get("task")
+        if task is not None and TASK_ID_RE.fullmatch(task) is None:
+            raise ValueError(
+                f"task must match task-<8 hex> (check memory_tasks for ids), got {task!r}"
+            )
+        proj = args.get("proj")
+        if proj is not None:
+            try:
+                proj = _absolute_proj(proj)
+            except ValueError as exc:
+                raise ValueError(
+                    "proj must be an absolute project root path (or omit proj), "
+                    f"got {proj!r}"
+                ) from exc
         # Proactive tool read: the caller may reuse its own memories
         # across origin windows (proactive-only owner exemption).
         result = facade.search(
-            args["query"],
+            query,
             limit=_limit(args),
-            timeline_day=args.get("timeline_day"),
-            proj=args.get("proj"),
+            timeline_day=timeline_day,
+            proj=proj,
             chat=args.get("chat"),
-            task=args.get("task"),
+            task=task,
             kind=args.get("kind"),
             status=args.get("status"),
             allow_own_cross_window=True,
@@ -235,36 +235,26 @@ def _search_spec(facade: MemoryFacade) -> ToolSpec:
 
     return ToolSpec(
         name="memory_search",
-        description="Lexical search (FTS + trigram) over archived memory leaves.",
+        description=(
+            "Lexical search (FTS + trigram) over archived closed days and profile files "
+            "(today is in <today>, or read <today_elsewhere> via memory_get). "
+            "Pass 2-6 concise keywords, not full sentences. If has_more=true or snippet "
+            "is truncated, call memory_get(memory_id=...). Retry once or admit miss if empty."
+        ),
         parameters={
             "type": "object",
             "properties": {
-                "query": {"type": "string"},
+                "query": {
+                    "type": "string",
+                    "description": "2-6 concise keywords or entity names (not full questions).",
+                },
                 "limit": {"type": "integer"},
-                "timeline_day": {"type": "string"},
-                "proj": {
-                    "type": "string",
-                    "description": (
-                        "Filter to leaves saved with this exact project root path "
-                        "(absolute path, as passed to memory_remember's proj)."
-                    ),
-                },
-                "chat": {
-                    "type": "string",
-                    "description": "Filter to leaves saved during this chat session id.",
-                },
-                "task": {
-                    "type": "string",
-                    "description": "Filter to leaves in this task (task-<8 hex>).",
-                },
-                "kind": {
-                    "type": "string",
-                    "description": "Filter to leaves of this kind ('habit', 'checkpoint').",
-                },
-                "status": {
-                    "type": "string",
-                    "description": "Filter to leaves with this task status ('open', 'done', 'cancelled').",
-                },
+                "timeline_day": {"type": "string", "description": "Closed day YYYY-MM-DD."},
+                "proj": {"type": "string", "description": "Exact absolute project root filter."},
+                "chat": {"type": "string"},
+                "task": {"type": "string", "description": "Filter by task-<8 hex>."},
+                "kind": {"type": "string", "enum": list(TASK_KINDS)},
+                "status": {"type": "string", "enum": list(TASK_STATUSES)},
             },
             "required": ["query"],
             "additionalProperties": False,
@@ -282,7 +272,7 @@ def _recent_spec(facade: MemoryFacade) -> ToolSpec:
 
     return ToolSpec(
         name="memory_recent",
-        description="Most recently updated archived memory hits.",
+        description="Most recently updated archived hits (today is in <today>/<today_elsewhere>).",
         parameters={
             "type": "object",
             "properties": {"limit": {"type": "integer"}},
@@ -304,7 +294,10 @@ def _get_spec(facade: MemoryFacade) -> ToolSpec:
 
     return ToolSpec(
         name="memory_get",
-        description="Read a memory leaf by exactly one of chunk_id, memory_id.",
+        description=(
+            "Read full entry (memory_id) or one leaf (chunk_id); pass exactly one. "
+            "Use for has_more=true hits or <today_elsewhere>/<memory_tasks> ids."
+        ),
         parameters={
             "type": "object",
             "properties": {
@@ -326,14 +319,12 @@ def _forget_spec(facade: MemoryFacade) -> ToolSpec:
     return ToolSpec(
         name="memory_forget",
         description=(
-            "Delete one L2 memory leaf (heading+bullet) from its daily file by memory_id. "
-            "Irreversible — confirm with the user before calling."
+            "Delete one L2 memory entry by memory_id. Irreversible — require explicit "
+            "user confirmation naming the target before calling."
         ),
         parameters={
             "type": "object",
-            "properties": {
-                "memory_id": {"type": "string"},
-            },
+            "properties": {"memory_id": {"type": "string"}},
             "required": ["memory_id"],
             "additionalProperties": False,
         },
@@ -354,12 +345,12 @@ def _reinforce_spec(facade: MemoryFacade) -> ToolSpec:
 
     return ToolSpec(
         name="memory_reinforce",
-        description="Extend a memory leaf's expiry (optionally raise importance) by memory_id.",
+        description="Extend expiry (optionally raise importance 1..5: 3d/7d/30d/90d/180d) by memory_id.",
         parameters={
             "type": "object",
             "properties": {
                 "memory_id": {"type": "string"},
-                "importance": {"type": "integer"},
+                "importance": {"type": "integer", "minimum": 1, "maximum": 5},
             },
             "required": ["memory_id"],
             "additionalProperties": False,
@@ -386,26 +377,15 @@ def _tasks_spec(facade: MemoryFacade) -> ToolSpec:
     return ToolSpec(
         name="memory_tasks",
         description=(
-            "Browse the task catalog by status and/or active date range, "
-            "instead of keyword search for questions like "
-            "'what tasks were open last week'. Only tasks with entries "
-            "you may read appear."
+            "List task catalog (archived + today) by status/date range; returns task_id "
+            "and latest_memory_id to continue/close without duplicates."
         ),
         parameters={
             "type": "object",
             "properties": {
-                "status": {
-                    "type": "string",
-                    "description": "Filter to tasks with this status ('open', 'done', 'cancelled').",
-                },
-                "date_from": {
-                    "type": "string",
-                    "description": "Only tasks active on or after YYYY-MM-DD (inclusive).",
-                },
-                "date_to": {
-                    "type": "string",
-                    "description": "Only tasks active on or before YYYY-MM-DD (inclusive).",
-                },
+                "status": {"type": "string", "enum": list(TASK_STATUSES)},
+                "date_from": {"type": "string", "description": "Active >= YYYY-MM-DD."},
+                "date_to": {"type": "string", "description": "Active <= YYYY-MM-DD."},
                 "limit": {"type": "integer"},
             },
             "additionalProperties": False,
@@ -439,9 +419,9 @@ def _update_spec(facade: MemoryFacade) -> ToolSpec:
     return ToolSpec(
         name="memory_update",
         description=(
-            "Edit one L2 memory leaf's title and/or body by memory_id. "
-            "The leaf's id stays stable; the search index is rebuilt after the edit. "
-            "content requires summary; blank titles/summaries are rejected."
+            "Edit an existing L2 entry in-place by memory_id (avoids duplicates). "
+            "Read via memory_get first if not in <today>; omit unchanged fields; "
+            "content requires summary; blank titles/summaries rejected."
         ),
         parameters={
             "type": "object",
@@ -450,50 +430,13 @@ def _update_spec(facade: MemoryFacade) -> ToolSpec:
                 "topic": {"type": "string"},
                 "summary": {"type": "string"},
                 "content": {"type": "string"},
-                "proj": {
-                    "type": "string",
-                    "description": (
-                        "New project root path (absolute) for this memory. "
-                        "Omit to keep the current value."
-                    ),
-                },
-                "task": {
-                    "type": "string",
-                    "description": "Task id (task-<8 hex>). Omit to keep the current value.",
-                },
-                "cont": {
-                    "type": "string",
-                    "description": (
-                        "Previous memory id in the same task. "
-                        "Omit to keep the current value."
-                    ),
-                },
-                "kind": {
-                    "type": "string",
-                    "description": "Memory kind ('habit', 'checkpoint'). Omit to keep.",
-                },
-                "status": {
-                    "type": "string",
-                    "description": (
-                        "Task status 'open', 'done', or 'cancelled'. Set 'done' when "
-                        "finished or 'cancelled' when abandoned, only by coordinator, "
-                        "opener, or user. Omit to keep."
-                    ),
-                },
-                "habit": {
-                    "type": "string",
-                    "description": (
-                        "Short habit label (required with kind='habit'). "
-                        "Omit to keep."
-                    ),
-                },
-                "habit_explicit": {
-                    "type": "boolean",
-                    "description": (
-                        "True marks a user-stated habit (requires kind='habit'). "
-                        "Omit to keep."
-                    ),
-                },
+                "proj": {"type": "string", "description": "Absolute project root."},
+                "task": {"type": "string", "description": "Task id (task-<8 hex>)."},
+                "cont": {"type": "string", "description": "Previous memory_id in task."},
+                "kind": {"type": "string", "enum": list(TASK_KINDS)},
+                "status": {"type": "string", "enum": list(TASK_STATUSES)},
+                "habit": {"type": "string"},
+                "habit_explicit": {"type": "boolean"},
             },
             "required": ["memory_id"],
             "additionalProperties": False,

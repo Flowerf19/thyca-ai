@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 import pytest
 
 from thyca.core.protocol import ToolCall
+from thyca.memories.archived import SCHEMA_VERSION
 from thyca.memories.facade import MemoryFacade
 from thyca.memories.heading import (
     parse_heading,
@@ -17,7 +18,11 @@ from thyca.memories.heading import (
 )
 from thyca.memories.identity import bind_bot_id, reset_bot_id
 from thyca.tools.gateway import ToolGateway
-from thyca.tools.memory_tools import register_memory_tools
+from thyca.tools.memory_tools import (
+    bind_chat_conversation,
+    register_memory_tools,
+    reset_chat_conversation,
+)
 from thyca.tools.registry import ToolRegistry
 from thyca.tools.task_store import TaskStore
 
@@ -369,7 +374,7 @@ def test_migration_v7_to_v8_keeps_data_and_loads_new_fields(tmp_path) -> None:
     db = sqlite3.connect(tmp_path / "memory.sqlite")
     try:
         assert db.execute(
-            "SELECT value FROM meta WHERE key='schema_version'").fetchone()[0] == "9"
+            "SELECT value FROM meta WHERE key='schema_version'").fetchone()[0] == SCHEMA_VERSION
         cols = {row[1] for row in db.execute("PRAGMA table_info(chunks)")}
         assert {"task", "cont", "kind", "status", "habit"} <= cols
         row = db.execute(
@@ -433,7 +438,7 @@ def test_migration_v7_with_edges_drops_graph_table(tmp_path) -> None:
     db = sqlite3.connect(tmp_path / "memory.sqlite")
     try:
         assert db.execute(
-            "SELECT value FROM meta WHERE key='schema_version'").fetchone()[0] == "9"
+            "SELECT value FROM meta WHERE key='schema_version'").fetchone()[0] == SCHEMA_VERSION
         tables = {row[0] for row in db.execute(
             "SELECT name FROM sqlite_master WHERE type='table'")}
         assert "related_edges" not in tables
@@ -455,7 +460,7 @@ def test_migration_v6_to_v8_gains_bots_and_task_columns(tmp_path) -> None:
     db = sqlite3.connect(tmp_path / "memory.sqlite")
     try:
         assert db.execute(
-            "SELECT value FROM meta WHERE key='schema_version'").fetchone()[0] == "9"
+            "SELECT value FROM meta WHERE key='schema_version'").fetchone()[0] == SCHEMA_VERSION
         cols = {row[1] for row in db.execute("PRAGMA table_info(chunks)")}
         assert {"bots", "task", "cont", "kind", "status", "habit"} <= cols
         # Phase 1B: landing on v8 ends without the graph table (it never
@@ -522,7 +527,7 @@ def test_migration_v8_to_v9_renames_id_and_keeps_usage(tmp_path) -> None:
     db = sqlite3.connect(db_path)
     try:
         assert db.execute(
-            "SELECT value FROM meta WHERE key='schema_version'").fetchone()[0] == "9"
+            "SELECT value FROM meta WHERE key='schema_version'").fetchone()[0] == SCHEMA_VERSION
         cols = {row[1] for row in db.execute("PRAGMA table_info(chunks)")}
         assert "memory_id" in cols and "memory_title" in cols
         assert "session_id" not in cols and "session_title" not in cols
@@ -674,24 +679,47 @@ async def test_tool_checkpoint_contract(tmp_path) -> None:
     async def submit(name, args):
         return await gateway.submit(ToolCall(id=name, name=name, arguments=args))
 
-    created_result = await submit("memory_remember", {
-        "topic": "goal", "summary": "state one; next two",
-        "new_task": True, "kind": "checkpoint"})
-    assert not created_result.is_error, created_result.content
-    created = json.loads(created_result.content)
-    second_result = await submit("memory_remember", {
-        "topic": "goal", "summary": "state two; next three",
-        "task": created["task_id"], "cont": created["memory_id"],
-        "kind": "checkpoint"})
-    assert not second_result.is_error, second_result.content
-    second = json.loads(second_result.content)
+    tok_a = bind_chat_conversation("room-a")
+    try:
+        created_result = await submit("memory_remember", {
+            "topic": "goal", "summary": "state one; next two",
+            "new_task": True, "kind": "checkpoint"})
+        assert not created_result.is_error, created_result.content
+        created = json.loads(created_result.content)
+        second_result = await submit("memory_remember", {
+            "topic": "goal", "summary": "state two; next three",
+            "task": created["task_id"], "cont": created["memory_id"],
+            "kind": "checkpoint"})
+        assert not second_result.is_error, second_result.content
+        second = json.loads(second_result.content)
+        assert second["memory_id"] == created["memory_id"]
+    finally:
+        reset_chat_conversation(tok_a)
     got = await submit("memory_get", {"memory_id": second["memory_id"]})
     assert not got.is_error
     assert "state two; next three" in got.content
     catalog = json.loads((await submit("memory_tasks", {})).content)
     entry = next(t for t in catalog["tasks"] if t["task_id"] == created["task_id"])
-    assert entry["entry_count"] == 2
+    assert entry["entry_count"] == 1
     assert entry["latest_memory_id"] == second["memory_id"]
+
+    # Cross-window checkpoint preserves isolation and appends a 2nd linked entry.
+    tok_b = bind_chat_conversation("room-b")
+    try:
+        cross_result = await submit("memory_remember", {
+            "topic": "goal", "summary": "dm secret checkpoint",
+            "task": created["task_id"], "cont": created["memory_id"],
+            "kind": "checkpoint"})
+        assert not cross_result.is_error, cross_result.content
+        cross = json.loads(cross_result.content)
+        assert cross["memory_id"] != created["memory_id"]
+    finally:
+        reset_chat_conversation(tok_b)
+    catalog2 = json.loads((await submit("memory_tasks", {})).content)
+    entry2 = next(t for t in catalog2["tasks"] if t["task_id"] == created["task_id"])
+    assert entry2["entry_count"] == 2
+    assert "dm secret checkpoint" not in (await submit("memory_get", {"memory_id": created["memory_id"]})).content
+
     no_task = await submit("memory_remember", {
         "topic": "orphan", "summary": "state", "kind": "checkpoint"})
     assert no_task.is_error
@@ -848,3 +876,158 @@ def test_append_other_journal_groups_scope_and_skips_duplicates(tmp_path) -> Non
     chunks = Chunker().chunk_markdown(path, day_text, source_kind="daily", timeline_day="2026-09-02")
     room_a_chunks = [c for c in chunks if c.memory_id == sid1]
     assert len(room_a_chunks) == 1
+
+
+def test_migration_v9_to_v10_keeps_usage_and_indexes_title_and_d_stroke(tmp_path) -> None:
+    from pathlib import Path as _Path
+
+    (tmp_path / "memory").mkdir(parents=True)
+    day_file = tmp_path / "memory" / "2026-09-01.md"
+    day_file.write_text(
+        "# 2026-09-01\n"
+        '## 08:00 — BazziteTitle <!-- thyca {"id":"deadbeef","imp":5} -->\n'
+        "- Du lịch Đà Nẵng cuối tuần\n",
+        encoding="utf-8",
+    )
+    st = day_file.stat()
+    db_path = tmp_path / "memory.sqlite"
+    db = sqlite3.connect(db_path)
+    base_sql = (_Path(__file__).parent.parent / "thyca" / "memories" / "schema.sql").read_text(
+        encoding="utf-8"
+    )
+    v9_sql = base_sql.replace(
+        "CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(\n"
+        "  text_raw,\n"
+        "  memory_title,\n"
+        "  text_norm,\n",
+        "CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(\n"
+        "  text_raw,\n",
+    ).replace(
+        "INSERT INTO chunks_fts(rowid, text_raw, memory_title, text_norm)\n"
+        "  VALUES (new.row_id, new.text_raw, new.memory_title, new.text_norm);",
+        "INSERT INTO chunks_fts(rowid, text_raw) VALUES (new.row_id, new.text_raw);",
+    ).replace(
+        "INSERT INTO chunks_fts(chunks_fts, rowid, text_raw, memory_title, text_norm)\n"
+        "  VALUES ('delete', old.row_id, old.text_raw, old.memory_title, old.text_norm);",
+        "INSERT INTO chunks_fts(chunks_fts, rowid, text_raw) VALUES ('delete', old.row_id, old.text_raw);",
+    )
+    db.executescript(v9_sql)
+    db.execute("INSERT INTO meta VALUES ('schema_version', '9')")
+    db.execute("INSERT INTO meta VALUES ('norm_version', '2')")
+    db.execute(
+        "INSERT INTO source_files VALUES (?, 'daily', '2026-09-01', ?, ?)",
+        (str(day_file), st.st_mtime_ns, st.st_size),
+    )
+    db.execute(
+        """INSERT INTO chunks(chunk_id, path, source_kind, timeline_day, memory_id,
+           memory_title, heading_raw, leaf_ord, line_start, line_end,
+           text_raw, text_norm, content_hash, expires_at)
+           VALUES ('2026-09-01#deadbeef#1', ?, 'daily', '2026-09-01',
+           '2026-09-01#deadbeef', 'BazziteTitle', '## 08:00 — BazziteTitle',
+           1, 2, 3, '- Du lịch Đà Nẵng cuối tuần', 'du lich da nang cuoi tuan',
+           'hash', NULL)""",
+        (str(day_file),),
+    )
+    db.execute(
+        "INSERT INTO leaf_gets VALUES ('2026-09-01#deadbeef#1', '2026-09-01#deadbeef', 4, '2026-09-02T00:00:00Z')"
+    )
+    db.execute(
+        "INSERT INTO leaf_searches VALUES ('2026-09-01#deadbeef#1', '2026-09-01#deadbeef', 7, '2026-09-02T00:00:00Z')"
+    )
+    db.commit()
+    db.close()
+
+    facade = MemoryFacade(tmp_path, timezone_name=TZ)
+    db = sqlite3.connect(db_path)
+    try:
+        assert db.execute(
+            "SELECT value FROM meta WHERE key='schema_version'"
+        ).fetchone()[0] == SCHEMA_VERSION
+        assert db.execute(
+            "SELECT get_count FROM leaf_gets WHERE chunk_id='2026-09-01#deadbeef#1'"
+        ).fetchone()[0] == 4
+        assert db.execute(
+            "SELECT search_count FROM leaf_searches WHERE chunk_id='2026-09-01#deadbeef#1'"
+        ).fetchone()[0] == 7
+    finally:
+        db.close()
+    assert facade.archive.fts_hits("BazziteTitle", None, at(5), 5)
+    assert facade.archive.fts_hits("da", None, at(5), 5)
+
+
+def test_upsert_task_card_does_not_overwrite_different_task_via_cont(tmp_path) -> None:
+    facade = MemoryFacade(tmp_path, timezone_name=TZ)
+    tid_a = facade.new_task_id()
+    tid_b = facade.new_task_id()
+    _sid_a = facade.upsert_task_card("Task A", "Summary A", task=tid_a, chat="room-x", now=at(1))
+    sid_b = facade.upsert_task_card("Task B", "Summary B", task=tid_b, chat="room-x", now=at(1))
+
+    sid_new_a = facade.upsert_task_card(
+        "Work on A",
+        "Updated A",
+        task=tid_a,
+        chat="room-x",
+        target_memory_id=sid_b,
+        now=at(1),
+    )
+    assert sid_new_a != sid_b
+    day_text = (tmp_path / "memory" / "2026-09-01.md").read_text(encoding="utf-8")
+    assert "Summary B" in day_text
+    assert "Updated A" in day_text
+    by_tid = {t["task_id"]: t for t in facade.tasks(now=at(5))["tasks"]}
+    assert set(by_tid) == {tid_a, tid_b}
+    assert by_tid[tid_b]["summary"] == "Summary B"
+
+
+def test_append_other_journal_preserves_updates_and_dedupes_multiline_and_cross_day(tmp_path) -> None:
+    facade = MemoryFacade(tmp_path, timezone_name=TZ)
+    day1 = at(1)
+    day2 = at(2)
+    # FP1: version update must not be dropped.
+    facade.append_other_journal("Version", "Project thyca version is 0.88.0.dev2 on branch main", chat="c1", now=day1)
+    facade.append_other_journal("Version", "Project thyca version is 0.88.0.dev3 on branch main", chat="c1", now=day1)
+    # FP2: reversed direction must not be dropped.
+    facade.append_other_journal("DB", "User switched database from PostgreSQL to SQLite", chat="c2", now=day1)
+    facade.append_other_journal("DB", "User switched database from SQLite to PostgreSQL", chat="c2", now=day1)
+    # FP3: negation vs affirmative must not be dropped.
+    facade.append_other_journal("Docker", "User is not using docker for local dev", chat="c3", now=day1)
+    facade.append_other_journal("Docker", "using docker for local dev", chat="c3", now=day1)
+    # FP4: shared summary with short differing content lines must not be dropped.
+    facade.append_other_journal("Style", "Team coding standards for Python", content="Use ruff", chat="c6", now=day1)
+    facade.append_other_journal("Style", "Team coding standards for Python", content="Use uv", chat="c6", now=day1)
+    # FP5: single-line summary followed by same summary + added content line must not be dropped.
+    facade.append_other_journal("Deploy", "Backend deployment notes", chat="c7", now=day1)
+    facade.append_other_journal("Deploy", "Backend deployment notes", content="Use systemd", chat="c7", now=day1)
+    # FN1: multiline slightly reworded IS deduped.
+    facade.append_other_journal(
+        "Stack",
+        "Backend architecture choices",
+        content="Line one uses FastAPI\nLine two uses SQLite WAL\nLine three deploys on Linux",
+        chat="c4",
+        now=day1,
+    )
+    facade.append_other_journal(
+        "Stack",
+        "Backend architecture choices",
+        content="Line one runs FastAPI\nLine two runs SQLite WAL\nLine three runs on Linux",
+        chat="c4",
+        now=day1,
+    )
+    # FN2: cross-day exact duplicate reinforces day1 even when day2 already has a journal target.
+    sid_os_1 = facade.append_other_journal("OS", "User runs Fedora Bazzite Linux", chat="c5", now=day1)
+    facade.append_other_journal("Tools", "Repo uses uv", chat="c5", now=day2)
+    sid_os_2 = facade.append_other_journal("OS", "User runs Fedora Bazzite Linux", chat="c5", now=day2)
+
+    d1_text = (tmp_path / "memory" / "2026-09-01.md").read_text(encoding="utf-8")
+    d2_text = (tmp_path / "memory" / "2026-09-02.md").read_text(encoding="utf-8")
+    assert "0.88.0.dev2" in d1_text and "0.88.0.dev3" in d1_text
+    assert "from PostgreSQL to SQLite" in d1_text and "from SQLite to PostgreSQL" in d1_text
+    assert "User is not using docker for local dev" in d1_text
+    assert sum("using docker for local dev" in ln for ln in d1_text.splitlines()) == 2
+    assert "Use ruff" in d1_text and "Use uv" in d1_text
+    assert "Use systemd" in d1_text
+    assert "Line one uses FastAPI" in d1_text
+    assert "Line one runs FastAPI" not in d1_text
+    assert sid_os_2 == sid_os_1
+    assert "Repo uses uv" in d2_text
+    assert "Fedora Bazzite Linux" not in d2_text

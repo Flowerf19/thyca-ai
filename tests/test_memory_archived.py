@@ -453,3 +453,46 @@ def test_identity_md_is_indexed_like_other_canonicals(tmp_path: Path) -> None:
     archived.reindex(at("2026-08-17"))
     found = facade.search("uniqueword-identity-xyz", now=at("2026-08-17"))
     assert [hit.memory_id for hit in found.hits] == ["canonical#identity"]
+
+
+def test_search_matches_heading_only_and_vietnamese_d_stroke(tmp_path: Path) -> None:
+    (tmp_path / "memory").mkdir()
+    facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
+    past = at("2026-08-15")
+    now = at("2026-08-17")
+    sid_title = facade.remember("BazziteUniqueTitle", "Daily driver OS on laptop", now=past)
+    sid_dn = facade.remember("Trip", "Du lịch Đà Nẵng cuối tuần", now=past)
+    facade.archive.reindex(now)
+
+    res_title = facade.search("BazziteUniqueTitle", now=now)
+    assert [hit.memory_id for hit in res_title.hits] == [sid_title]
+    assert facade.archive.fts_hits("BazziteUniqueTitle", None, now, 5)
+
+    fts_da = facade.archive.fts_hits("da", None, now, 5)
+    assert [hit.memory_id for hit in fts_da] == [sid_dn]
+    fts_da_nang = facade.archive.fts_hits("da nang", None, now, 5)
+    assert [hit.memory_id for hit in fts_da_nang] == [sid_dn]
+
+
+def test_facade_auto_reindexes_on_forward_day_rollover(tmp_path: Path) -> None:
+    from thyca.memories.habits import habit_observations
+
+    day1 = at("2026-08-15")
+    day2 = at("2026-08-16")
+    facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
+    sid = facade.remember("Rollover", "RolloverMarkerXYZ yesterday", now=day1)
+    assert facade.search("RolloverMarkerXYZ", now=day1).hits == []
+    # Crossing into day2 auto-reindexes day1 without manual reindex().
+    found = facade.search("RolloverMarkerXYZ", now=day2)
+    assert [hit.memory_id for hit in found.hits] == [sid]
+
+    facade2 = MemoryFacade(tmp_path / "h2", timezone_name="Asia/Ho_Chi_Minh")
+    h_sid = facade2.remember(
+        "Morning tea",
+        "Uong tra moi sang",
+        kind="habit",
+        habit="morning tea",
+        now=day1,
+    )
+    obs = habit_observations(facade2, now=day2)
+    assert [item["memory_id"] for item in obs] == [h_sid]

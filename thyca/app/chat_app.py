@@ -25,6 +25,7 @@ from thyca.core.protocol import Message
 from thyca.llms.llm_base import LLMError
 from thyca.llms.llm_factory import ConnectFactory
 from thyca.memories.active import ActiveMemory, ActiveSnapshot
+from thyca.memories.facade import MemoryFacade
 from thyca.conversations.runtime import ConversationRuntime, ConversationBusy, ConversationManager
 from thyca.conversations.runtime.models import is_blank
 from thyca.conversations.runtime.store import ConversationStore
@@ -107,17 +108,21 @@ class ChatApp:
             limits=self._cfg.effective_limits(),
             timezone_name=cfg.timeline.timezone,
         )
+        self._memory_facade = MemoryFacade(root, timezone_name=cfg.timeline.timezone)
         self._memory = ActiveMemory(
             root,
             tail_kb=self._cfg.effective_limits().hotTailKB,
             timezone_name=cfg.timeline.timezone,
+            on_day_close=self._on_day_close,
         )
         self.skills_root = self._memory.skills_store.root
         self._zone = ZoneInfo(cfg.timeline.timezone)
         self._state = self._memory.open_session(datetime.now(self._zone))
         self._tasks = TaskStore()
         self._background = BackgroundProcs()
-        self._registry = build_tool_registry(root, cfg, self._background)
+        self._registry = build_tool_registry(
+            root, cfg, self._background, facade=self._memory_facade
+        )
         self._gateway = build_tool_gateway(
             self._registry,
             self._tasks,
@@ -265,6 +270,7 @@ class ChatApp:
             submit=self._submit,
             scheduled_turn=self.scheduled_turn,
             injected_connect=self._injected_connect,
+            facade=self._memory_facade,
         ))
         from thyca.app.conversation_admin import ConversationAdminDeps, ConversationAdminService
 
@@ -508,6 +514,12 @@ class ChatApp:
     def job_facade(self):
         """Memory facade for the sidecar job (extract/candidates/promote)."""
         return self._background_jobs.job_facade()
+
+    def _on_day_close(self, _closed: str) -> None:
+        try:
+            self._memory_facade._ensure_rollover_indexed()
+        except Exception:
+            pass
 
     def sweep_idle_conversations(self, idle_s: int = 900) -> dict:
         """Sweep idle canonical bot timelines once, under their workspace lease."""

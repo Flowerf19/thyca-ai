@@ -1110,3 +1110,98 @@ def test_idle_sweep_does_not_extract_from_root_or_group_room(tmp_path: Path) -> 
         assert app._conversations.store.load(group).messages == before
     finally:
         app.shutdown()
+
+
+def test_idle_sweep_skips_unchanged_idle_conversation_until_new_turn(tmp_path: Path) -> None:
+    import json as _json
+
+    class CountingLLM:
+        def __init__(self) -> None:
+            self.extract_calls = 0
+            self.turn_calls = 0
+
+        async def chat(self, messages, tools=None, **kwargs):
+            last = messages[-1].content if messages else ""
+            if "You extract durable memories from a chat transcript" in (last or ""):
+                self.extract_calls += 1
+                return ChatReply(content=_json.dumps([
+                    {"topic": "Env", "summary": f"Fact #{self.extract_calls}"}
+                ]))
+            self.turn_calls += 1
+            return ChatReply(content=f"reply #{self.turn_calls}")
+
+    llm = CountingLLM()
+    app = _chat(tmp_path, llm)
+    try:
+        dm_id = app.bot_dm("thyca")["conversation_id"]
+        app.turn(dm_id, "First message")
+        r1 = app.sweep_idle_conversations(idle_s=0)
+        r2 = app.sweep_idle_conversations(idle_s=0)
+        r3 = app.sweep_idle_conversations(idle_s=0)
+        assert len(r1["bots"]) == 1
+        assert r2["bots"] == {}
+        assert r3["bots"] == {}
+        assert llm.extract_calls == 1
+
+        # New turn updates the conversation watermark -> next sweep runs once.
+        app.turn(dm_id, "Second message")
+        r4 = app.sweep_idle_conversations(idle_s=0)
+        r5 = app.sweep_idle_conversations(idle_s=0)
+        assert len(r4["bots"]) == 1
+        assert r5["bots"] == {}
+        assert llm.extract_calls == 2
+    finally:
+        app.shutdown()
+
+
+def test_idle_sweep_retries_after_error_then_skips_unchanged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import json as _json
+    from thyca.memories import jobs
+
+    class ExtractorLLM:
+        def __init__(self) -> None:
+            self.extract_calls = 0
+
+        async def chat(self, messages, tools=None, **kwargs):
+            last = messages[-1].content if messages else ""
+            if "You extract durable memories from a chat transcript" in (last or ""):
+                self.extract_calls += 1
+                return ChatReply(content=_json.dumps([
+                    {"topic": "Env", "summary": "Recovered fact"}
+                ]))
+            return ChatReply(content="ok")
+
+    real_apply = jobs.apply_extracted
+    apply_attempts = 0
+
+    def flaky_apply(*args, **kwargs):
+        nonlocal apply_attempts
+        apply_attempts += 1
+        if apply_attempts == 1:
+            raise RuntimeError("boom")
+        return real_apply(*args, **kwargs)
+
+    monkeypatch.setattr(jobs, "apply_extracted", flaky_apply)
+
+    llm = ExtractorLLM()
+    app = _chat(tmp_path, llm)
+    try:
+        dm_id = app.bot_dm("thyca")["conversation_id"]
+        app.turn(dm_id, "Hello")
+        r1 = app.sweep_idle_conversations(idle_s=0)
+        assert len(r1["bots"]) == 1
+        assert next(iter(r1["bots"].values()))["error"] == "RuntimeError"
+        assert llm.extract_calls == 1
+
+        r2 = app.sweep_idle_conversations(idle_s=0)
+        assert len(r2["bots"]) == 1
+        assert "error" not in next(iter(r2["bots"].values()))
+        assert llm.extract_calls == 2
+
+        r3 = app.sweep_idle_conversations(idle_s=0)
+        assert r3["bots"] == {}
+        assert llm.extract_calls == 2
+    finally:
+        app.shutdown()

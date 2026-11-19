@@ -190,6 +190,20 @@ async def extract_from_transcript(connect, model: str, transcript: str,
     return parse_extraction(getattr(reply, "content", None) or "")
 
 
+def _strip_code_fence(text: str) -> str:
+    """Strip an outer Markdown code fence (e.g. ```json ... ```) if present."""
+    raw = text.strip()
+    if not raw.startswith("```"):
+        return raw
+    _, sep, rest = raw.partition("\n")
+    if not sep:
+        return raw
+    body = rest.strip()
+    if body.endswith("```"):
+        body = body.rsplit("```", 1)[0].strip()
+    return body
+
+
 def parse_extraction(text: str) -> list[ExtractedMemory]:
     """Parse the extractor's JSON array; invalid items are dropped.
 
@@ -201,7 +215,7 @@ def parse_extraction(text: str) -> list[ExtractedMemory]:
     from thyca.memories.heading import validate_task_meta
 
     try:
-        data = json.loads(text.strip())
+        data = json.loads(_strip_code_fence(text))
     except ValueError:
         return []
     if not isinstance(data, list):

@@ -218,3 +218,59 @@ async def test_remember_injects_bound_chat_and_update_rejects_chat(tmp_path) -> 
     )
     assert refused.is_error
     assert "unexpected argument" in refused.content
+
+
+@pytest.mark.asyncio
+async def test_memory_remember_routes_through_ledgers_and_prevents_duplicates(tmp_path) -> None:
+    from thyca.memories import jobs
+    from thyca.memories.heading import parse_heading
+    from thyca.memories.identity import bind_bot_id, reset_bot_id
+    from thyca.tools.memory_tools import bind_chat_conversation, reset_chat_conversation
+
+    facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
+    registry = ToolRegistry()
+    register_memory_tools(registry, facade)
+    gateway = ToolGateway(registry, TaskStore())
+
+    bot_tok = bind_bot_id("thyca")
+    chat_tok = bind_chat_conversation("dm-thyca")
+    try:
+        h1 = await gateway.submit(ToolCall(
+            id="h1", name="memory_remember",
+            arguments={"topic": "Tea", "summary": "Uong tra sang", "kind": "habit", "habit": "uong tra sang"},
+        ))
+        h2 = await gateway.submit(ToolCall(
+            id="h2", name="memory_remember",
+            arguments={"topic": "Tea", "summary": "Uong tra sang lan 2", "kind": "habit", "habit": "uong tra sang"},
+        ))
+        o1 = await gateway.submit(ToolCall(
+            id="o1", name="memory_remember",
+            arguments={"topic": "OS", "summary": "May chay Fedora Bazzite"},
+        ))
+        o2 = await gateway.submit(ToolCall(
+            id="o2", name="memory_remember",
+            arguments={"topic": "OS", "summary": "May chay Fedora Bazzite"},
+        ))
+        p1 = await gateway.submit(ToolCall(
+            id="p1", name="memory_remember",
+            arguments={"topic": "Repo", "summary": "Repo dung uv cho Python", "proj": "/tmp/myrepo"},
+        ))
+        flushed = jobs.apply_extracted(
+            facade,
+            [jobs.ExtractedMemory(topic="Repo", summary="Repo dung uv cho Python")],
+            default_bot="thyca",
+            chat="dm-thyca",
+        )
+    finally:
+        reset_chat_conversation(chat_tok)
+        reset_bot_id(bot_tok)
+
+    assert json.loads(h1.content)["memory_id"] == json.loads(h2.content)["memory_id"]
+    assert json.loads(o1.content)["memory_id"] == json.loads(o2.content)["memory_id"]
+    assert flushed["written"] == [json.loads(p1.content)["memory_id"]]
+
+    daily = next((tmp_path / "memory").glob("*.md")).read_text(encoding="utf-8")
+    headings = [line for line in daily.splitlines() if parse_heading(line) is not None]
+    assert len(headings) == 3
+    assert daily.count("May chay Fedora Bazzite") == 1
+    assert daily.count("Repo dung uv cho Python") == 1

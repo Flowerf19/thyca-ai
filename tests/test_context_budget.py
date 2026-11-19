@@ -110,6 +110,20 @@ def test_checkpoint_requires_explicit_checkpoint_kind_and_task() -> None:
         _state(
             _write_pair(prompt_tokens=83_000, tool_name="memory_update"), 0.83
         )
+        == "recorded"
+    )
+    assert (
+        _state(
+            _write_pair(prompt_tokens=83_000, tool_name="memory_update", kind=None),
+            0.83,
+        )
+        == "none"
+    )
+    assert (
+        _state(
+            _write_pair(prompt_tokens=83_000, tool_name="memory_update", task=None),
+            0.83,
+        )
         == "none"
     )
 

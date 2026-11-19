@@ -9,7 +9,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = "9"
+SCHEMA_VERSION = "10"
 # Bump when Chunker.normalize changes so stale text_norm rows rebuild.
 NORM_VERSION = "2"
 SCHEMA_PATH = Path(__file__).with_name("schema.sql")
@@ -40,13 +40,63 @@ def init_schema(db: sqlite3.Connection) -> None:
     ensure_norm_version(db)
 
 
+def _drop_fts(db: sqlite3.Connection) -> None:
+    for trigger in ("chunks_ai", "chunks_ad", "chunks_au"):
+        db.execute(f"DROP TRIGGER IF EXISTS {trigger}")
+    db.execute("DROP TABLE IF EXISTS chunks_fts")
+
+
+def rebuild_fts_v10(db: sqlite3.Connection) -> None:
+    """Recreate the 3-column chunks_fts virtual table and triggers, then rebuild."""
+    _drop_fts(db)
+    db.execute(
+        """CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
+            text_raw,
+            memory_title,
+            text_norm,
+            content='chunks', content_rowid='row_id',
+            tokenize='unicode61 remove_diacritics 2'
+        )"""
+    )
+    db.execute(
+        """CREATE TRIGGER IF NOT EXISTS chunks_ai AFTER INSERT ON chunks BEGIN
+            INSERT INTO chunks_fts(rowid, text_raw, memory_title, text_norm)
+            VALUES (new.row_id, new.text_raw, new.memory_title, new.text_norm);
+        END"""
+    )
+    db.execute(
+        """CREATE TRIGGER IF NOT EXISTS chunks_ad AFTER DELETE ON chunks BEGIN
+            INSERT INTO chunks_fts(chunks_fts, rowid, text_raw, memory_title, text_norm)
+            VALUES ('delete', old.row_id, old.text_raw, old.memory_title, old.text_norm);
+        END"""
+    )
+    db.execute(
+        """CREATE TRIGGER IF NOT EXISTS chunks_au AFTER UPDATE ON chunks BEGIN
+            INSERT INTO chunks_fts(chunks_fts, rowid, text_raw, memory_title, text_norm)
+            VALUES ('delete', old.row_id, old.text_raw, old.memory_title, old.text_norm);
+            INSERT INTO chunks_fts(rowid, text_raw, memory_title, text_norm)
+            VALUES (new.row_id, new.text_raw, new.memory_title, new.text_norm);
+        END"""
+    )
+    db.execute("INSERT INTO chunks_fts(chunks_fts) VALUES('rebuild')")
+
+
 def migrate(db: sqlite3.Connection, from_version: str) -> None:
+    if from_version == "9":
+        rebuild_fts_v10(db)
+        db.execute(
+            "UPDATE meta SET value = ? WHERE key = 'schema_version'",
+            (SCHEMA_VERSION,),
+        )
+        db.commit()
+        return
     if from_version == "8":
-        # Non-destructive v8 → v9: rename the leaf id columns
-        # (session_id → memory_id, session_title → memory_title).
-        # RENAME COLUMN keeps every row and usage counter; files are
-        # marked stale so the next reindex rebuilds from markdown.
+        # Non-destructive v8 → v10: drop old triggers/FTS before renaming
+        # columns, then rename (session_id → memory_id, session_title →
+        # memory_title) and rebuild the 3-column FTS index.
+        _drop_fts(db)
         ensure_memory_columns(db)
+        rebuild_fts_v10(db)
         db.execute(
             "UPDATE meta SET value = ? WHERE key = 'schema_version'",
             (SCHEMA_VERSION,),
@@ -54,10 +104,12 @@ def migrate(db: sqlite3.Connection, from_version: str) -> None:
         db.commit()
         return
     if from_version == "7":
-        # Non-destructive v7 → v9: task/habit columns (v8), then the
-        # leaf id rename (v9) so every path lands on the new names.
+        # Non-destructive v7 → v10: task/habit columns (v8), leaf id
+        # rename (v9), and 3-column FTS rebuild (v10).
+        _drop_fts(db)
         add_task_columns(db)
         ensure_memory_columns(db)
+        rebuild_fts_v10(db)
         db.execute(
             "UPDATE meta SET value = ? WHERE key = 'schema_version'",
             (SCHEMA_VERSION,),
@@ -65,12 +117,13 @@ def migrate(db: sqlite3.Connection, from_version: str) -> None:
         db.commit()
         return
     if from_version == "6":
-        # Non-destructive v6 → v9: team owners column + related-edges
-        # table (v7), task/habit columns (v8), then the leaf id rename
-        # (v9).
+        # Non-destructive v6 → v10: team owners column + related-edges
+        # drop, task/habit columns, leaf id rename, and FTS rebuild.
+        _drop_fts(db)
         add_team_columns(db)
         add_task_columns(db)
         ensure_memory_columns(db)
+        rebuild_fts_v10(db)
         db.execute(
             "UPDATE meta SET value = ? WHERE key = 'schema_version'",
             (SCHEMA_VERSION,),
@@ -81,6 +134,7 @@ def migrate(db: sqlite3.Connection, from_version: str) -> None:
         # CREATE IF NOT EXISTS does not alter the existing chunks table.
         # Add the v6 columns explicitly for every non-destructive upgrade
         # path, including databases that skipped an intermediate release.
+        _drop_fts(db)
         add_linking_columns(db)
         add_team_columns(db)
         add_task_columns(db)
@@ -94,6 +148,7 @@ def migrate(db: sqlite3.Connection, from_version: str) -> None:
                     last_search_at  TEXT NOT NULL
                 )"""
             )
+        rebuild_fts_v10(db)
         db.execute(
             "UPDATE meta SET value = ? WHERE key = 'schema_version'",
             (SCHEMA_VERSION,),

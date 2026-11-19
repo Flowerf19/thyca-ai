@@ -36,12 +36,12 @@ from thyca.tools.task_store import TaskStore
 
 
 def build_tool_registry(
-    root: Path, cfg: Config, background: BackgroundProcs
+    root: Path, cfg: Config, background: BackgroundProcs, *, facade: MemoryFacade | None = None
 ) -> ToolRegistry:
     """Assemble the file/memory/profile tool registry (no gateway tools, no MCP, no spawn)."""
     registry = ToolRegistry()
     register_file_tools(registry, PathGuard(root), background)
-    facade = MemoryFacade(root, timezone_name=cfg.timeline.timezone)
+    facade = facade or MemoryFacade(root, timezone_name=cfg.timeline.timezone)
     register_memory_tools(registry, facade)
     register_profile_tools(registry, facade)
     register_conversation_tools(registry)

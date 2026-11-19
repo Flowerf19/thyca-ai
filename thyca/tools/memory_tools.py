@@ -5,6 +5,7 @@ from contextvars import ContextVar
 from dataclasses import asdict
 
 from thyca.memories.facade import MemoryFacade
+from thyca.memories.heading import validate_task_meta
 from thyca.tools.registry import ToolRegistry, ToolSpec
 
 _chat_conversation_id: ContextVar[str | None] = ContextVar("thyca_memory_chat", default=None)
@@ -57,40 +58,85 @@ def _remember_spec(facade: MemoryFacade) -> ToolSpec:
     async def handler(args: dict) -> str:
         # Schema types arrive pre-checked by the registry (X3).
         task = args.get("task")
-        if args.get("new_task"):
-            if task:
-                raise ValueError("new_task cannot be combined with task")
+        is_new_task = bool(args.get("new_task"))
+        if is_new_task and task:
+            raise ValueError("new_task cannot be combined with task")
+        kind = args.get("kind")
+        status = args.get("status")
+        cont = args.get("cont")
+        habit = args.get("habit")
+        habit_explicit = args.get("habit_explicit") is True
+        probe_task = "task-00000000" if is_new_task else task
+        validate_task_meta(probe_task, cont, kind, status, habit, habit_explicit)
+        if is_new_task:
             task = facade.new_task_id()
-        sid = facade.remember(
-            args["topic"],
-            args["summary"],
-            content=args.get("content") or "",
-            proj=args.get("proj"),
-            chat=_chat_conversation_id.get(),
-            task=task,
-            cont=args.get("cont"),
-            kind=args.get("kind"),
-            status=args.get("status"),
-            habit=args.get("habit"),
-            habit_explicit=args.get("habit_explicit") is True,
-        )
+        chat = _chat_conversation_id.get()
+        content = args.get("content") or ""
+        proj = args.get("proj")
+        if task is not None:
+            if is_new_task or kind == "habit":
+                sid = facade.remember(
+                    args["topic"],
+                    args["summary"],
+                    content=content,
+                    proj=proj,
+                    chat=chat,
+                    task=task,
+                    cont=cont,
+                    kind=kind,
+                    status=status if status is not None else ("open" if is_new_task else None),
+                    habit=habit,
+                    habit_explicit=habit_explicit,
+                )
+            else:
+                sid = facade.upsert_task_card(
+                    args["topic"],
+                    args["summary"],
+                    content=content,
+                    task=task,
+                    status=status,
+                    proj=proj,
+                    chat=chat,
+                    target_memory_id=cont,
+                )
+        elif kind == "habit":
+            sid = facade.record_habit_entry(
+                args["topic"],
+                args["summary"],
+                content=content,
+                habit=habit,
+                habit_explicit=habit_explicit,
+                proj=proj,
+                chat=chat,
+            )
+        else:
+            sid = facade.append_other_journal(
+                args["topic"],
+                args["summary"],
+                content=content,
+                proj=proj,
+                chat=chat,
+            )
         return json.dumps({"memory_id": sid, "task_id": task}, ensure_ascii=False)
 
     return ToolSpec(
         name="memory_remember",
         description=(
-            "Append an L2 memory heading+bullet to today's daily file. "
-            "Do not use this for SOUL/USER/IDENTITY — write/edit those files. "
-            "Before opening a new task, check the open-task catalog "
-            "(memory_tasks) or search to reuse an existing task id: pass it "
-            "as task to continue, or new_task=true to mint a fresh one. "
+            "Write an L2 memory entry into today's 3-ledger daily file "
+            "(memory/YYYY-MM-DD.md). Do not use this for SOUL/USER/IDENTITY — "
+            "write/edit those files. "
+            "Before opening a new task, check <memory_tasks> or memory_tasks / "
+            "memory_search to reuse an existing task id: passing task in the "
+            "same window updates that task card in-place, or pass new_task=true "
+            "to mint a fresh task id. "
             "Only set status='done' when finished or 'cancelled' when abandoned, "
             "not when only your part is done — and only the bot coordinating "
             "or opening the task (or the user) closes it; everyone else "
             "leaves it open. kind='habit' is only for repeated "
-            "habit/preference observations, with habit as a short label. "
-            "kind='checkpoint' is only for a task checkpoint recording "
-            "the current state and next step."
+            "habit/preference observations (same normalized label reinforces "
+            "and dedupes automatically). kind='checkpoint' is only for a task "
+            "checkpoint recording the current state and next step. General facts "
+            "without task/kind append to today's scoped journal and skip duplicates."
         ),
         parameters={
             "type": "object",

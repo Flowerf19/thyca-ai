@@ -48,6 +48,8 @@ def habit_observations(facade, bot_id: str | None = None, now=None) -> list[dict
     from thyca.memories.heading import read_text_file
     from thyca.memories.identity import current_bot_id
 
+    if hasattr(facade, "_ensure_rollover_indexed"):
+        facade._ensure_rollover_indexed(now)
     reader = current_bot_id()
     now_ts = format_ts(utc_now(now))
     by_session: dict[str, dict] = {}

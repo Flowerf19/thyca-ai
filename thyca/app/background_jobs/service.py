@@ -12,6 +12,7 @@ instance (same lifetime as the app: constructed once in __init__).
 """
 from __future__ import annotations
 
+import hashlib
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -43,6 +44,20 @@ class BackgroundJobsDeps:
     submit: Callable[[Any], Any]
     scheduled_turn: Callable[[str, str], dict]
     injected_connect: Any
+    facade: Any = None
+
+
+def _idle_watermark(messages: list, last_ts: str) -> tuple[str, int, str, str]:
+    """Fingerprint the latest non-system message so unchanged idle turns do not re-flush."""
+    non_system_count = sum(1 for msg in messages if getattr(msg, "role", None) != "system")
+    for msg in reversed(messages):
+        role = getattr(msg, "role", None)
+        if role == "system":
+            continue
+        content = getattr(msg, "content", None) or ""
+        digest = hashlib.sha256(content.encode("utf-8")).hexdigest()[:16]
+        return (last_ts, non_system_count, str(role or ""), digest)
+    return (last_ts, 0, "", "")
 
 
 class BackgroundJobsService:
@@ -50,9 +65,10 @@ class BackgroundJobsService:
 
     def __init__(self, deps: BackgroundJobsDeps) -> None:
         self._deps = deps
-        self._job_facade = None
+        self._job_facade = deps.facade
         self._profile_signatures = None
         self._profile_last_run = 0.0
+        self._idle_swept: dict[tuple[str, str], tuple[str, int, str, str]] = {}
 
     async def _flush_bot_memory(self, bot_id: str, messages, turn_cfg,
                                 room_id: str | None = None) -> None:
@@ -215,6 +231,9 @@ class BackgroundJobsService:
                     return None
                 if not mem_jobs.should_idle_sweep(last_ts, now_ts, idle_s):
                     return None
+                mark = _idle_watermark(list(sweep_item.messages), last_ts)
+                if self._idle_swept.get((bot_id, window_id)) == mark:
+                    return None
                 entry = {"idle_since": last_ts}
                 try:
                     await self._flush_bot_memory(
@@ -227,6 +246,10 @@ class BackgroundJobsService:
                     if entry["compacted"]:
                         self._deps.runtime._reinject_pending.add(
                             (bot_id, window_id))
+                    self._idle_swept[(bot_id, window_id)] = _idle_watermark(
+                        list(sweep_manager.current.messages),
+                        updated_at(sweep_manager.current),
+                    )
                 except Exception as exc:
                     entry["error"] = type(exc).__name__
                 return f"{bot_id}:{conversation_id}", entry

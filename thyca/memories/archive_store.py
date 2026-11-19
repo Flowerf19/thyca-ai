@@ -10,7 +10,7 @@ from pathlib import Path
 
 from rapidfuzz import fuzz
 
-from thyca.memories.chunk import Chunk
+from thyca.memories.chunk import Chunk, Chunker
 from thyca.memories.heading import VISIBLE_SQL, format_ts
 from thyca.memories.schema import (
     SCHEMA_VERSION,  # noqa: F401 — re-exported
@@ -265,10 +265,11 @@ class ArchiveStore:
         params.extend(clause_params)
         scored: list[tuple[float, sqlite3.Row]] = []
         for row in self._db.execute(sql, params):
-            text = row["text_norm"]
-            if tokens and not any(t in text for t in tokens):
+            title = str(row["memory_title"] or "")
+            hay = f"{Chunker.normalize(title)} {row['text_norm']}" if title else row["text_norm"]
+            if tokens and not any(t in hay for t in tokens):
                 continue
-            score = float(fuzz.partial_ratio(query_norm, text))
+            score = float(fuzz.partial_ratio(query_norm, hay))
             if score >= TRIGRAM_FLOOR:
                 scored.append((score, row))
         scored.sort(key=lambda item: (-item[0], item[1]["chunk_id"]))
@@ -370,6 +371,37 @@ class ArchiveStore:
                 (now, *clause_params),
             )
         )
+
+    @guarded
+    def other_journal_rows(
+        self,
+        now: str,
+        *,
+        reader: str | None = None,
+        chat_session: str | None = None,
+        project: str | None = None,
+    ) -> list[sqlite3.Row]:
+        """One row per archived daily Other-journal session for cross-day dedupe."""
+        clause, clause_params = _reader_clause("bots", reader)
+        params: list[object] = [now, *clause_params]
+        sql = (
+            "SELECT memory_id, MAX(bots) AS bots, MAX(chat_session) AS chat_session, "
+            "MAX(project) AS project, MAX(timeline_day) AS day "
+            "FROM chunks "
+            f"WHERE source_kind = 'daily' AND task IS NULL AND kind IS NULL AND {VISIBLE_SQL}{clause}"
+        )
+        if chat_session is None:
+            sql += " AND chat_session IS NULL"
+        else:
+            sql += " AND chat_session = ?"
+            params.append(chat_session)
+        if project is None:
+            sql += " AND project IS NULL"
+        else:
+            sql += " AND project = ?"
+            params.append(project)
+        sql += " GROUP BY memory_id ORDER BY day DESC, memory_id DESC"
+        return list(self._db.execute(sql, params))
 
     @guarded
     def memory_bots(self, memory_id: str) -> tuple[str, ...] | None:

@@ -16,7 +16,7 @@ from urllib.request import Request, urlopen
 
 import pytest
 
-from test_webui_spa_frontend import _cdp_frame, _cdp_recv
+from test_webui_spa_frontend import CDP_REQUEST_TIMEOUT, _cdp_frame, _cdp_recv, _wait_cdp_ready
 from thyca.configs import Config, ProviderEntry, save
 from thyca.conversations.store.admin import AdminStore
 
@@ -117,17 +117,9 @@ def _browser_e2e(chrome: str, url: str, user_data: Path, script: str, screenshot
     )
     sock = None
     try:
-        deadline = time.monotonic() + 10
-        while True:
-            try:
-                with urlopen(f"http://127.0.0.1:{debug_port}/json/version", timeout=0.5):
-                    break
-            except OSError:
-                if process.poll() is not None or time.monotonic() >= deadline:
-                    raise RuntimeError("Chrome DevTools did not start")
-                time.sleep(0.05)
+        _wait_cdp_ready(process, debug_port)
         request = Request(f"http://127.0.0.1:{debug_port}/json/new?{quote('about:blank', safe=':')}", method="PUT")
-        with urlopen(request, timeout=3) as response:
+        with urlopen(request, timeout=CDP_REQUEST_TIMEOUT) as response:
             target = json.loads(response.read())
         ws = urlsplit(target["webSocketDebuggerUrl"])
         sock = socket.create_connection((ws.hostname, ws.port), timeout=10)

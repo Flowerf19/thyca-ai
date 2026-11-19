@@ -106,6 +106,32 @@ def _cdp_recv(sock: socket.socket) -> dict:
         if opcode == 1: return json.loads(payload)
 
 
+## Headless Chrome can take several seconds to answer its first DevTools
+## request on a loaded CI runner. These limits are generous on purpose.
+CDP_REQUEST_TIMEOUT = 10
+CDP_STARTUP_TIMEOUT = 40
+
+
+def _wait_cdp_ready(process: subprocess.Popen, port: int, timeout: float = CDP_STARTUP_TIMEOUT) -> None:
+    """Wait until Chrome answers /json/version on its debugging port.
+
+    Fails at once if Chrome exits, and reports the last error on timeout.
+    """
+    deadline = time.monotonic() + timeout
+    last_error: Exception | None = None
+    while True:
+        if process.poll() is not None:
+            raise RuntimeError(f"Chrome exited early with code {process.returncode} before DevTools was ready")
+        try:
+            with urlopen(f"http://127.0.0.1:{port}/json/version", timeout=CDP_REQUEST_TIMEOUT):
+                return
+        except OSError as error:
+            last_error = error
+        if time.monotonic() >= deadline:
+            raise TimeoutError(f"Chrome DevTools not ready on port {port} after {timeout}s: {last_error!r}")
+        time.sleep(0.1)
+
+
 def _cdp_browser_result(chrome: str, url: str, width: int, screenshot: Path | None, user_data: Path, *, mobile: bool = False) -> dict:
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0)); port = probe.getsockname()[1]
@@ -116,15 +142,8 @@ def _cdp_browser_result(chrome: str, url: str, width: int, screenshot: Path | No
     ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=dict(os.environ, HOME="/tmp/sandbox-home"))
     sock = None
     try:
-        end = time.monotonic() + 10
-        while True:
-            try:
-                with urlopen(f"http://127.0.0.1:{port}/json/version", timeout=0.5):
-                    break
-            except OSError:
-                if time.monotonic() >= end: raise
-                time.sleep(0.05)
-        with urlopen(Request(f"http://127.0.0.1:{port}/json/new?{quote('about:blank', safe=':')}", method="PUT"), timeout=3) as response:
+        _wait_cdp_ready(process, port)
+        with urlopen(Request(f"http://127.0.0.1:{port}/json/new?{quote('about:blank', safe=':')}", method="PUT"), timeout=CDP_REQUEST_TIMEOUT) as response:
             target = json.loads(response.read())
         ws_url = urlsplit(target["webSocketDebuggerUrl"])
         sock = socket.create_connection((ws_url.hostname, ws_url.port), timeout=10)

@@ -4,7 +4,7 @@ Thyca is a personal assistant that runs on your own Linux machine. It is a **tea
 
 **Version: 0.88.0.dev3** (development build, not yet a stable release)
 
-![Chat with a team of bots](docs/images/webui-chat.png)
+![Chat with a team of bots](docs/images/webui-chat-readme.png)
 
 *The Chat screen: your bot team on the left, a conversation in the middle.*
 
@@ -15,7 +15,7 @@ Thyca is a personal assistant that runs on your own Linux machine. It is a **tea
 - **Give each bot its own model.** Choose a per-bot model and reasoning level in Settings; leave it empty to follow the shared default.
 - **Let Thyca remember.** Bots write memories to a daily journal you can browse, search, and filter on the Journal screen.
 
-![Settings: per-bot model and app preferences](docs/images/webui-settings.png)
+![Settings: per-bot model and app preferences](docs/images/webui-settings-readme.png)
 
 *Settings: per-bot companion settings, appearance, and run limits in one dialog.*
 

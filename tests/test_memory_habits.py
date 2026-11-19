@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from thyca.memories import habits
+from thyca.memories.archived import SCHEMA_VERSION
 from thyca.memories.facade import MemoryFacade
 from thyca.memories.heading import parse_heading, render_heading, HeadingMeta
 from thyca.memories.identity import bind_bot_id, reset_bot_id
@@ -80,7 +81,7 @@ def test_migration_v8_1a_gains_explicit_column(tmp_path: Path) -> None:
         # Landing on v9 also renames the pre-v9 leaf id columns.
         assert "memory_id" in cols and "session_id" not in cols
         assert db.execute(
-            "SELECT value FROM meta WHERE key='schema_version'").fetchone()[0] == "9"
+            "SELECT value FROM meta WHERE key='schema_version'").fetchone()[0] == SCHEMA_VERSION
     finally:
         db.close()
 

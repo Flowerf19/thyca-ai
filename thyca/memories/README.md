@@ -86,6 +86,43 @@ Hai bullet → hai hàng `chunks`. Heading là session; comment JSON là tem má
 
 Schema v3 không còn cột `embedding`/`profile_id` — vector là kiến trúc frozen trong L2 plan (GOAL-007).
 
+## Tool trả bao nhiêu hit cho agent
+
+| API | Mặc định | Clamp |
+|-----|----------|-------|
+| `memory_search` / `MemoryFacade.search` | **5** hit | 1…**10** (`limit` ngoài khoảng bị clamp + warning) |
+| `memory_recent` / `MemoryFacade.recent` | **5** hit | cùng clamp 1…10 |
+
+Agent gọi `memory_search` mà không truyền `limit` → nhận tối đa 5 leaf. Candidate pool nội bộ (FTS/trigram) vẫn có thể lấy tới `CANDIDATE_CAP=50` trước khi cắt về `limit`.
+
+## Offline recall (lexical, working tree tối ưu)
+
+Đo bằng `tests/bench/memory_bench.py` trên `tests/data/` (seed thư mục tạm, không ghi `~/.thyca`). Số liệu Doc R@k / MRR / latency sau tối ưu FTS unigram+bigram + IDF span:
+
+| Suite | Queries | Doc R@1 | Doc R@5 | Doc R@10 | MRR@10 | Latency mean |
+|-------|--------:|--------:|--------:|---------:|-------:|-------------:|
+| `wiki_passage` | 976 | **71.8%** | 87.2% | 90.5% | 0.781 | 16.6 ms |
+| `wiki_doc` | 976 | **72.8%** | 87.7% | 92.0% | 0.792 | 19.0 ms |
+
+`ledgers_eval`: **12/12**. Lexical-only (không embedding).
+
+Chạy lại:
+
+```bash
+.venv/bin/python tests/bench/memory_bench.py --suite all --json-out /tmp/memory_bench.json
+```
+
+## Live agent scenarios (tool chọn + ghi 3 sổ)
+
+Offline bench **không** đo việc model chọn tool. Harness live dùng `ChatApp` + API đã cấu hình trong `~/.thyca/config.json` (chỉ **đọc** config), seed/ghi trong thư mục tạm:
+
+```bash
+THYCA_LIVE=1 .venv/bin/python -m tests.live.memory_agent --suite all --verbose
+THYCA_LIVE=1 .venv/bin/pytest -q -m live tests/test_live_memory_agent.py
+```
+
+Suites: `--suite write` (ghi 3 sổ) · `--suite tool_call` (có/không gọi đúng tool) · `--suite natural` (hội thoại tự nhiên không gợi ý tool) · `--suite safety` (giữ bí mật, hỏi xác nhận xóa). Dùng `--verbose` để in trace từng tool call. Không set `THYCA_LIVE` → pytest skip. Không ghi runtime vào `~/.thyca`.
+
 ## Không nằm ở đây
 
 | Thứ | Không nằm ở |

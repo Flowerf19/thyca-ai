@@ -861,3 +861,82 @@ def test_settings_dialog_limits_save_does_not_pin_unpinned_default_model(node) -
     assert len(out["posted"]) == 1
     assert out["posted"][0]["limits"]["contextTokens"] == 205000
     assert "contextTokens" not in out["posted"][0]["models"]["m1"]
+
+
+def test_settings_dialog_uses_active_route_bot_and_preserves_drafts_on_select_change(node) -> None:
+    """When another workspace highlights a different bot from Chat's selectedBot,
+    #settings-dialog opens on that active bot and preserves unsaved per-bot
+    drafts across both <select> onchange switches and close/reopen cycles."""
+    out = _run(node, r"""
+        const SETTINGS = %s;
+        %s
+        %s
+        selectedBot = 'thyca';
+        ThycaRouter.currentPage = () => 'profile';
+        ThycaRouter.highlightedBot = () => 'coder';
+        await tick();
+
+        // Opening Settings on profile?bot=coder selects coder instead of selectedBot ('thyca').
+        openSettingsDialog();
+        await tick(30);
+        const onProfileOpen = {
+            bot: document.querySelector('#settings-bot').value,
+            model: document.querySelector('#bot-model').value,
+            thinking: document.querySelector('#bot-thinking').value,
+        };
+
+        // Edit coder, then switch #settings-bot like a real browser (<select> value updates first).
+        document.querySelector('#bot-model').value = 'm2';
+        document.querySelector('#bot-model').dispatch('change', { target: document.querySelector('#bot-model') });
+        document.querySelector('#bot-thinking').value = 'high';
+        const sel = document.querySelector('#settings-bot');
+        sel.value = 'thyca';
+        sel.dispatch('change', { target: sel });
+        await tick(30);
+        const switchedToThyca = {
+            bot: sel.value,
+            model: document.querySelector('#bot-model').value,
+            thinking: document.querySelector('#bot-thinking').value,
+        };
+
+        // Edit thyca, close dialog, reopen on profile?bot=coder -> coder keeps its draft.
+        document.querySelector('#bot-model').value = 'm1';
+        document.querySelector('#bot-model').dispatch('change', { target: document.querySelector('#bot-model') });
+        document.querySelector('#bot-thinking').value = 'low';
+        document.querySelector('#settings-dialog').close();
+        openSettingsDialog();
+        await tick(30);
+        const reopenedCoder = {
+            bot: sel.value,
+            model: document.querySelector('#bot-model').value,
+            thinking: document.querySelector('#bot-thinking').value,
+        };
+
+        // Switch via <select> back to thyca -> thyca also kept its unsaved draft.
+        sel.value = 'thyca';
+        sel.dispatch('change', { target: sel });
+        await tick(30);
+        const switchedBackThyca = {
+            bot: sel.value,
+            model: document.querySelector('#bot-model').value,
+            thinking: document.querySelector('#bot-thinking').value,
+        };
+
+        // When route highlights no bot (e.g. shared overview), fall back to selectedBot.
+        document.querySelector('#settings-dialog').close();
+        ThycaRouter.highlightedBot = () => '';
+        openSettingsDialog();
+        await tick(30);
+        const fallbackToSelected = {
+            bot: sel.value,
+            model: document.querySelector('#bot-model').value,
+            thinking: document.querySelector('#bot-thinking').value,
+        };
+
+        return { onProfileOpen, switchedToThyca, reopenedCoder, switchedBackThyca, fallbackToSelected };
+    """ % (_SETTINGS, _mock_fetch(_ROSTER, _CONFIG), _setup_dialog_bots()), via="dialog")
+    assert out["onProfileOpen"] == {"bot": "coder", "model": "m1", "thinking": "custom"}
+    assert out["switchedToThyca"] == {"bot": "thyca", "model": "default", "thinking": ""}
+    assert out["reopenedCoder"] == {"bot": "coder", "model": "m2", "thinking": "high"}
+    assert out["switchedBackThyca"] == {"bot": "thyca", "model": "m1", "thinking": "low"}
+    assert out["fallbackToSelected"] == {"bot": "thyca", "model": "m1", "thinking": "low"}

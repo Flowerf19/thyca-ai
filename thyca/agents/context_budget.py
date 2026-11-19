@@ -124,11 +124,12 @@ def checkpoint_state(
     """``recorded`` / ``stale`` / ``none`` for the post-compaction segment.
 
     Evidence is an explicit checkpoint write in the persisted
-    transcript: a successful ``memory_remember`` with
-    ``kind="checkpoint"`` and a task link (`task` or `new_task`).
-    Ordinary memory writes, habit observations and updates never count.
-    The latest qualifying write is fresh only while usage stays in (or
-    below) the band it was written in.
+    transcript: a successful ``memory_remember`` or ``memory_update`` with
+    ``kind="checkpoint"`` and a task link (`task` or `new_task` for
+    remember; `task` for update). Ordinary memory writes, habit
+    observations, and updates without ``kind="checkpoint"`` + ``task``
+    never count. The latest qualifying write is fresh only while usage
+    stays in (or below) the band it was written in.
     """
     if context_tokens <= 0:
         return "none"
@@ -146,9 +147,9 @@ def checkpoint_state(
             args = call.arguments if isinstance(call.arguments, dict) else {}
             task_linked = (
                 isinstance(args.get("task"), str) and bool(args["task"].strip())
-            ) or args.get("new_task") is True
+            ) or (call.name == "memory_remember" and args.get("new_task") is True)
             if (
-                call.name == "memory_remember"
+                call.name in ("memory_remember", "memory_update")
                 and args.get("kind") == "checkpoint"
                 and task_linked
             ):

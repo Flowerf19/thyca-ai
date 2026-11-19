@@ -75,6 +75,7 @@ class MemoryFacade:
         with self.writer.mutation_lock():
             self.archive.store.drop_source(str(self.thyca_dir / "MEMORY.md"))
             self.archive.reindex()
+        self._indexed_day: str = self.archive.day()
 
     def remember(
         self,
@@ -177,6 +178,7 @@ class MemoryFacade:
         limit = max(1, min(limit, 50))
         if limit != requested_limit:
             warnings.append(f"limit clamped from {requested_limit} to {limit}")
+        self._ensure_rollover_indexed(now)
         now_ts = format_ts(utc_now(now))
         reader = current_bot_id()
         rows = self.archive.store.task_memory_rows(now_ts, reader=reader)
@@ -635,6 +637,7 @@ class MemoryFacade:
     def stats(
         self, now: datetime | None = None, *, bot_id: str | None = None,
     ) -> MemoryStatsResult:
+        self._ensure_rollover_indexed(now)
         return build_stats(
             self.archive,
             today_chunks=self._today_chunks(now),
@@ -657,6 +660,7 @@ class MemoryFacade:
         status: str | None = None,
         allow_own_cross_window: bool = False,
     ) -> SearchResult:
+        self._ensure_rollover_indexed(now)
         # Keyword search over archived leaves; the tool layer opts into
         # the owner exemption for proactive reads, other callers keep it.
         return lexical_search(
@@ -678,6 +682,7 @@ class MemoryFacade:
         self, limit: int = 5, now: datetime | None = None,
         allow_own_cross_window: bool = False,
     ) -> list[Hit]:
+        self._ensure_rollover_indexed(now)
         # Most-recent archived hits; same opt-in owner exemption as search.
         return _recent_search(
             self.archive, limit, now, reader=current_bot_id(),
@@ -720,10 +725,19 @@ class MemoryFacade:
         return view.can_read_entry(
             chat, bots, allow_own_cross_window=allow_own_cross_window)
 
+    def _ensure_rollover_indexed(self, now: datetime | None = None) -> None:
+        today = self.archive.day(now)
+        if today > self._indexed_day:
+            with self.writer.mutation_lock():
+                if today > self._indexed_day:
+                    self.archive.reindex(now)
+                    self._indexed_day = today
+
     def _refresh_index(self, now: datetime | None = None) -> None:
         with self.writer.mutation_lock():
             self.writer.purge_expired(utc_now(now))
             self.archive.reindex(now)
+            self._indexed_day = self.archive.day(now)
             live = set(self.archive.store.chunk_ids())
             live.update(chunk.chunk_id for chunk in self._today_chunks(now))
             self.archive.store.usage.keep_gets(live)

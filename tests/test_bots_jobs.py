@@ -403,3 +403,13 @@ def test_apply_extracted_can_cancel_open_task(tmp_path: Path) -> None:
     assert out["written"] == [sid]
     assert facade.tasks(status="open")["tasks"] == []
     assert [t["task_id"] for t in facade.tasks(status="cancelled")["tasks"]] == [tid]
+
+
+def test_parse_extraction_strips_markdown_code_fence() -> None:
+    fenced_json = '```json\n[{"topic": "OS", "summary": "Fedora Bazzite"}]\n```'
+    fenced_plain = '```\n[{"topic": "OS", "summary": "Fedora Bazzite"}]\n```'
+    for raw in (fenced_json, fenced_plain):
+        items = jobs.parse_extraction(raw)
+        assert len(items) == 1
+        assert items[0].topic == "OS"
+        assert items[0].summary == "Fedora Bazzite"

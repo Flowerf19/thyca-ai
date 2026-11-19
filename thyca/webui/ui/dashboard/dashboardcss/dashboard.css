@@ -8,8 +8,9 @@
    (the stat grid's max-content) would stretch it past the container. Pin the
    column to the container so children always fit the workspace width. */
 .dashboard-shell .section-stack{grid-template-columns:minmax(0,1fr)}
-.dashboard-shell #usage-overview{display:grid;gap:22px;min-width:0}
+.dashboard-shell #usage-overview{display:grid;grid-template-columns:minmax(0,1fr);gap:22px;min-width:0}
 .dashboard-shell #usage-overview[hidden]{display:none!important}
+.dashboard-shell .paper-card{min-width:0}
 
 /* ---- range picker in the filter row under the bot scope card ---- */
 /* The view tabs (Sử dụng · Chi phí · Trace) and the date-range controls
@@ -18,17 +19,17 @@
 .dashboard-shell .page-nav{flex-wrap:wrap;gap:8px 14px;padding:8px 20px 2px;min-height:0;border-bottom:0}
 .dashboard-shell .page-title{flex:0 0 auto}
 @media(max-width:850px){.dashboard-shell .page-title{flex:0 1 auto}}
-.dashboard-shell .usage-filter-row{display:flex;align-items:center;flex-wrap:wrap;gap:8px 14px}
-.dashboard-shell .usage-view-tabs{display:inline-flex;gap:6px;flex-wrap:wrap}
+.dashboard-shell .usage-filter-row{display:flex;align-items:center;flex-wrap:wrap;gap:8px 14px;min-width:0;max-width:100%}
+.dashboard-shell .usage-view-tabs{display:inline-flex;gap:6px;flex-wrap:wrap;min-width:0;max-width:100%}
 .dashboard-shell .usage-view-tabs .chip{cursor:pointer}
-.dashboard-shell .usage-header-controls{flex:1 1 auto;min-width:0;display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:6px 10px;margin-left:auto}
+.dashboard-shell .usage-header-controls{flex:1 1 auto;min-width:0;max-width:100%;display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:6px 10px;margin-left:auto}
 .dashboard-shell .usage-header-controls[hidden]{display:none!important}
-.dashboard-shell .usage-header-controls .page-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.dashboard-shell .usage-header-controls .page-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end;flex:0 1 auto;min-width:0;max-width:100%}
 .dashboard-shell .usage-filter-row .chip[aria-pressed="true"]{border-color:var(--bot-mid,#8e9b78);background:var(--bot-pale,#eef2e3);color:var(--bot-ink,#465c3e)}
 .dashboard-shell #range-note{position:absolute;width:1px;height:1px;padding:0;margin:0;overflow:hidden;clip-path:inset(50%);white-space:nowrap;border:0;opacity:0;pointer-events:none}
 .range-field{display:inline-flex;align-items:center;gap:4px;font-size:11px;color:var(--muted)}
 .range-field input{border:1px solid #d1c1a2;border-radius:8px;background:#fff9ea;color:var(--ink);padding:4px 6px;font:11.5px var(--sans);max-width:128px}
-.range-presets{display:inline-flex;gap:4px;align-items:center;flex-wrap:wrap}
+.range-presets{display:inline-flex;gap:4px;align-items:center;flex-wrap:wrap;min-width:0;max-width:100%}
 .range-presets .chip{cursor:pointer;padding:4px 8px;font-size:11px}
 .range-presets .chip[aria-pressed=true]{border-color:#8e9b78;background:#eef2e3;color:#465c3e}
 .dashboard-shell #range-apply{padding:4px 9px;font-size:11.5px;white-space:nowrap}
@@ -36,7 +37,7 @@
 
 /* ---- hero stat cards ---- */
 .stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px}
-.stat{padding:10px 12px}
+.stat{padding:10px 12px;min-width:0}
 .stat-label{margin:0;font-size:10px;letter-spacing:1.4px;text-transform:uppercase;color:#99876b}
 .stat-value{margin:5px 0 0;font:600 20px/1.1 var(--serif);color:#54442f;font-variant-numeric:tabular-nums}
 .stat-value small{font:italic 14px var(--serif);color:#8d7d63}
@@ -137,12 +138,12 @@ tr.trace-row:hover td,tr.trace-row:focus-visible td{background:#fff7e4}
 @media(max-width:850px){
  .dashboard-shell .page-nav{align-items:stretch;flex-wrap:wrap;padding:8px 14px 2px;min-height:0;gap:6px 10px}
  .dashboard-shell .page-title{flex:0 1 auto}
- .dashboard-shell .usage-filter-row{flex-direction:column;align-items:stretch;gap:8px}
- .dashboard-shell .usage-header-controls{width:100%;flex:1 1 100%;margin-left:0;justify-content:flex-start}
- .dashboard-shell .usage-header-controls .page-actions{width:100%;min-width:0;flex:1 1 100%;justify-content:flex-start}
+ .dashboard-shell .usage-filter-row{flex-direction:column;flex-wrap:nowrap;align-items:stretch;gap:8px}
+ .dashboard-shell .usage-header-controls{width:100%;flex:0 1 auto;min-width:0;max-width:100%;margin-left:0;justify-content:flex-start}
+ .dashboard-shell .usage-header-controls .page-actions{width:100%;min-width:0;max-width:100%;flex:1 1 auto;justify-content:flex-start}
  .dashboard-shell .range-field{max-width:100%;min-width:0}
  .dashboard-shell .range-field input{max-width:100%;min-width:0}
- .stat-grid{grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px}
+ .stat-grid{grid-template-columns:repeat(auto-fit,minmax(min(130px,100%),1fr));gap:8px}
  .stat-value{font-size:19px}
  .model-row{grid-template-columns:minmax(0,1fr);gap:3px}
  .model-cost{text-align:left}
@@ -159,7 +160,7 @@ tr.trace-row:hover td,tr.trace-row:focus-visible td{background:#fff7e4}
 .dashboard-shell .usage-view-tabs{display:flex;gap:7px;flex-wrap:wrap}
 .dashboard-shell .usage-view-tabs .chip{cursor:pointer}
 .dashboard-shell .usage-view-tabs .chip[aria-pressed=true]{border-color:#8e9b78;background:#eef2e3;color:#465c3e}
-.dashboard-shell .usage-view-panel{display:grid;gap:22px;min-width:0}
+.dashboard-shell .usage-view-panel{display:grid;grid-template-columns:minmax(0,1fr);gap:22px;min-width:0}
 .dashboard-shell .usage-view-panel[hidden]{display:none!important}
 .dashboard-shell .token-summary-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
 .dashboard-shell .token-summary strong{font:600 22px var(--serif);font-variant-numeric:tabular-nums;color:#54442f}
@@ -262,13 +263,14 @@ tr.trace-row:hover td,tr.trace-row:focus-visible td{background:#fff7e4}
 @media(max-width:640px){
   .dashboard-shell .analysis-panels,.dashboard-shell .cost-analysis{grid-template-columns:minmax(0,1fr)}
   .dashboard-shell .analysis-panels>section:last-child{grid-column:auto}
-  .dashboard-shell .stat-grid{grid-template-columns:repeat(auto-fit,minmax(140px,1fr))}
+  .dashboard-shell .stat-grid{grid-template-columns:repeat(auto-fit,minmax(min(140px,100%),1fr))}
   .dashboard-shell .token-summary-grid{grid-template-columns:minmax(0,1fr)}
   .dashboard-shell .tl-turn{flex-wrap:wrap}
   .dashboard-shell .tl-chip{margin-left:46px}
   .dashboard-shell .model-row{grid-template-columns:minmax(0,1fr)}
   .dashboard-shell .model-meta,.dashboard-shell .row-meter{grid-column:auto}
   .dashboard-shell .tl-user{max-width:94%}
-  .dashboard-shell .list-filters{width:100%}
-  .dashboard-shell .mini-field input{max-width:100%}
+  .dashboard-shell .list-filters{width:100%;min-width:0}
+  .dashboard-shell .mini-field{max-width:100%;min-width:0}
+  .dashboard-shell .mini-field input,.dashboard-shell .mini-field select{max-width:100%;min-width:0;flex:0 1 auto}
 }

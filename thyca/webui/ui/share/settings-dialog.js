@@ -12,7 +12,13 @@ function fillSettingsBots(selected) {
   const sel = document.querySelector('#settings-bot');
   if (!sel) return '';
   const ids = bots.map(b => b.id);
-  const current = ids.includes(selected) ? selected : ids.includes(selectedBot) ? selectedBot : ids[0] || '';
+  const activeBot = typeof activeSidebarBot === 'function'
+    ? activeSidebarBot()
+    : (typeof window !== 'undefined' && window.ThycaRouter?.highlightedBot?.()) || '';
+  const current = ids.includes(selected) ? selected
+    : ids.includes(activeBot) ? activeBot
+    : ids.includes(selectedBot) ? selectedBot
+    : ids[0] || '';
   sel.innerHTML = bots.map(b => `<option value="${escapeHTML(b.id)}"${b.id === current ? ' selected' : ''}>${escapeHTML(b.name)}</option>`).join('')
     || '<option value="">Chưa có bot nào</option>';
   sel.value = current;
@@ -200,17 +206,16 @@ function bindBotFormControls() {
   updateBotSave();
 }
 
-function botFormDraft() {
+function botFormDraft(forBot = currentSettingsBot()) {
   const m = document.querySelector('#bot-model'), t = document.querySelector('#bot-thinking');
-  const active = currentSettingsBot();
-  if (!m || !t || !botLoadedCfg || !active || botLoadedCfg.bot !== active) return null;
+  if (!m || !t || !botLoadedCfg || !forBot || botLoadedCfg.bot !== forBot) return null;
   const cur = { model: m.value, thinking: t.value || null };
   return (cur.model !== botLoadedCfg.model || cur.thinking !== botLoadedCfg.thinking) ? cur : null;
 }
 
-function retainBotSettingsDraft() {
-  if (!botLoadedCfg?.bot) return;
-  const draft = botFormDraft();
+function retainBotSettingsDraft(forBot = botCfg.bot || currentSettingsBot()) {
+  if (!botLoadedCfg?.bot || !forBot || botLoadedCfg.bot !== forBot) return;
+  const draft = botFormDraft(forBot);
   if (draft) botDrafts.set(botLoadedCfg.bot, draft);
   else if (document.querySelector('#bot-model')) botDrafts.delete(botLoadedCfg.bot);
 }
@@ -306,7 +311,7 @@ async function loadBotSettings(preserved = null) {
 }
 
 function selectSettingsBot(id, { preserveCurrentDraft = true } = {}) {
-  if (preserveCurrentDraft && botCfg.bot && botCfg.bot !== id) retainBotSettingsDraft();
+  if (preserveCurrentDraft && botCfg.bot && botCfg.bot !== id) retainBotSettingsDraft(botCfg.bot);
   botCfg.bot = id || '';
   const sel = document.querySelector('#settings-bot');
   if (sel && sel.value !== botCfg.bot) sel.value = botCfg.bot;

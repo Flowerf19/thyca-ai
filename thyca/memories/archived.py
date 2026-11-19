@@ -98,6 +98,27 @@ class ArchivedMemory:
             task=task, kind=kind, status=status,
         )
 
+    def fts_memory_hits(
+        self,
+        query: str,
+        timeline_day: str | None,
+        now: datetime | None,
+        limit: int,
+        *,
+        project: str | None = None,
+        chat_session: str | None = None,
+        reader: str | None = None,
+        task: str | None = None,
+        kind: str | None = None,
+        status: str | None = None,
+    ) -> tuple[list[Hit], int, bool]:
+        """One FTS5-fused hit per distinct memory_id plus sibling/cap counts."""
+        return self.store.fts_search_memories(
+            query, timeline_day, limit, format_ts(now),
+            project=project, chat_session=chat_session, reader=reader,
+            task=task, kind=kind, status=status,
+        )
+
     def trigram_hits(
         self,
         query: str,
@@ -127,16 +148,18 @@ class ArchivedMemory:
     def with_counts(self, hits: list[Hit], now: datetime | None = None) -> list[Hit]:
         from dataclasses import replace as _replace
 
+        if not hits:
+            return []
         now_ts = format_ts(now)
-        counted: list[Hit] = []
-        for hit in hits:
-            count = self.store.memory_leaf_count(hit.memory_id, now_ts)
-            counted.append(
-                _replace(
-                    hit, memory_leaf_count=count, has_more=count > 1,
-                )
+        counts = self.store.memory_leaf_counts([hit.memory_id for hit in hits], now_ts)
+        return [
+            _replace(
+                hit,
+                memory_leaf_count=(count := counts.get(hit.memory_id, 0)),
+                has_more=count > 1,
             )
-        return counted
+            for hit in hits
+        ]
 
     def get(
         self,

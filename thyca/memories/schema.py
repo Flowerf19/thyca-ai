@@ -1,23 +1,35 @@
 """SQLite schema versioning for the archived leaf index (stdlib-only deps).
 
-Table creation lives in ``schema.sql``; this module owns version checks and
-migrations. Query I/O stays in ``archive_store.py`` — the store delegates
-here from a thin guarded wrapper so lock/error semantics do not change.
+DDL lives in ``schema.sql`` (tables) and ``schema_fts.sql`` (FTS + triggers).
+This module owns version checks and migrations. Query I/O stays in
+``archive_store.py`` — the store delegates here from a thin guarded wrapper
+so lock/error semantics do not change.
 """
 from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = "9"
+SCHEMA_VERSION = "10"
 # Bump when Chunker.normalize changes so stale text_norm rows rebuild.
 NORM_VERSION = "2"
-SCHEMA_PATH = Path(__file__).with_name("schema.sql")
+_SCHEMA_DIR = Path(__file__).resolve().parent
+SCHEMA_PATH = _SCHEMA_DIR / "schema.sql"
+SCHEMA_FTS_PATH = _SCHEMA_DIR / "schema_fts.sql"
+
+
+def _read_sql(path: Path) -> str:
+    return path.read_text(encoding="utf-8")
+
+
+def _apply_base_schema(db: sqlite3.Connection) -> None:
+    db.executescript(_read_sql(SCHEMA_PATH))
+    db.executescript(_read_sql(SCHEMA_FTS_PATH))
 
 
 def init_schema(db: sqlite3.Connection) -> None:
     """Create or migrate schema tables in ``db`` (caller holds the lock)."""
-    db.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
+    _apply_base_schema(db)
     row = db.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
     if row is None:
         db.execute(
@@ -37,16 +49,39 @@ def init_schema(db: sqlite3.Connection) -> None:
     # database the chunks table has no bots/task column until migrate() adds it.
     db.execute("CREATE INDEX IF NOT EXISTS chunks_bots ON chunks(bots)")
     db.execute("CREATE INDEX IF NOT EXISTS chunks_task ON chunks(task)")
+    db.execute("CREATE INDEX IF NOT EXISTS chunks_memory ON chunks(memory_id)")
     ensure_norm_version(db)
 
 
+def _drop_fts(db: sqlite3.Connection) -> None:
+    for trigger in ("chunks_ai", "chunks_ad", "chunks_au"):
+        db.execute(f"DROP TRIGGER IF EXISTS {trigger}")
+    db.execute("DROP TABLE IF EXISTS chunks_fts")
+
+
+def rebuild_fts_v10(db: sqlite3.Connection) -> None:
+    """Recreate chunks_fts + triggers from ``schema_fts.sql``, then rebuild."""
+    _drop_fts(db)
+    db.executescript(_read_sql(SCHEMA_FTS_PATH))
+    db.execute("INSERT INTO chunks_fts(chunks_fts) VALUES('rebuild')")
+
+
 def migrate(db: sqlite3.Connection, from_version: str) -> None:
+    if from_version == "9":
+        rebuild_fts_v10(db)
+        db.execute(
+            "UPDATE meta SET value = ? WHERE key = 'schema_version'",
+            (SCHEMA_VERSION,),
+        )
+        db.commit()
+        return
     if from_version == "8":
-        # Non-destructive v8 → v9: rename the leaf id columns
-        # (session_id → memory_id, session_title → memory_title).
-        # RENAME COLUMN keeps every row and usage counter; files are
-        # marked stale so the next reindex rebuilds from markdown.
+        # Non-destructive v8 → v10: drop old triggers/FTS before renaming
+        # columns, then rename (session_id → memory_id, session_title →
+        # memory_title) and rebuild the 3-column FTS index.
+        _drop_fts(db)
         ensure_memory_columns(db)
+        rebuild_fts_v10(db)
         db.execute(
             "UPDATE meta SET value = ? WHERE key = 'schema_version'",
             (SCHEMA_VERSION,),
@@ -54,10 +89,12 @@ def migrate(db: sqlite3.Connection, from_version: str) -> None:
         db.commit()
         return
     if from_version == "7":
-        # Non-destructive v7 → v9: task/habit columns (v8), then the
-        # leaf id rename (v9) so every path lands on the new names.
+        # Non-destructive v7 → v10: task/habit columns (v8), leaf id
+        # rename (v9), and 3-column FTS rebuild (v10).
+        _drop_fts(db)
         add_task_columns(db)
         ensure_memory_columns(db)
+        rebuild_fts_v10(db)
         db.execute(
             "UPDATE meta SET value = ? WHERE key = 'schema_version'",
             (SCHEMA_VERSION,),
@@ -65,12 +102,13 @@ def migrate(db: sqlite3.Connection, from_version: str) -> None:
         db.commit()
         return
     if from_version == "6":
-        # Non-destructive v6 → v9: team owners column + related-edges
-        # table (v7), task/habit columns (v8), then the leaf id rename
-        # (v9).
+        # Non-destructive v6 → v10: team owners column + related-edges
+        # drop, task/habit columns, leaf id rename, and FTS rebuild.
+        _drop_fts(db)
         add_team_columns(db)
         add_task_columns(db)
         ensure_memory_columns(db)
+        rebuild_fts_v10(db)
         db.execute(
             "UPDATE meta SET value = ? WHERE key = 'schema_version'",
             (SCHEMA_VERSION,),
@@ -81,6 +119,7 @@ def migrate(db: sqlite3.Connection, from_version: str) -> None:
         # CREATE IF NOT EXISTS does not alter the existing chunks table.
         # Add the v6 columns explicitly for every non-destructive upgrade
         # path, including databases that skipped an intermediate release.
+        _drop_fts(db)
         add_linking_columns(db)
         add_team_columns(db)
         add_task_columns(db)
@@ -94,6 +133,7 @@ def migrate(db: sqlite3.Connection, from_version: str) -> None:
                     last_search_at  TEXT NOT NULL
                 )"""
             )
+        rebuild_fts_v10(db)
         db.execute(
             "UPDATE meta SET value = ? WHERE key = 'schema_version'",
             (SCHEMA_VERSION,),
@@ -111,7 +151,7 @@ def migrate(db: sqlite3.Connection, from_version: str) -> None:
     db.execute("DROP TABLE IF EXISTS chunks_fts")
     db.execute("DROP TABLE IF EXISTS chunks")
     db.execute("DELETE FROM source_files")
-    db.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
+    _apply_base_schema(db)
     db.execute(
         "UPDATE meta SET value = ? WHERE key = 'schema_version'",
         (SCHEMA_VERSION,),

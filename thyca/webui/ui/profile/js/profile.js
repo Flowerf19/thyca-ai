@@ -76,8 +76,11 @@ const contentHtml = text => window.formatMarkdown
   ? window.formatMarkdown(text)
   : escapeHTML(String(text || '')).split(/\n{2,}/).map(p => `<p>${p.replace(/\n/g, '<br>')}</p>`).join('');
 
+function decodeHashValue(rawHash) {
+  try { return decodeURIComponent(String(rawHash || '').replace(/^#/, '')); } catch { return ''; }
+}
 function decodeHash() {
-  try { return decodeURIComponent(ctx.route.hash.replace(/^#/, '')); } catch { return ''; }
+  return decodeHashValue(ctx.route.hash);
 }
 
 function activeFile() {
@@ -512,8 +515,10 @@ async function loadFiles() {
     // the first roster lands, an unknown id may just be an unloadable
     // roster — leave the first paint to applyRoute.
     if (!state.tab || (!getBot(state.tab) && rosterReady)) renderContent();
+    return true;
   } catch (err) {
     setStatus(el.status, 'Không tải được hồ sơ: ' + err.message, 's-error');
+    return false;
   }
 }
 
@@ -621,12 +626,18 @@ async function submitSectionEdit(e) {
   let focusAfterSave = null;
   try {
     await postJson('/api/memory/canonical', { name: file.name, content });
+    file.content = content;
     state.sectionEdit = null;
-    await loadFiles();
+    const reloaded = await loadFiles();
+    if (!reloaded) renderContent();
     const nextOpener = [...el.root.querySelectorAll('[data-edit-section]')]
       .find(btn => Number(btn.dataset.editSection) === savedIndex);
     if (nextOpener) { state.opener = nextOpener; focusAfterSave = nextOpener; }
-    setStatus(el.status, `Đã lưu ${file.name}.`, 's-ok');
+    setStatus(
+      el.status,
+      reloaded ? `Đã lưu ${file.name}.` : `Đã lưu ${file.name}, nhưng chưa tải lại được hồ sơ.`,
+      reloaded ? 's-ok' : 's-error',
+    );
     return true;
   } catch (err) {
     setStatus($('#section-edit-status'), 'Không lưu được mục: ' + err.message, 's-error');
@@ -673,11 +684,18 @@ async function submitEdit(e) {
   let focusAfterSave = null;
   try {
     await postJson('/api/memory/canonical', { name, content });   // API: POST /api/memory/canonical {name, content}
+    const targetFile = state.files.find(f => f.name === name);
+    if (targetFile) targetFile.content = content;
     state.editing = ''; state.editBase = ''; state.editDraft = '';
-    await loadFiles();
+    const reloaded = await loadFiles();
+    if (!reloaded) renderContent();
     const nextOpener = [...el.root.querySelectorAll('[data-edit]')].find(button => button.dataset.edit === name);
     if (nextOpener) { state.opener = nextOpener; focusAfterSave = nextOpener; }
-    setStatus(el.status, `Đã lưu ${name}.`, 's-ok');
+    setStatus(
+      el.status,
+      reloaded ? `Đã lưu ${name}.` : `Đã lưu ${name}, nhưng chưa tải lại được hồ sơ.`,
+      reloaded ? 's-ok' : 's-error',
+    );
     return true;
   } catch (err) {
     setStatus($('#edit-status'), 'Không lưu được file: ' + err.message, 's-error');
@@ -714,30 +732,52 @@ el.root.addEventListener('click', e => {
 /* Deep links: ?bot=<id> opens that bot's tab (?bot=ghost is preserved as an
    honest unknown-bot view, never another bot); #<file> lands the shared
    tab on the matching file. */
-function applyRoute() {
-  const hash = decodeHash();
-  if (state.tab && getBot(state.tab)) { showTab(state.tab); return; }
-  if (state.tab) { selectedBot = ''; ctx.highlightBot(''); ctx.renderTeam(); fixSidebarLabels(); el.shared.hidden = false; el.title.textContent = 'Không tìm thấy bot'; renderContent(); return; }
-  if (state.files.some(f => f.name === hash)) { showShared('file-' + hash); return; }
-  showShared();
+function applyRoute(nextTab = state.tab, hash = decodeHash()) {
+  if (nextTab && getBot(nextTab)) return showTab(nextTab);
+  if (nextTab) {
+    if (!confirmDiscardEdit()) return false;
+    state.editing = ''; state.editBase = ''; state.editDraft = '';
+    state.sectionEdit = null;
+    state.tab = nextTab;
+    selectedBot = ''; ctx.highlightBot(''); ctx.renderTeam(); fixSidebarLabels();
+    el.shared.hidden = false; el.title.textContent = 'Không tìm thấy bot';
+    renderContent();
+    routeKey = ctx.route.search + ctx.route.hash;
+    return true;
+  }
+  if (state.files.some(f => f.name === hash)) return showShared('file-' + hash);
+  return showShared();
 }
 let routeKey = '';
 
+function handleRoute(route) {
+  const key = route.search + route.hash;
+  if (key === routeKey) return;
+  const nextTab = new URLSearchParams(route.search).get('bot') || '';
+  const nextHash = decodeHashValue(route.hash);
+  if (applyRoute(nextTab, nextHash) === false) {
+    ctx.updateRoute({
+      search: state.tab ? '?bot=' + encodeURIComponent(state.tab) : '',
+      hash: !state.tab && state.doc ? '#' + encodeURIComponent(state.doc) : '',
+    });
+    routeKey = ctx.route.search + ctx.route.hash;
+    return;
+  }
+  routeKey = ctx.route.search + ctx.route.hash;
+}
+
 async function boot() {
-  state.tab = new URLSearchParams(ctx.route.search).get('bot') || '';
+  const initialTab = new URLSearchParams(ctx.route.search).get('bot') || '';
+  state.tab = initialTab;
   await loadFiles();                                 // API: GET /api/memory/stats
   try { await ctx.shellReady; }                         // API: GET /api/bots + GET /api/conversations
   catch (err) { toast('Không tải được đội bot: ' + (err.message || '')); }
   rosterReady = true;
   routeKey = ctx.route.search + ctx.route.hash;
-  applyRoute();
+  applyRoute(initialTab, decodeHash());
 }
   const ready = boot();
   return { ready, selectBot, loadConversation, sidebarLabel(_id, name) { return `Hồ sơ của ${name}`; }, onRoute(route) {
-    const key = route.search + route.hash;
-    if (key === routeKey) return;
-    routeKey = key;
-    state.tab = new URLSearchParams(route.search).get('bot') || '';
-    applyRoute();
+    handleRoute(route);
   } };
 } });

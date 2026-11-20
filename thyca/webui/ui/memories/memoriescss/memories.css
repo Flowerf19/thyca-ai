@@ -51,6 +51,7 @@
 .mem-leaf-title{margin:0;color:#4e4028;overflow-wrap:anywhere}
 .mem-leaf-time{flex-shrink:0;font-size:var(--fs-xs);color:var(--muted);font-variant-numeric:tabular-nums}
 .mem-chips{display:inline-flex;flex-wrap:wrap;gap:5px;align-items:center;margin:0}
+.mem-chips:empty{display:none}
 .mem-chips .chip{padding:1px 7px;font-size:var(--fs-2xs)}
 .mem-chips .mem-chip-warn{background:#fbf2dc;border-color:#ddc69a;color:#8a6528}
 .mem-chips .mem-chip-danger{background:#fdeee6;border-color:#e2bbb0;color:#9c4f3f}

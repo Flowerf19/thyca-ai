@@ -627,3 +627,66 @@ def test_kind_use_filters_page_through_60_leaves(filters: dict) -> None:
     assert filters["statExpiring"] == {"leaves": 0, "useVal": "expiring"}
     assert filters["statReset"] == {"leaves": 60, "useVal": ""}
     assert filters["gets"] == ["/api/memory/stats"]
+
+
+def test_expiring_kpi_reinforce_and_empty_filter() -> None:
+    """Clicking a 0-count KPI shows the filter-empty message (not 'Chưa có lá nhớ
+    nào'), and reinforcing an expiring leaf removes it from the expiring filter."""
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node not installed")
+    tomorrow = "new Date(Date.now() + 864e5).toISOString()"
+    yesterday = "new Date(Date.now() - 864e5).toISOString().slice(0, 10)"
+    setup = f"""
+        const EXP_LEAF = {{
+            chunk_id: 'e1', memory_id: 'me1', heading: '## 10:00 — Ghi chú sắp hạn',
+            snippet: '- Sắp hết hạn', timeline_day: {yesterday},
+            get_count: 0, search_count: 0, bots: ['thyca'], expires_at: {tomorrow},
+        }};
+        hooks.getJson = async url => (url === '/api/memory/stats'
+            ? {{ bot_id: null, total: 1, used: 0, unused: 1, searched: 0, untouched: 1,
+                 expiring: [EXP_LEAF], suggest_removal: [], leaves: [EXP_LEAF] }}
+            : {{}});
+    """
+    body = """
+        await settle();
+        const clickStat = filter => {
+            const btn = { dataset: { statFilter: filter }, closest: s => (s === '[data-stat-filter]' ? btn : null) };
+            fire(document.querySelector('#memory-stats'), 'click', { target: btn });
+        };
+        clickStat('suggest');
+        const emptySuggestHtml = document.querySelector('#memory-leaves').innerHTML;
+        clickStat('expiring');
+        const beforeReinforceHtml = document.querySelector('#memory-leaves').innerHTML;
+        const countBefore = document.querySelector('#memory-count').textContent;
+        const farFuture = new Date(Date.now() + 90 * 864e5).toISOString();
+        hooks.postJson = async () => ({ ok: true, expires_at: farFuture });
+        const article = { dataset: { chunk: 'e1' } };
+        const btn = { dataset: { act: 'reinforce' }, disabled: false,
+            closest: s => (s === '[data-act]' ? btn : s === '[data-chunk]' ? article : null) };
+        fire(document.querySelector('#memory-leaves'), 'click', { target: btn });
+        await settle();
+        const afterReinforceHtml = document.querySelector('#memory-leaves').innerHTML;
+        const countAfter = document.querySelector('#memory-count').textContent;
+        const statsAfter = document.querySelector('#memory-stats').innerHTML;
+        clickStat('expiring');
+        const afterClearHtml = document.querySelector('#memory-leaves').innerHTML;
+        console.log(JSON.stringify({
+            emptySuggestHtml, beforeReinforceHtml, countBefore,
+            afterReinforceHtml, countAfter, statsAfter, afterClearHtml, gets: calls.gets,
+        }));
+    """
+    result = subprocess.run(
+        [node, "--input-type=module", "-e", _HARNESS + setup + _EVAL + body],
+        cwd=ROOT, check=True, capture_output=True, text=True, timeout=15,
+        env={**os.environ, "MEM_JS": str(MEM_JS)},
+    )
+    out = json.loads(result.stdout)
+    assert "Không tìm thấy lá nào" in out["emptySuggestHtml"]
+    assert "Chưa có lá nhớ nào" not in out["emptySuggestHtml"]
+    assert "Ghi chú sắp hạn" in out["beforeReinforceHtml"] and out["countBefore"] == "1 lá"
+    assert "Ghi chú sắp hạn" not in out["afterReinforceHtml"] and out["countAfter"] == "0/1 lá"
+    assert "Sắp hết hạn" in out["beforeReinforceHtml"]
+    assert 'data-stat-filter="expiring" aria-pressed="true"><b>0</b>' in out["statsAfter"]
+    assert '<div class="mem-chips"></div>' in out["afterClearHtml"]
+    assert out["gets"] == ["/api/memory/stats"]

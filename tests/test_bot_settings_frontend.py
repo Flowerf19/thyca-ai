@@ -373,6 +373,53 @@ def test_profile_bot_dossier_top_bar_navigates_shared_and_opens_settings(node) -
     assert out == {"hasBotGrid": True, "openedSettings": 1, "sharedOk": True, "tabAfter": ""}
 
 
+def test_profile_route_dirty_guard_and_reload_failure(node) -> None:
+    """onRoute respects confirmDiscardEdit for both valid and unknown bot IDs,
+    and a failed post-save stats reload still closes the editor without claiming ok."""
+    out = _run(node, """
+        const SETTINGS = %s;
+        let failStats = false;
+        installFetch((url, opts = {}) => {
+            if (url === '/api/bots') return { bots: %s };
+            if (url === '/api/conversations') return { conversations: [] };
+            if (url === '/api/config') return %s;
+            if (url === '/api/memory/stats') {
+                if (failStats) throw new Error('stats failed');
+                return { files: [
+                    { name: 'USER.md', content: 'old' },
+                    { name: 'SOUL.md', content: 'soul' },
+                ] };
+            }
+            if (url === '/api/memory/canonical' && opts.method === 'POST') return { ok: true };
+            return {};
+        });
+        globalThis.location.search = '';
+        globalThis.location.pathname = '/ui/profile/index.html';
+        await tick(); await boot(); await tick(20);
+        openEdit('USER.md', null);
+        $('#edit-content').value = 'dirty draft';
+        $('#edit-content').oninput();
+        globalThis.confirm = () => false;
+        __controller.onRoute({ page: 'profile', search: '?bot=coder', hash: '' });
+        const keptOnCoder = state.tab === '' && state.editing === 'USER.md' && ctx.route.search === '';
+        __controller.onRoute({ page: 'profile', search: '?bot=ghost', hash: '' });
+        const keptOnGhost = state.tab === '' && state.editing === 'USER.md' && ctx.route.search === '';
+        failStats = true;
+        await submitEdit({ preventDefault() {} });
+        const rootHtml = document.querySelector('#profile-root').innerHTML;
+        return {
+            keptOnCoder, keptOnGhost,
+            closedForm: !rootHtml.includes('id="edit-form"'),
+            updatedText: rootHtml.includes('dirty draft'),
+            statusText: $('#profile-status').textContent,
+            statusClass: $('#profile-status').className,
+        };
+    """ % (_SETTINGS, _ROSTER, _CONFIG), via="profile", emit="profile")
+    assert out["keptOnCoder"] is True and out["keptOnGhost"] is True
+    assert out["closedForm"] is True and out["updatedText"] is True
+    assert "chưa tải lại được" in out["statusText"] and "s-error" in out["statusClass"]
+
+
 def test_profile_provider_no_bot_scope(node) -> None:
     """Provider page has no bot editor; sidebar selection navigates to the
     Profile dossier (?bot=<id>)."""

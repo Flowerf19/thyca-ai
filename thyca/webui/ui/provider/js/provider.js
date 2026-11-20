@@ -780,7 +780,7 @@ async function submitEditor(event) {
   return commitValues(fresh => mergeEditorDraft(fresh, draft), {
     note: draft.connectionOnly
       ? `Đã lưu kết nối “${draft.id}”.`
-      : `Đã lưu ${draft.modelId}. Chọn “Đặt mặc định” ở danh sách bên cạnh để dùng model này.`,
+      : `Đã lưu ${draft.modelId}. Chọn “Đặt mặc định” ở danh sách bên dưới để dùng model này.`,
     onPosted: () => {
       state.editingProvider = draft.id;
       state.discovery = null;

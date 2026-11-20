@@ -278,7 +278,7 @@ function leafHtml(leaf) {
     <div class="mem-leaf-head">
       <h4 class="mem-leaf-title">${escapeHTML(title)}</h4>
       ${time ? `<time class="mem-leaf-time">${escapeHTML(time)}</time>` : ''}
-      ${chips ? `<div class="mem-chips">${chips}</div>` : ''}
+      <div class="mem-chips">${chips}</div>
     </div>
     <div class="mem-actions">
       <button class="quiet-button" data-act="reinforce" type="button">${icon('retry')}<span>Gia hạn</span></button>
@@ -302,8 +302,9 @@ function renderLeaves() {
     ? (leaves.length === total ? `${total} lá` : `${leaves.length}/${total} lá`)
     : '';
   if (!memState.stats) { box.innerHTML = ''; return; }
+  const hasFilter = Boolean(memState.query.trim() || memState.kind || memState.use);
   if (!leaves.length) {
-    box.innerHTML = `<div class="empty-note"><strong>${memState.query ? 'Không tìm thấy lá nào' : 'Chưa có lá nhớ nào'}</strong>${memState.query ? 'Thử từ khóa khác hoặc xóa bộ lọc tìm kiếm.' : (memState.scope ? 'Bot này chưa ghi trang nào vào bộ nhớ.' : 'Các bot sẽ ghi lại điều học được sau mỗi phiên trò chuyện.')}</div>`;
+    box.innerHTML = `<div class="empty-note"><strong>${hasFilter ? 'Không tìm thấy lá nào' : 'Chưa có lá nhớ nào'}</strong>${hasFilter ? 'Thử từ khóa khác hoặc xóa bộ lọc đang chọn.' : (memState.scope ? 'Bot này chưa ghi trang nào vào bộ nhớ.' : 'Các bot sẽ ghi lại điều học được sau mỗi phiên trò chuyện.')}</div>`;
     return;
   }
   /* Group by timeline_day — Hôm nay/Hôm qua/date, payload order kept inside. */
@@ -465,6 +466,7 @@ function wirePage() {
           }
           refreshLeafDom(leaf);
           renderStats();
+          if (memState.use === 'expiring') renderLeaves();
         }
         toast('Đã gia hạn trang.');
       }

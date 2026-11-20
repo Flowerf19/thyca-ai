@@ -275,8 +275,8 @@ def test_changed_scope_failure_keeps_stats_unknown_and_retryable(node: str) -> N
           };
         })().then(value => console.log(JSON.stringify(value)))""",
     )
-    assert outcome["values"] == ["—"] * 7
-    assert "chưa có lượt nào ghi nhận giá" not in outcome["grid"].lower()
+    assert outcome["values"] == ["—"] * 4
+    assert "chưa có giá" not in outcome["grid"].lower()
     assert outcome["statusHidden"] is False and "scope unavailable" in outcome["status"]
     assert outcome["retryHidden"] is False
     assert all(outcome[key] == "" for key in ("day", "dayNote", "hour", "bots", "models"))

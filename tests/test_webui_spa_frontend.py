@@ -668,7 +668,7 @@ def test_root_spa_retains_all_workspaces_and_restores_history(tmp_path: Path, re
     await wait(() => ThycaRouter.currentPage() === 'profile' && !document.querySelector('[data-page-workspace="profile"]').hidden);
     const profileRoot = document.querySelector('#profile-root');
     const geometry = profileGeometry();
-    if (JSON.stringify(geometry.insets.map(Math.round)) !== JSON.stringify([38, 38]) || geometry.cardCount !== 1 || geometry.overflow || document.querySelector('#profile-root #bot-model-card') || document.querySelector('#profile-root #bot-settings-form')) throw new Error('desktop Profile geometry mismatch: ' + JSON.stringify(geometry));
+    if (geometry.insets.length !== 2 || Math.abs(geometry.insets[0] - geometry.insets[1]) > 1 || geometry.insets[0] < 12 || geometry.cardCount !== 1 || geometry.overflow || document.querySelector('#profile-root #bot-model-card') || document.querySelector('#profile-root #bot-settings-form')) throw new Error('desktop Profile geometry mismatch: ' + JSON.stringify(geometry));
     const savedProfile = { page: 'profile', search: '?bot=coder', hash: '' };
     document.querySelector('#open-settings').click();
     await wait(() => !!document.querySelector('#settings-dialog')?.open && document.querySelector('#settings-bot')?.value === 'coder' && document.querySelector('#bot-model')?.value === 'model-a' && document.querySelector('#bot-thinking')?.value === 'medium');
@@ -736,41 +736,33 @@ def test_root_spa_retains_all_workspaces_and_restores_history(tmp_path: Path, re
     document.querySelector('#profile-shared').click();
     await wait(() => ThycaRouter.currentRoute().search === '' && document.querySelector('[data-edit="USER.md"]'));
     if (document.querySelectorAll('#team-bot-list .bot-card[data-selected="true"]').length) throw new Error('shared Profile failed to clear bot selection');
-    const editButton = document.querySelector('[data-edit="USER.md"]');
-    editButton.click();
-    const editDialog = document.querySelector('#edit-dialog');
-    await wait(() => editDialog.open && document.activeElement === document.querySelector('#edit-content'));
+    document.querySelector('[data-edit="USER.md"]').click();
+    await wait(() => !!document.querySelector('#edit-form') && document.activeElement === document.querySelector('#edit-content'));
     document.querySelector('[data-page-link="memories"]').click();
     await wait(() => ThycaRouter.currentPage() === 'memories');
-    if (editDialog.open) throw new Error('page navigation left a Profile dialog open');
     document.querySelector('[data-page-link="profile"]').click();
     await wait(() => ThycaRouter.currentPage() === 'profile' && !document.querySelector('[data-page-workspace="profile"]').hidden);
+    if (!document.querySelector('#edit-form')) throw new Error('page navigation dropped active Profile inline editor draft');
+    document.querySelector('#edit-content').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await wait(() => !document.querySelector('#edit-form') && document.activeElement === document.querySelector('[data-edit="USER.md"]'));
     document.querySelector('[data-edit="USER.md"]').click();
-    await wait(() => editDialog.open);
-    editDialog.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: 0, clientY: 0 }));
-    await wait(() => !editDialog.open && document.activeElement === document.querySelector('[data-edit="USER.md"]'));
-    document.querySelector('[data-edit="USER.md"]').click();
-    await wait(() => editDialog.open);
-    editDialog.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-    await wait(() => !editDialog.open);
-    document.querySelector('[data-edit="USER.md"]').click();
-    await wait(() => editDialog.open);
+    await wait(() => !!document.querySelector('#edit-form'));
     const canonicalBeforeConfirm = (await fetch(window.__spaControlBase + '/state').then(response => response.json())).canonicalPosts;
     window.confirm = () => false;
     document.querySelector('#edit-content').value = '';
     document.querySelector('#edit-form').requestSubmit();
     await new Promise(resolve => setTimeout(resolve, 100));
-    if (!editDialog.open || (await fetch(window.__spaControlBase + '/state').then(response => response.json())).canonicalPosts !== canonicalBeforeConfirm) throw new Error('blank canonical confirmation did not guard the save');
+    if (!document.querySelector('#edit-form') || (await fetch(window.__spaControlBase + '/state').then(response => response.json())).canonicalPosts !== canonicalBeforeConfirm) throw new Error('blank canonical confirmation did not guard the save');
     window.confirm = () => true;
     document.querySelector('#edit-content').value = 'Edited from SPA test';
     await fetch('/api/test/fail-canonical-once');
     document.querySelector('#edit-form').requestSubmit();
     await wait(() => document.querySelector('#edit-status').textContent.includes('injected canonical failure'));
-    if (!editDialog.open) throw new Error('canonical save error closed the editing dialog');
+    if (!document.querySelector('#edit-form')) throw new Error('canonical save error closed the inline editor');
     document.querySelector('#edit-form').requestSubmit();
-    await wait(() => !editDialog.open && document.querySelector('#profile-status').textContent.includes('Đã lưu USER.md'));
+    await wait(() => !document.querySelector('#edit-form') && document.querySelector('#profile-status').textContent.includes('Đã lưu USER.md'));
     await wait(() => document.getElementById('file-USER.md')?.textContent.includes('Edited from SPA test'), 'canonical USER.md content refreshed');
-    if (document.activeElement !== document.querySelector('[data-edit="USER.md"]')) throw new Error('canonical dialog did not restore focus');
+    if (document.activeElement !== document.querySelector('[data-edit="USER.md"]')) throw new Error('canonical inline editor did not restore focus');
     await ThycaRouter.navigate('profile', { search: '?bot=coder' });
     await wait(() => ThycaRouter.currentRoute().search === '?bot=coder' && !!document.querySelector('#profile-root .chip')?.textContent.includes('model: model-b'));
     document.querySelector('#open-settings').click();
@@ -976,7 +968,8 @@ def test_root_spa_retains_all_workspaces_and_restores_history(tmp_path: Path, re
     assert result["state"] == result["route"]
     assert result["audit"]["initialChatStyles"] == result["audit"]["finalChatStyles"]
     assert result["audit"]["initialChatSnapshot"] == result["audit"]["finalChatSnapshot"]
-    assert result["audit"]["desktopProfileGeometry"]["insets"] == [38, 38]
+    insets = result["audit"]["desktopProfileGeometry"]["insets"]
+    assert len(insets) == 2 and abs(insets[0] - insets[1]) <= 1 and insets[0] >= 12
     assert result["audit"]["desktopProfileGeometry"]["cardCount"] == 1
     assert result["audit"]["desktopProfileGeometry"]["overflow"] is False
     assert result["audit"]["workspaces"] == 5 and result["audit"]["intervalsStable"] is True
@@ -1046,7 +1039,8 @@ def test_root_spa_retains_all_workspaces_and_restores_history(tmp_path: Path, re
         assert mobile_result["href"].endswith("/") and mobile_result["frames"] == 0
         assert mobile_result["documentWidth"] <= mobile_result["viewport"], mobile_result
         assert mobile_result["bodyWidth"] <= mobile_result["viewport"], mobile_result
-        assert mobile_result["insets"] == [14, 14], mobile_result
+        m_insets = mobile_result["insets"]
+        assert len(m_insets) == 2 and abs(m_insets[0] - m_insets[1]) <= 1 and 12 <= m_insets[0] <= 20, mobile_result
         assert mobile_result["cardCount"] == 1, mobile_result
         assert mobile_result["overflow"] is False and mobile_result["mobileMenuClosed"] is True, mobile_result
         assert [item["page"] for item in mobile_result["mobileViews"]] == list(PAGES), mobile_result

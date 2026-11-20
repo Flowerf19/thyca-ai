@@ -147,6 +147,7 @@ def test_page_markup_covers_every_region() -> None:
     for needle in (
         'id="stat-grid"', 'id="range-note"', 'id="range-from"',
         'id="range-to"', 'id="range-apply"',
+        'id="range-custom-toggle"', 'id="range-custom-bar"',
         'data-preset="1"', 'data-preset="7"', 'data-preset="30"',
         'data-day-metric="tokens"', 'data-day-metric="requests"',
         'id="chart-day"', 'id="chart-day-note"', 'id="chart-cost"',
@@ -161,6 +162,7 @@ def test_page_markup_covers_every_region() -> None:
         '/api/traces/stats?', '/api/traces?',
     ):
         assert needle in src, needle
+    assert 'class="token-summary-grid"' not in src
     # Default range preset is "7 ngày" — only that chip starts pressed.
     assert re.search(
         r'data-preset="7"[^>]*aria-pressed="true"', src)
@@ -607,3 +609,26 @@ def test_usage_input_total_excludes_cache_read(node: str) -> None:
     assert out["cache"] == "100"
     assert out["output"] == "200"
     assert "Input 900" in out["grid"]
+
+
+def test_custom_range_bar_collapses_for_presets_and_opens_for_custom_dates(node: str) -> None:
+    out = _eval_dash(
+        node,
+        """(async () => {
+          await __releaseShell(); await __controller.ready;
+          const initialHidden = document.querySelector('#range-custom-bar').hidden;
+          document.querySelector('#range-custom-toggle').listeners.click[0]();
+          const toggledOpen = !document.querySelector('#range-custom-bar').hidden;
+          setPreset('all');
+          const allHidden = document.querySelector('#range-custom-bar').hidden;
+          document.querySelector('#range-from').value = '2026-09-01';
+          document.querySelector('#range-to').value = '2026-09-10';
+          applyRange();
+          const customOpen = !document.querySelector('#range-custom-bar').hidden;
+          setPreset(7);
+          const presetClosed = document.querySelector('#range-custom-bar').hidden;
+          return { initialHidden, toggledOpen, allHidden, customOpen, presetClosed };
+        })().then(v => console.log(JSON.stringify(v)))""",
+        setup="__jsonResponder = async url => url.includes('stats') ? { totals: {}, models: [], by_status: [] } : { traces: [], total: 0 };",
+    )
+    assert out == {"initialHidden": True, "toggledOpen": True, "allHidden": True, "customOpen": True, "presetClosed": True}

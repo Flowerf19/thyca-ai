@@ -11,9 +11,10 @@ ThycaRouter.register('provider', { title: 'Provider', stylesheet: '/ui/provider/
 const PROVIDER_ID_RE = /^[A-Za-z0-9_-]+$/;
 const FALLBACK_LIMITS = { loopMax: [1, 200], hotTailKB: [1, 64], contextTokens: [1000, 2000000], maxTokens: [1, 2000000] };
 const CHOOSE_MODEL = '__choose__';
+const ADVANCED_FIELDS = new Set(['#m-in', '#m-cache', '#m-out', '#m-context', '#m-max']);
 const state = {
   schema: null, values: null, meta: {}, loading: true, saving: false, reloading: false,
-  editingProvider: '', providerBaseline: null, modelBaseline: null, editorBaseline: null, cleanStatus: 'Đã tải cấu hình',
+  editingProvider: '', providerBaseline: null, modelBaseline: null, editorBaseline: null, cleanStatus: '',
   connectionFingerprint: null, verifying: false, verifyGeneration: 0,
   connectionRevision: 0,
   activeVerify: null, discovery: null, discoveryStatus: '',
@@ -33,46 +34,61 @@ workspace.insertAdjacentHTML('beforeend', `
   <p class="page-status" id="page-status" role="status" aria-live="polite" hidden></p>
   <section class="paper-card connection-editor" id="connection-editor" aria-labelledby="provider-title">
     <fieldset id="editor-controls">
-      <div class="editor-topline">
-        <label class="field"><span>Kết nối</span><select id="connection-picker" aria-label="Chọn kết nối đã lưu"></select></label>
-        <button class="quiet-button" id="new-connection" type="button">${icon('plus')} Thêm kết nối</button>
+      <div class="provider-bar">
+        <div class="provider-tabs-wrap">
+          <div class="connection-tabs" id="connection-tabs" role="tablist" aria-label="Kết nối đã lưu" tabindex="-1"></div>
+          <button class="conn-tab conn-tab-new" id="new-connection" type="button" role="tab" aria-selected="false">${icon('plus')} Thêm kết nối</button>
+        </div>
+        <div class="current-default" id="current-default" aria-live="polite"></div>
       </div>
       <form class="editor-form" id="connection-form" aria-label="Cấu hình kết nối và model" novalidate>
         <div class="connection-fields">
-          <label class="field"><span>Tên kết nối</span><input id="pv-id" maxlength="64" autocomplete="off" spellcheck="false" placeholder="Không dấu, không khoảng trắng" required></label>
+          <label class="field" id="pv-id-field"><span>Tên kết nối</span><input id="pv-id" maxlength="64" autocomplete="off" spellcheck="false" placeholder="Không dấu, không khoảng trắng" required></label>
           <label class="field"><span>URL API</span><input id="pv-base-url" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://api.example.com/v1" required></label>
           <label class="field"><span>API key <em id="pv-key-note"></em></span><input id="pv-key" type="password" autocomplete="new-password" maxlength="200" placeholder="Nhập API key" title="Key được lưu trên máy này và gửi tới URL API khi kết nối."></label>
           <label class="field"><span>Kiểu API</span><select id="pv-api"><option value="openai_chat">Chat completions</option><option value="openai_responses">Responses</option></select></label>
-          <div class="load-row field-wide"><button class="quiet-button" id="v-submit" type="button" title="Chỉ tải danh sách, không gọi model hay lưu cấu hình.">${icon('list')} Tải model</button><button class="quiet-button is-danger" type="button" id="delete-provider" hidden>Xóa kết nối</button></div>
         </div>
-        <p class="discovery-status" id="discovery-status" role="status" aria-live="polite" hidden></p>
         <div class="model-editor">
-          <label class="field model-picker-field"><span>Model để dùng</span><select id="m-picker" aria-label="Chọn model"><option value="__choose__">Chọn model…</option></select></label>
-          <p class="ownership-warning field-wide" id="ownership-warning" role="status" hidden></p>
-          <p class="legacy-url-warning field-wide" id="legacy-url-warning" role="status" hidden></p>
-          <div class="price-heading field-wide" title="Giá chỉ dùng để ước tính chi phí; API không trả giá này. Điền đủ ba mức hoặc để trống cả ba."><strong>Giá (tùy chọn)</strong><span>USD / 1 triệu token</span></div>
-          <div class="price-fields field-wide">
-            <label class="field"><span>Input</span><input id="m-in" type="number" min="0" step="any" inputmode="decimal" placeholder="Không bắt buộc"></label>
-            <label class="field"><span>Cache</span><input id="m-cache" type="number" min="0" step="any" inputmode="decimal" placeholder="Không bắt buộc"></label>
-            <label class="field"><span>Output</span><input id="m-out" type="number" min="0" step="any" inputmode="decimal" placeholder="Không bắt buộc"></label>
+          <div class="model-pick-row">
+            <label class="field model-picker-field"><span>Model để dùng <em class="model-mode-tag" id="model-editor-mode" hidden></em></span><select id="m-picker" aria-label="Chọn model"><option value="__choose__">Chọn model…</option></select></label>
+            <button class="quiet-button" id="v-submit" type="button" title="Chỉ tải danh sách, không gọi model hay lưu cấu hình.">${icon('list')} Tải model</button>
+            <button class="quiet-button is-danger" type="button" id="delete-model" hidden>Xóa model</button>
           </div>
-          <p class="field-hint field-wide">Nhập đủ 3 giá hoặc để trống.</p>
-          <fieldset class="field field-wide" id="m-efforts-wrap"><legend>Mức suy luận model hỗ trợ</legend><div class="effort-checks" id="m-efforts"></div></fieldset>
-          <div class="model-limits-grid">
-            <label class="field"><span>Ngữ cảnh (token)</span><input id="m-context" type="number" min="1000" max="2000000" step="16000" inputmode="numeric" placeholder="Kế thừa"></label>
-            <label class="field"><span>Output tối đa (token)</span><input id="m-max" type="number" min="1" max="2000000" step="16000" inputmode="numeric" placeholder="Mặc định 16384"></label>
-          </div>
-          <div class="model-actions"><button class="quiet-button is-danger" type="button" id="delete-model" hidden>Xóa model đã lưu</button></div>
+          <p class="discovery-status" id="discovery-status" role="status" aria-live="polite" hidden></p>
+          <p class="ownership-warning" id="ownership-warning" role="status" hidden></p>
+          <p class="legacy-url-warning" id="legacy-url-warning" role="status" hidden></p>
+          <details class="model-advanced" id="model-advanced">
+            <summary class="model-advanced-toggle"><span class="model-advanced-label">Tùy chỉnh nâng cao</span><span class="model-advanced-summary" id="model-advanced-summary"></span></summary>
+            <div class="model-advanced-body">
+              <div class="advanced-row">
+                <div class="advanced-group">
+                  <div class="price-heading" title="Giá chỉ dùng để ước tính chi phí; API không trả giá này. Điền đủ ba mức hoặc để trống cả ba."><strong>Giá (USD / 1M token)</strong><span>Nhập đủ 3 giá hoặc để trống.</span></div>
+                  <div class="price-fields">
+                    <label class="field"><span>Input</span><input id="m-in" type="number" min="0" step="any" inputmode="decimal" placeholder="0.00"></label>
+                    <label class="field"><span>Cache</span><input id="m-cache" type="number" min="0" step="any" inputmode="decimal" placeholder="0.00"></label>
+                    <label class="field"><span>Output</span><input id="m-out" type="number" min="0" step="any" inputmode="decimal" placeholder="0.00"></label>
+                  </div>
+                </div>
+                <div class="advanced-group">
+                  <div class="limits-heading"><strong>Giới hạn (token)</strong><span>Để trống để dùng mặc định.</span></div>
+                  <div class="model-limits-grid">
+                    <label class="field"><span>Ngữ cảnh (token)</span><input id="m-context" type="number" min="1000" max="2000000" step="16000" inputmode="numeric" placeholder="Kế thừa"></label>
+                    <label class="field"><span>Output tối đa (token)</span><input id="m-max" type="number" min="1" max="2000000" step="16000" inputmode="numeric" placeholder="16384"></label>
+                  </div>
+                </div>
+              </div>
+              <fieldset class="field" id="m-efforts-wrap"><legend>Mức suy luận model hỗ trợ</legend><div class="effort-checks" id="m-efforts"></div></fieldset>
+            </div>
+          </details>
+          <p class="form-status" id="editor-status" role="status" aria-live="polite" hidden></p>
+          <div class="editor-footer"><button class="primary-action" id="save-use" type="submit" form="connection-form">Lưu</button><button class="quiet-button" type="button" id="cancel-editor">Hủy thay đổi</button><span class="save-status" id="save-status" role="status" aria-live="polite"></span><button class="quiet-button is-danger" type="button" id="delete-provider" hidden>Xóa kết nối</button></div>
         </div>
-        <p class="form-status" id="editor-status" role="status" aria-live="polite" hidden></p>
-        <div class="current-default" id="current-default" aria-live="polite"></div>
-        <div class="editor-footer"><button class="primary-action" id="save-use" type="submit" form="connection-form">Lưu</button><button class="quiet-button" type="button" id="cancel-editor">Hủy thay đổi</button><span class="save-status" id="save-status" role="status" aria-live="polite">Đang tải cấu hình…</span></div>
+        <section class="saved-models" id="saved-models" aria-label="Model đã lưu">
+          <div class="saved-models-head"><h2>Model đã lưu</h2><p class="card-copy" id="saved-models-note" aria-live="polite"></p></div>
+          <ul class="saved-model-rows" id="saved-model-rows"></ul>
+        </section>
       </form>
     </fieldset>
-    <section class="saved-models" id="saved-models" aria-label="Model đã lưu">
-      <div class="saved-models-head"><h2>Model đã lưu</h2><p class="card-copy" id="saved-models-note" aria-live="polite"></p></div>
-      <ul class="saved-model-rows" id="saved-model-rows"></ul>
-    </section>
   </section>
 </div></div>`);
 
@@ -98,7 +114,8 @@ class CancelOperation extends Error {}
 function clearFieldErrors() { $$('[aria-invalid]').forEach(node => node.removeAttribute('aria-invalid')); }
 function fail(err, fallback = 'Không thể lưu.') {
   if (err?.fieldId) {
-    const field = $(err.fieldId); let details = field?.closest('details');
+    const field = $(err.fieldId);
+    let details = field?.closest('details') || (ADVANCED_FIELDS.has(err.fieldId) ? $('#model-advanced') : null);
     while (details) { details.open = true; details = details.parentElement?.closest('details') || null; }
     field?.setAttribute('aria-invalid', 'true'); field?.focus();
   }
@@ -130,10 +147,8 @@ function effortLevelsForChecks(model) {
 function paintEffortChips(box) {
   for (const label of box.querySelectorAll('label.effort-chip')) {
     const input = label.querySelector('input');
-    const tick = label.querySelector('.effort-tick');
     const on = !!(input && input.checked);
     label.setAttribute('data-active', on ? 'true' : 'false');
-    if (tick) tick.textContent = on ? '✓' : '';
   }
 }
 function renderEffortChecks(model) {
@@ -151,13 +166,10 @@ function renderEffortChecks(model) {
     input.className = 'effort-check';
     if (initial.includes(level)) input.checked = true;
     input.setAttribute('data-effort', level);
-    const tick = document.createElement('span');
-    tick.className = 'effort-tick';
-    tick.textContent = initial.includes(level) ? '✓' : '';
     const name = document.createElement('span');
     name.className = 'effort-name';
     name.textContent = level;
-    label.append(input, tick, name);
+    label.append(input, name);
     return label;
   }));
 }
@@ -270,11 +282,44 @@ function fillOptions(select, options, current) {
   }));
   if (options.some(([value]) => value === current)) select.value = current;
 }
-function renderConnectionPicker() {
-  const select = $('#connection-picker'); if (!select) return;
-  const providers = state.values?.providers || {};
-  const options = [['__new__', 'Thêm kết nối mới'], ...providerIds().sort().map(id => [`provider:${id}`, `${id} — ${providers[id]?.baseUrl || ''}`])];
-  const selected = state.editingProvider ? `provider:${state.editingProvider}` : '__new__'; fillOptions(select, options, selected);
+function defaultOwnerId() {
+  const id = state.values?.defaultModel || '';
+  return id ? modelProviderId(state.values, id) : (state.values?.defaultProvider || '');
+}
+function renderConnectionTabs() {
+  const bar = $('#connection-tabs'); if (!bar) return;
+  const defOwner = defaultOwnerId();
+  const busy = state.loading || state.saving || state.reloading;
+  bar.replaceChildren(...providerIds().sort().map(id => {
+    const active = state.editingProvider === id;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'conn-tab';
+    btn.setAttribute('role', 'tab');
+    btn.dataset.provider = id;
+    btn.dataset.active = active ? 'true' : 'false';
+    btn.setAttribute('aria-selected', active ? 'true' : 'false');
+    btn.disabled = busy;
+    if (id === defOwner) {
+      const dot = document.createElement('span');
+      dot.className = 'conn-tab-dot';
+      dot.setAttribute('aria-hidden', 'true');
+      btn.appendChild(dot);
+    }
+    const name = document.createElement('span');
+    name.className = 'conn-tab-name';
+    name.textContent = id;
+    btn.appendChild(name);
+    // Direct binding (not delegation): minimal test harness does not bubble clicks.
+    btn.onclick = () => { openExistingConnection(id); };
+    return btn;
+  }));
+  const newBtn = $('#new-connection');
+  if (newBtn) {
+    const isNew = !state.editingProvider;
+    newBtn.dataset.active = isNew ? 'true' : 'false';
+    newBtn.setAttribute('aria-selected', isNew ? 'true' : 'false');
+  }
 }
 function renderProviderSelects() {
   const apiSelect = $('#pv-api');
@@ -308,23 +353,58 @@ function renderModelPicker() {
 function renderCurrentDefault() {
   const id = state.values?.defaultModel || '';
   const provider = id ? modelProviderId(state.values, id) : state.values?.defaultProvider || '';
-  $('#current-default').textContent = id ? `Hiện tại: ${id} · ${provider || 'kết nối mặc định'}` : 'Hiện tại: Chưa chọn model mặc định.';
+  const el = $('#current-default');
+  el.textContent = id ? `Hiện tại: ${id} · ${provider || 'kết nối mặc định'}` : 'Hiện tại: Chưa chọn model mặc định.';
+  el.dataset.hasDefault = id ? 'true' : 'false';
 }
 function renderEditorActions() {
   const pid = state.editingProvider;
+  const modelId = selectedModelId();
+  const saved = modelIsSaved(modelId);
   $('#delete-provider').hidden = !pid;
-  $('#delete-model').hidden = !modelIsSaved();
+  $('#delete-model').hidden = !saved;
+  const mode = $('#model-editor-mode');
+  if (mode) {
+    mode.hidden = !modelId;
+    mode.textContent = modelId ? (saved ? 'Đang sửa' : 'Model mới') : '';
+    mode.dataset.mode = saved ? 'edit' : 'new';
+  }
+  const idField = $('#pv-id-field');
+  if (idField) idField.hidden = !!pid;
   $('#pv-id').readOnly = !!pid;
+  $('#pv-id').title = pid ? 'Tên kết nối đã lưu không sửa trực tiếp; dùng “Thêm kết nối” nếu muốn tạo tên khác.' : '';
   $('#pv-key-note').textContent = pid && providerHasStoredKey(pid) ? 'Đã lưu key' : '';
   $('#pv-key').placeholder = pid && providerHasStoredKey(pid) ? 'Để trống để giữ key' : 'Nhập API key';
+}
+function formatTokenCount(value) {
+  if (!Number.isFinite(value) || value <= 0) return '';
+  return Number.isInteger(value) && value >= 1000 && value % 1000 === 0 ? `${value / 1000}k` : String(value);
 }
 function savedModelMeta(id) {
   const model = state.values?.models?.[id] || {};
   const bits = [];
   if (model.input || model.cache || model.output) bits.push(`$${model.input}/${model.cache}/${model.output}`);
-  if (Number.isInteger(model.contextTokens)) bits.push(`${model.contextTokens} ctx`);
+  if (Number.isInteger(model.contextTokens)) bits.push(`${formatTokenCount(model.contextTokens)} ctx`);
+  if (Number.isInteger(model.maxTokens)) bits.push(`${formatTokenCount(model.maxTokens)} max`);
   if (Array.isArray(model.reasoningEfforts) && model.reasoningEfforts.length) bits.push(model.reasoningEfforts.join(', '));
   return bits.join(' · ');
+}
+function renderAdvancedSummary() {
+  const el = $('#model-advanced-summary'); if (!el) return;
+  const pIn = String($('#m-in')?.value ?? '').trim();
+  const pCache = String($('#m-cache')?.value ?? '').trim();
+  const pOut = String($('#m-out')?.value ?? '').trim();
+  const pricePart = (!pIn && !pCache && !pOut)
+    ? 'Chưa đặt giá'
+    : (pIn && pCache && pOut ? `$${pIn}/$${pCache}/$${pOut}` : 'Giá chưa đủ 3 mức');
+  const activeEfforts = checkedEfforts().length;
+  const effortPart = activeEfforts ? `${activeEfforts} mức suy luận` : 'Suy luận: kế thừa';
+  const ctxNum = Number(String($('#m-context')?.value ?? '').trim());
+  const maxNum = Number(String($('#m-max')?.value ?? '').trim());
+  const ctxPart = Number.isInteger(ctxNum) && ctxNum > 0 ? formatTokenCount(ctxNum) : 'Kế thừa';
+  const maxPart = Number.isInteger(maxNum) && maxNum > 0 ? formatTokenCount(maxNum) : '';
+  const limitPart = maxPart ? `${ctxPart} / ${maxPart} max` : ctxPart;
+  el.textContent = [pricePart, effortPart, limitPart].join(' · ');
 }
 function renderSavedModels() {
   const list = $('#saved-model-rows'); if (!list || !state.values) return;
@@ -339,13 +419,17 @@ function renderSavedModels() {
   list.replaceChildren(...ids.map(id => {
     const item = document.createElement('li');
     item.className = 'saved-model-row';
+    item.dataset.editing = id === state.selectedModel ? 'true' : 'false';
+    const info = document.createElement('div');
+    info.className = 'saved-model-info';
     const name = document.createElement('span');
     name.className = 'saved-model-name'; name.textContent = id;
     name.title = id;
-    item.appendChild(name);
+    info.appendChild(name);
     const meta = document.createElement('span');
     meta.className = 'saved-model-meta'; meta.textContent = savedModelMeta(id);
-    item.appendChild(meta);
+    info.appendChild(meta);
+    item.appendChild(info);
     const actions = document.createElement('span');
     actions.className = 'saved-model-actions';
     if (id === def) {
@@ -415,7 +499,7 @@ async function deleteSavedModel(id) {
   }, { note: `Đã xóa model “${id}”.`, onPosted: () => { if (selectedModelId() === id) setModelFields(''); } });
 }
 function renderAll() {
-  renderConnectionPicker(); renderProviderSelects(); renderModelPicker(); renderCurrentDefault(); renderEditorActions(); renderSavedModels();
+  renderConnectionTabs(); renderProviderSelects(); renderModelPicker(); renderCurrentDefault(); renderEditorActions(); renderSavedModels(); renderAdvancedSummary();
 }
 function refreshBusyState() {
   $('#editor-controls').disabled = state.loading || !state.values || state.saving || state.reloading;
@@ -470,6 +554,8 @@ function setModelFields(id) {
   renderModelPicker(); renderProviderSelects();
   state.modelBaseline = modelFieldsSnapshot();
   renderEditorActions();
+  renderSavedModels();
+  renderAdvancedSummary();
 }
 function chooseModel(id, { confirmDiscard = true } = {}) {
   if (id && state.discovery?.models.includes(id) && (!state.discovery || state.discovery.connectionRevision !== state.connectionRevision)) {
@@ -504,15 +590,13 @@ function fillConnection(id, { initial = false } = {}) {
 }
 function openNewConnection() {
   if (editorIsDirty() && !window.confirm('Mở kết nối mới sẽ bỏ các thay đổi chưa lưu. Tiếp tục?')) return false;
-  fillConnection(''); $('#connection-picker').value = '__new__'; $('#pv-id').focus(); return true;
+  fillConnection(''); $('#pv-id').focus(); return true;
 }
 function openExistingConnection(id) {
   if (!Object.hasOwn(state.values?.providers || {}, id)) return false;
   if (id === state.editingProvider) return true;
-  if (editorIsDirty() && !window.confirm('Mở kết nối khác sẽ bỏ các thay đổi chưa lưu. Tiếp tục?')) {
-    $('#connection-picker').value = state.editingProvider ? `provider:${state.editingProvider}` : '__new__'; return false;
-  }
-  fillConnection(id); $('#connection-picker').value = `provider:${id}`; return true;
+  if (editorIsDirty() && !window.confirm('Mở kết nối khác sẽ bỏ các thay đổi chưa lưu. Tiếp tục?')) return false;
+  fillConnection(id); return true;
 }
 function cancelEditor() {
   if (state.editingProvider && Object.hasOwn(state.values?.providers || {}, state.editingProvider)) fillConnection(state.editingProvider);
@@ -559,8 +643,15 @@ function draftForSave() {
   if (!id) throw new FieldError('Nhập tên kết nối.', '#pv-id');
   if (!PROVIDER_ID_RE.test(id)) throw new FieldError('Tên kết nối chỉ gồm chữ, số, _ và -.', '#pv-id');
   const baseUrl = parseBaseUrl($('#pv-base-url').value);
+  const api = $('#pv-api').value === 'openai_responses' ? 'openai_responses' : 'openai_chat';
+  const apiKey = $('#pv-key').value.trim();
   const modelId = selectedModelId();
-  if (!modelId) throw new FieldError('Chọn model trong danh sách.', '#m-picker');
+  if (!modelId) {
+    if (state.editingProvider && providerIsDirty()) {
+      return { id, baseUrl, api, apiKey, modelId: '', provider: id, prices: null, contextTokens: null, maxTokens: null, efforts: [], connectionOnly: true };
+    }
+    throw new FieldError('Chọn model trong danh sách.', '#m-picker');
+  }
   if (state.selectedModelFromDiscovery && (!state.discovery || state.discovery.connectionRevision !== state.connectionRevision || state.discovery.sourceUrl !== baseUrl || state.discovery.providerId !== (state.editingProvider || ''))) {
     throw new FieldError('URL hoặc kết nối đã đổi. Tải lại danh sách model.', '#m-picker');
   }
@@ -571,12 +662,12 @@ function draftForSave() {
   // model→provider picker exists, so cross-connection picks are impossible.
   const provider = id;
   const efforts = checkedEfforts();
-  return { id, baseUrl, api: $('#pv-api').value === 'openai_responses' ? 'openai_responses' : 'openai_chat', apiKey: $('#pv-key').value.trim(), modelId, provider, prices, contextTokens, maxTokens, efforts };
+  return { id, baseUrl, api, apiKey, modelId, provider, prices, contextTokens, maxTokens, efforts, connectionOnly: false };
 }
 function mergeEditorDraft(fresh, draft) {
   const values = cloneValues(fresh.values); values.providers ||= {}; values.models ||= {};
   const editing = state.editingProvider;
-  if (editing && !Object.hasOwn(values.providers, editing)) throw new FieldError('Kết nối này đã bị xóa. Tải lại rồi chọn kết nối khác.', '#connection-picker');
+  if (editing && !Object.hasOwn(values.providers, editing)) throw new FieldError('Kết nối này đã bị xóa. Tải lại rồi chọn kết nối khác.', '#connection-tabs');
   if (!editing && Object.hasOwn(values.providers, draft.id)) throw new FieldError(`Kết nối “${draft.id}” đã có. Chọn kết nối đó để sửa.`, '#pv-id');
   if (editing && draft.id !== editing) throw new FieldError('Không thể đổi tên kết nối trong cùng một thao tác.', '#pv-id');
   const prevProvider = Object.hasOwn(values.providers, draft.id) ? values.providers[draft.id] : {};
@@ -584,29 +675,31 @@ function mergeEditorDraft(fresh, draft) {
   // provider effort, or the system default for a brand-new connection.
   const keptEffort = prevProvider.reasoningEffort || effortDefault();
   values.providers = { ...values.providers, [draft.id]: { apiKeyEnv: 'THYCA_TOKEN', ...prevProvider, baseUrl: draft.baseUrl, api: draft.api, reasoningEffort: keptEffort, apiKey: draft.apiKey } };
-  const previousModel = Object.hasOwn(values.models, draft.modelId) ? values.models[draft.modelId] : null;
-  const previousOwner = previousModel ? modelProviderId(values, draft.modelId) : '';
-  // Defensive: the picker blocks cross-connection models upfront, so this
-  // only fires on stale/race state — never silently transfer ownership.
-  if (previousModel && previousOwner !== draft.provider) throw new FieldError(`Model này đã thuộc kết nối “${previousOwner}”. Chọn kết nối đó để sửa.`, '#m-picker');
-  const entry = { ...(previousModel || {}), provider: draft.provider };
-  if (draft.prices) {
-    Object.assign(entry, draft.prices);
-    values.pricing = { ...(values.pricing || {}), [draft.modelId]: { ...draft.prices } };
-  } else {
-    delete entry.input; delete entry.cache; delete entry.output;
-    if (values.pricing) delete values.pricing[draft.modelId];
+  if (!draft.connectionOnly) {
+    const previousModel = Object.hasOwn(values.models, draft.modelId) ? values.models[draft.modelId] : null;
+    const previousOwner = previousModel ? modelProviderId(values, draft.modelId) : '';
+    // Defensive: the picker blocks cross-connection models upfront, so this
+    // only fires on stale/race state — never silently transfer ownership.
+    if (previousModel && previousOwner !== draft.provider) throw new FieldError(`Model này đã thuộc kết nối “${previousOwner}”. Chọn kết nối đó để sửa.`, '#m-picker');
+    const entry = { ...(previousModel || {}), provider: draft.provider };
+    if (draft.prices) {
+      Object.assign(entry, draft.prices);
+      values.pricing = { ...(values.pricing || {}), [draft.modelId]: { ...draft.prices } };
+    } else {
+      delete entry.input; delete entry.cache; delete entry.output;
+      if (values.pricing) delete values.pricing[draft.modelId];
+    }
+    // loopMax/hotTailKB are intentionally untouched here: the form no longer
+    // edits them, so a previously stored value rides along via previousModel.
+    // reasoningEffort is actively deleted: the form no longer manages a
+    // per-model default, so a stale one must not silently win over the
+    // provider/global fallback.
+    for (const [key, value] of [['contextTokens', draft.contextTokens], ['maxTokens', draft.maxTokens], ['reasoningEfforts', draft.efforts.length ? [...draft.efforts] : null]]) {
+      if (value === null || value === '') delete entry[key]; else entry[key] = value;
+    }
+    delete entry.reasoningEffort;
+    values.models = { ...values.models, [draft.modelId]: entry };
   }
-  // loopMax/hotTailKB are intentionally untouched here: the form no longer
-  // edits them, so a previously stored value rides along via previousModel.
-  // reasoningEffort is actively deleted: the form no longer manages a
-  // per-model default, so a stale one must not silently win over the
-  // provider/global fallback.
-  for (const [key, value] of [['contextTokens', draft.contextTokens], ['maxTokens', draft.maxTokens], ['reasoningEfforts', draft.efforts.length ? [...draft.efforts] : null]]) {
-    if (value === null || value === '') delete entry[key]; else entry[key] = value;
-  }
-  delete entry.reasoningEffort;
-  values.models = { ...values.models, [draft.modelId]: entry };
   // Saving never changes the default: promoting a saved model to the
   // global default is a separate explicit set-default action on its row.
   // First connection from an empty config (or a stale default): fall back
@@ -622,7 +715,7 @@ async function commitValues(buildValues, { note = '', onPosted = null } = {}) {
   try {
     const fresh = await getJson('/api/config');
     const next = buildValues(fresh);
-    if (!Object.hasOwn(next.providers || {}, next.defaultProvider)) throw new FieldError('Kết nối mặc định không còn tồn tại.', '#connection-picker');
+    if (!Object.hasOwn(next.providers || {}, next.defaultProvider)) throw new FieldError('Kết nối mặc định không còn tồn tại.', '#connection-tabs');
     // Conditional write when the server reports a revision: a config that
     // changed since this fresh read fails with 409 instead of silently
     // replacing newer data. The draft (inputs, baselines, key field) is
@@ -685,11 +778,13 @@ async function submitEditor(event) {
   clearFieldErrors(); setFormStatus('');
   let draft; try { draft = draftForSave(); } catch (error) { fail(error); return false; }
   return commitValues(fresh => mergeEditorDraft(fresh, draft), {
-    note: `Đã lưu ${draft.modelId}. Chọn “Đặt mặc định” ở danh sách bên dưới để dùng model này.`,
+    note: draft.connectionOnly
+      ? `Đã lưu kết nối “${draft.id}”.`
+      : `Đã lưu ${draft.modelId}. Chọn “Đặt mặc định” ở danh sách bên cạnh để dùng model này.`,
     onPosted: () => {
       state.editingProvider = draft.id;
       state.discovery = null;
-      setModelFields(draft.modelId);
+      if (!draft.connectionOnly) setModelFields(draft.modelId);
     },
   });
 }
@@ -698,10 +793,10 @@ async function deleteProvider() {
   if (!id || !window.confirm(`Xóa kết nối “${id}”?`)) return false;
   return commitValues(fresh => {
     const values = cloneValues(fresh.values); const ids = Object.keys(values.providers || {});
-    if (!Object.hasOwn(values.providers || {}, id)) throw new FieldError('Kết nối đã bị xóa.', '#connection-picker');
-    if (ids.length <= 1) throw new FieldError('Không thể xóa kết nối cuối cùng.', '#connection-picker');
+    if (!Object.hasOwn(values.providers || {}, id)) throw new FieldError('Kết nối đã bị xóa.', '#connection-tabs');
+    if (ids.length <= 1) throw new FieldError('Không thể xóa kết nối cuối cùng.', '#connection-tabs');
     const owned = modelsOf(id, values);
-    if (owned.length) throw new FieldError(`Kết nối còn model: ${owned.join(', ')}. Chuyển hoặc xóa model trước.`, '#connection-picker');
+    if (owned.length) throw new FieldError(`Kết nối còn model: ${owned.join(', ')}. Chuyển hoặc xóa model trước.`, '#connection-tabs');
     delete values.providers[id];
     if (values.defaultProvider === id) values.defaultProvider = Object.keys(values.providers).sort()[0];
     return values;
@@ -720,7 +815,7 @@ async function reloadConfig() {
     await refreshConfig();
     if (!Object.hasOwn(state.values.providers || {}, state.editingProvider)) fillConnection(state.values.defaultProvider || Object.keys(state.values.providers)[0] || '');
     else fillConnection(state.editingProvider);
-    state.cleanStatus = 'Đã tải cấu hình'; setSaveStatus(state.cleanStatus, 'ok'); setFormStatus('Đã tải lại cấu hình.', 'ok'); return true;
+    state.cleanStatus = ''; setSaveStatus(state.cleanStatus); setFormStatus('Đã tải lại cấu hình.', 'ok'); return true;
   } catch (error) {
     setSaveStatus('Chưa tải được', 'error'); setFormStatus(`Không tải lại được cấu hình: ${error.message}`, 'error'); return false;
   } finally { state.reloading = false; refreshBusyState(); }
@@ -728,12 +823,6 @@ async function reloadConfig() {
 function bind() {
   $('#connection-form').onsubmit = event => submitEditor(event);
   $('#new-connection').onclick = openNewConnection;
-  $('#connection-picker').onchange = event => {
-    const value = event.target.value;
-    const opened = value === '__new__' ? openNewConnection()
-      : value.startsWith('provider:') ? openExistingConnection(value.slice('provider:'.length)) : false;
-    if (!opened) renderConnectionPicker();
-  };
   $('#cancel-editor').onclick = cancelEditor;
   $('#v-submit').onclick = verifyQuick;
   $('#m-picker').onchange = event => {
@@ -748,10 +837,10 @@ function bind() {
     }
     syncDirtyStatus();
   });
-  $('#connection-form').addEventListener('input', syncDirtyStatus);
-  $('#connection-form').addEventListener('change', syncDirtyStatus);
+  $('#connection-form').addEventListener('input', () => { renderAdvancedSummary(); syncDirtyStatus(); });
+  $('#connection-form').addEventListener('change', () => { renderAdvancedSummary(); syncDirtyStatus(); });
   $('#pv-api').addEventListener('change', () => { $('#pv-api').dataset.edited = 'true'; });
-  $('#m-efforts').addEventListener('change', () => { paintEffortChips($('#m-efforts')); syncDirtyStatus(); });
+  $('#m-efforts').addEventListener('change', () => { paintEffortChips($('#m-efforts')); renderAdvancedSummary(); syncDirtyStatus(); });
   $('#delete-provider').onclick = deleteProvider;
   $('#delete-model').onclick = deleteModel;
 }
@@ -764,8 +853,14 @@ function labelProfileLinks() {
   }
 }
 new MutationObserver(labelProfileLinks).observe(ctx.sidebar, { childList: true, subtree: true });
+function initAdvancedState() {
+  const adv = $('#model-advanced');
+  if (adv && typeof window.matchMedia === 'function') {
+    adv.open = !!window.matchMedia('(min-width: 851px)').matches;
+  }
+}
 async function boot() {
-  bind(); refreshBusyState();
+  bind(); initAdvancedState(); refreshBusyState();
   window.addEventListener('thyca:setup-retry', () => {
     if (ctx.isActive() && !state.values && !state.loading && !state.reloading) void reloadConfig();
   });
@@ -779,7 +874,7 @@ async function boot() {
   try {
     await refreshConfig();
     const first = state.values.defaultProvider || Object.keys(state.values.providers)[0] || '';
-    fillConnection(first, { initial: true }); renderAll(); state.cleanStatus = 'Đã tải cấu hình'; setSaveStatus(state.cleanStatus);
+    fillConnection(first, { initial: true }); renderAll(); state.cleanStatus = ''; setSaveStatus(state.cleanStatus);
   } catch (error) {
     state.loading = false; refreshBusyState(); setSaveStatus('Chưa tải được', 'error'); setStatus(`Không tải được cấu hình: ${error.message}`, 'error');
   }

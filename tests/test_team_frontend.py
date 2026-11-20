@@ -4559,7 +4559,7 @@ def test_provider_external_sync_preserves_new_discovery_and_empty_model(node: st
         await tick(10);
         const afterNewSync = {
             editingProvider: state.editingProvider,
-            picker: $('#connection-picker').value,
+            newTabActive: $('#new-connection').getAttribute('aria-selected') === 'true',
             dirty: editorIsDirty(),
         };
 
@@ -4586,7 +4586,7 @@ def test_provider_external_sync_preserves_new_discovery_and_empty_model(node: st
         };
         return { afterNewSync, afterAlphaEmptySync };
     """, via="provider")
-    assert out["afterNewSync"] == {"editingProvider": "", "picker": "__new__", "dirty": False}
+    assert out["afterNewSync"] == {"editingProvider": "", "newTabActive": True, "dirty": False}
     assert out["afterAlphaEmptySync"] == {
         "editingProvider": "alpha",
         "selectedModel": "",
@@ -4665,8 +4665,8 @@ def test_bottom_action_placements_and_sr_only_top_bars() -> None:
 
 
 def test_sidebar_collapse_toggle_fixed_modes(node: str) -> None:
-    """Collapse button toggles two fixed modes only: desktop full 175px
-    and rail 74px. No drag resizing; setupLocked blocks the toggle."""
+    """Collapse button toggles two desktop modes: full var(--sidebar-full)
+    and rail var(--rail-width). No drag resizing; setupLocked blocks the toggle."""
     out = _run(node, r"""
         let width = 1280;
         globalThis.innerWidth = 1280;
@@ -4688,9 +4688,9 @@ def test_sidebar_collapse_toggle_fixed_modes(node: str) -> None:
         const lockedSnap = snap();
         return { init, rail, full, lockedSnap, hasDrag: typeof sep.onpointerdown, hasDragMove: typeof sep.onpointermove };
     """, via="shell")
-    assert out["init"] == {"w": "175px", "collapsed": "false", "expanded": "true", "text": "‹"}
-    assert out["rail"] == {"w": "74px", "collapsed": "true", "expanded": "false", "text": "›"}
-    assert out["full"] == {"w": "175px", "collapsed": "false", "expanded": "true", "text": "‹"}
+    assert out["init"] == {"w": "var(--sidebar-full)", "collapsed": "false", "expanded": "true", "text": "‹"}
+    assert out["rail"] == {"w": "var(--rail-width)", "collapsed": "true", "expanded": "false", "text": "›"}
+    assert out["full"] == {"w": "var(--sidebar-full)", "collapsed": "false", "expanded": "true", "text": "‹"}
     assert out["lockedSnap"] == out["full"]
     assert out["hasDrag"] == "undefined" and out["hasDragMove"] == "undefined"
     html = INDEX_HTML.read_text(encoding="utf-8")
@@ -4700,9 +4700,11 @@ def test_sidebar_collapse_toggle_fixed_modes(node: str) -> None:
         assert 'aria-expanded="true"' in text
 
 
-def test_small_screen_collapse_toggle_opens_drawer(node: str) -> None:
-    """At <=850px clicking the collapse button opens the drawer and toggles
-    between narrow full 125px and rail 74px (no drag)."""
+def test_small_screen_splitter_is_inert_and_menu_opens_full_drawer(node: str) -> None:
+    """At <=850px .splitter is inert/hidden and clicking it does not open
+    the drawer or collapse into rail mode; resizing down from medium resets
+    collapsed to 'false' and clears --sidebar-width so .menu-button opens
+    the full card drawer."""
     out = _run(node, r"""
         let width = 700;
         globalThis.innerWidth = 700;
@@ -4710,17 +4712,50 @@ def test_small_screen_collapse_toggle_opens_drawer(node: str) -> None:
             matches: (q.includes('850px') && width <= 850) || (q.includes('950px') && width <= 950) || (q.includes('1150px') && width <= 1150),
             media: q, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {},
         });
+        dispatchEvent({ type: 'resize' });
         const sep = $('.splitter');
         const sidebar = $('#chat-sidebar');
         const shell = $('.notebook-shell');
+        const menuBtn = $('.menu-button');
         sep.click();
-        const opened = { open: sidebar.classList.contains('mobile-open'), w: document.documentElement.style.getPropertyValue('--sidebar-width'), collapsed: shell.dataset.sidebarCollapsed };
-        sep.click();
-        const expanded = { w: document.documentElement.style.getPropertyValue('--sidebar-width'), collapsed: shell.dataset.sidebarCollapsed };
-        return { opened, expanded };
+        const afterSplitterClick = {
+            open: sidebar.classList.contains('mobile-open'),
+            w: document.documentElement.style.getPropertyValue('--sidebar-width'),
+            collapsed: shell.dataset.sidebarCollapsed,
+            sepInert: sep.inert,
+            sepHidden: sep.getAttribute('aria-hidden'),
+        };
+        width = 1000; globalThis.innerWidth = 1000;
+        dispatchEvent({ type: 'resize' });
+        const med = {
+            collapsed: shell.dataset.sidebarCollapsed,
+            w: document.documentElement.style.getPropertyValue('--sidebar-width'),
+        };
+        width = 700; globalThis.innerWidth = 700;
+        dispatchEvent({ type: 'resize' });
+        const backToNarrow = {
+            collapsed: shell.dataset.sidebarCollapsed,
+            w: document.documentElement.style.getPropertyValue('--sidebar-width'),
+            inert: sidebar.inert,
+        };
+        menuBtn.click();
+        const openedByMenu = {
+            open: sidebar.classList.contains('mobile-open'),
+            collapsed: shell.dataset.sidebarCollapsed,
+            inert: sidebar.inert,
+        };
+        return { afterSplitterClick, med, backToNarrow, openedByMenu };
     """, via="shell")
-    assert out["opened"] == {"open": True, "w": "74px", "collapsed": "true"}
-    assert out["expanded"] == {"w": "125px", "collapsed": "false"}
+    assert out["afterSplitterClick"] == {
+        "open": False,
+        "w": "",
+        "collapsed": "false",
+        "sepInert": True,
+        "sepHidden": "true",
+    }
+    assert out["med"] == {"collapsed": "true", "w": "var(--rail-width)"}
+    assert out["backToNarrow"] == {"collapsed": "false", "w": "", "inert": True}
+    assert out["openedByMenu"] == {"open": True, "collapsed": "false", "inert": False}
 
 
 def test_responsive_page_menu_dropdown(node: str) -> None:

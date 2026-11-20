@@ -34,11 +34,13 @@ function syncSidebarChrome() {
     pageMenuBtn.disabled = locked;
     if (locked) closePageMenu();
   }
-  if (!sidebar) return;
   const narrow = matchMedia('(max-width:850px)').matches;
+  const sep = $('.splitter');
+  if (sep) sep.inert = locked || narrow;
+  if (!sidebar) return;
   const collapsed = !narrow && shell?.dataset.sidebarCollapsed === 'true';
   const open = !locked && (narrow ? sidebar.classList.contains('mobile-open') : !collapsed);
-  /* Desktop collapsed renders the avatar rail (74px) which stays interactive;
+  /* Desktop collapsed renders the avatar rail which stays interactive;
      only narrow closed drawer and the setup lock keep the sidebar inert. */
   sidebar.inert = locked || (narrow && !open);
   const railList = $('#rail-avatar-list');
@@ -168,23 +170,33 @@ function initShellApp() {
   setInterval(idleTick, 400);
   document.addEventListener('visibilitychange', () => { bots.forEach(b => { clearIdle(b, true); b.idle.nextAt = Date.now() + between(4000, 9000); }); });
 
-  /* Sidebar has two fixed modes only: full 125px and rail 74px.
-     The .splitter button at the sidebar edge is the collapse toggle
-     (click only, no drag). The vertical drag/scroll bars are separate
-     and stay hidden while scrolling remains available. */
-  const FULL_WIDTH = 125;
-  const FULL_WIDTH_DESKTOP = 175;
-  const RAIL_WIDTH = 74;
+  /* Sidebar has two desktop modes: full (--sidebar-full) and rail (--rail-width).
+     On narrow screens (<=850px) the splitter is hidden and only the overlay
+     drawer (opened by .menu-button) shows full cards. */
+  const FULL_WIDTH_VAR = 'var(--sidebar-full)';
+  const RAIL_WIDTH_VAR = 'var(--rail-width)';
   const separator = $('.splitter');
   const isNarrow = () => matchMedia('(max-width:850px)').matches;
   function setSidebarMode(collapsed) {
     if (!shellEl) return;
+    if (isNarrow()) {
+      shellEl.dataset.sidebarCollapsed = 'false';
+      document.documentElement.style.removeProperty('--sidebar-width');
+      if (separator) {
+        separator.setAttribute('aria-expanded', 'false');
+        separator.setAttribute('aria-hidden', 'true');
+      }
+      syncSidebarChrome();
+      return;
+    }
     shellEl.dataset.sidebarCollapsed = collapsed ? 'true' : 'false';
-    const fullWidth = isNarrow() ? FULL_WIDTH : FULL_WIDTH_DESKTOP;
-    document.documentElement.style.setProperty('--sidebar-width', (collapsed ? RAIL_WIDTH : fullWidth) + 'px');
-    separator.setAttribute('aria-expanded', String(!collapsed));
-    separator.setAttribute('aria-label', collapsed ? 'Mở rộng thanh bot' : 'Thu gọn thanh bot');
-    separator.textContent = collapsed ? '›' : '‹';
+    document.documentElement.style.setProperty('--sidebar-width', collapsed ? RAIL_WIDTH_VAR : FULL_WIDTH_VAR);
+    if (separator) {
+      separator.removeAttribute('aria-hidden');
+      separator.setAttribute('aria-expanded', String(!collapsed));
+      separator.setAttribute('aria-label', collapsed ? 'Mở rộng thanh bot' : 'Thu gọn thanh bot');
+      separator.textContent = collapsed ? '›' : '‹';
+    }
     syncSidebarChrome();
   }
   function syncSidebarModeFromState() {
@@ -192,8 +204,7 @@ function initShellApp() {
     setSidebarMode(shellEl.dataset.sidebarCollapsed === 'true');
   }
   separator.onclick = () => {
-    if (setupLocked()) return;
-    if (isNarrow() && !$('#chat-sidebar')?.classList.contains('mobile-open')) openMobile();
+    if (setupLocked() || isNarrow()) return;
     setSidebarMode(shellEl?.dataset.sidebarCollapsed !== 'true');
   };
   syncSidebarModeFromState();
@@ -202,8 +213,7 @@ function initShellApp() {
     if (nextBand !== currentBand) {
       if (shellEl) {
         if (nextBand === 'medium') shellEl.dataset.sidebarCollapsed = 'true';
-        else if (nextBand === 'wide') shellEl.dataset.sidebarCollapsed = 'false';
-        /* narrow keeps the current fixed mode */
+        else if (nextBand === 'wide' || nextBand === 'narrow') shellEl.dataset.sidebarCollapsed = 'false';
       }
       currentBand = nextBand;
     }

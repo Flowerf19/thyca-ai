@@ -1,14 +1,7 @@
 /* Shared Peeking Character Medallion Avatars: Cream Paper Well, 2.5D Rig, States & Auto-LOD. */
+.seal-avatar{display:inline-block;width:var(--bot-avatar,65px);height:var(--bot-avatar,65px);flex-shrink:0;position:relative;vertical-align:middle;isolation:isolate;transition:filter .3s,opacity .3s;user-select:none}
 .expression-tile .seal-avatar{width:92px;height:92px}
 .info-lockup .seal-avatar{width:85px;height:85px}
-@media(min-width:1600px){
-.seal-avatar{width:70px;height:70px}
-}
-@media(max-width:1150px){
-.seal-avatar{width:58px;height:58px}
-}
-
-.seal-avatar{display:inline-block;width:65px;height:65px;flex-shrink:0;position:relative;vertical-align:middle;isolation:isolate;transition:filter .3s,opacity .3s;user-select:none}
 .seal-motion{display:block;position:relative;width:100%;height:100%;transform-origin:50% 84%}
 .seal-avatar .base{display:block;width:100%;height:100%;overflow:visible;filter:drop-shadow(0 4px 3px #3026172e) drop-shadow(0 1px 0 #30261730)}
 
@@ -118,7 +111,7 @@
 #expressions-dialog .expression-tile .seal-avatar{width:76px;height:76px}
 .group-preview-member .seal-avatar{width:76px;height:76px}
 .expression-preview *{animation:none!important;transition:none!important}
-.stream-interruption{font:italic 14px/1.6 var(--serif);color:var(--muted);padding-top:10px;border-top:1px dashed var(--line)}
+.stream-interruption{font:italic var(--fs-md)/1.6 var(--serif);color:var(--muted);padding-top:10px;border-top:1px dashed var(--line)}
 
 @media(prefers-reduced-motion:reduce){
 .seal-avatar *{animation:none!important}

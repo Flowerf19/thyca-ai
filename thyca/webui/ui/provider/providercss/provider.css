@@ -1,90 +1,108 @@
-/* Provider single-editor screen. Keep every page rule under provider-shell. */
+/* Provider single-editor screen. Keep every page rule under .provider-shell. */
 .provider-shell .workspace{display:flex;flex-direction:column;min-width:0}
 .provider-shell .page-nav{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap;border:0}
-.provider-shell .page-title .eyebrow{margin-bottom:3px}
-.provider-shell .page-title h1{font-size:20px;line-height:1.2;letter-spacing:-.3px;white-space:nowrap}
-.provider-shell .page-sub{margin:4px 0 0;font-size:14px;line-height:1.35}
-.provider-shell .page-scroll{flex:1;min-height:0;height:auto;min-width:0;padding:14px 20px 18px}
-.provider-shell .page-inner{width:min(100%,780px);margin-inline:auto;min-width:0}
+.provider-shell .page-title h1{line-height:1.2;letter-spacing:-.3px;white-space:nowrap}
+.provider-shell .page-scroll{flex:1;min-height:0;height:auto;min-width:0;padding:clamp(10px,1.4dvh,18px) var(--page-pad-x) clamp(16px,2dvh,24px)}
+.provider-shell .page-inner{width:min(100%,var(--page-content-max));margin-inline:auto;min-width:0}
 .provider-shell [hidden]{display:none!important}
-.provider-shell .page-actions{display:flex;align-items:center;justify-content:flex-end;gap:7px;flex-wrap:wrap}
-.provider-shell .page-actions .primary-action{min-height:40px;padding:7px 13px}
-.provider-shell .save-status{font-size:11px;color:#6b5c43;white-space:normal}
-.provider-shell .save-status.s-ok{color:#456344}.provider-shell .save-status.s-warn{color:#8b5a2d}.provider-shell .save-status.s-error{color:#944f3d}
 .provider-shell .page-status{position:static;inset:auto;z-index:auto;margin:0 0 12px;padding:10px 13px;box-shadow:none;overflow-wrap:anywhere}
 .provider-shell .page-status.s-warn{color:#805627;border-color:#d8bd8b;background:#fff8e9}
-.provider-shell .connection-editor{min-width:0;padding:12px 16px}
+.provider-shell .connection-editor{min-width:0;padding:clamp(14px,1.6vw,22px) clamp(16px,1.8vw,24px)}
 .provider-shell .connection-editor fieldset{border:0;margin:0;padding:0;min-width:0}
 .provider-shell .connection-editor fieldset:disabled{opacity:.72}
-.provider-shell .editor-topline{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:end;padding-bottom:9px}
-.provider-shell .field{display:grid;gap:6px;min-width:0;align-content:start}
-.provider-shell .field>span{display:block}
-.provider-shell input,.provider-shell select{display:block;width:100%;min-width:0;max-width:100%;box-sizing:border-box;padding:8px 11px;font-size:13px;min-height:38px}
-.provider-shell .editor-topline #connection-picker,.provider-shell .editor-topline .quiet-button{min-height:38px;align-self:end}
+.provider-shell .provider-bar{display:flex;align-items:center;justify-content:space-between;gap:8px 16px;flex-wrap:wrap;padding-bottom:10px;margin-bottom:12px;border-bottom:1px dashed var(--line)}
+.provider-shell .provider-tabs-wrap{display:flex;align-items:center;gap:6px;flex-wrap:wrap;min-width:0}
+.provider-shell .connection-tabs{display:flex;align-items:center;gap:6px;flex-wrap:wrap;min-width:0}
+.provider-shell .conn-tab{display:inline-flex;align-items:center;gap:7px;min-height:32px;padding:5px 12px;border:1px solid transparent;border-radius:8px;font:500 var(--fs-sm)/1.2 var(--sans);color:var(--muted);background:transparent;transition:background-color .15s,border-color .15s,color .15s}
+.provider-shell .conn-tab:hover{background:#f4ecdb;color:var(--ink)}
+.provider-shell .conn-tab[data-active="true"]{background:#fffdf7;border-color:#d2c2a4;color:var(--ink);font-weight:600;box-shadow:0 1px 3px #5d4b2a12}
+.provider-shell .conn-tab-dot{width:6px;height:6px;border-radius:50%;background:var(--forest);flex-shrink:0}
+.provider-shell .conn-tab-new{border:1px dashed #cfc0a3;color:#62553f}
+.provider-shell .conn-tab-new[data-active="true"]{border-style:solid;border-color:#7d9575;background:#eef3ea;color:var(--forest)}
+.provider-shell .current-default{display:inline-flex;align-items:center;gap:7px;font-size:var(--fs-xs);color:var(--muted);overflow-wrap:anywhere}
+.provider-shell .current-default[data-has-default="true"]::before{content:'';width:6px;height:6px;border-radius:50%;background:var(--forest);flex-shrink:0}
+.provider-shell .editor-form{display:grid;gap:12px;min-width:0}
+.provider-shell .connection-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(175px,100%),1fr));gap:8px 12px;padding-bottom:12px;border-bottom:1px dashed var(--line);min-width:0}
+.provider-shell .field{display:grid;gap:5px;min-width:0;align-content:start}
+.provider-shell .field>span,.provider-shell .field>legend{display:block;font-size:var(--fs-xs);color:var(--muted);padding:0}
+.provider-shell input,.provider-shell select{display:block;width:100%;min-width:0;max-width:100%;box-sizing:border-box;padding:7px 10px;font-size:var(--fs-md);min-height:36px}
+.provider-shell input[readonly]{background:#f1e9d8;border-style:dashed;color:#6f6452;cursor:default}
 .provider-shell input[aria-invalid="true"],.provider-shell select[aria-invalid="true"]{border-color:#c05c4b;outline:2px solid #c05c4b33}
-.provider-shell .editor-form{display:grid;gap:7px;min-width:0}
-.provider-shell .connection-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 13px;min-width:0}
-.provider-shell .field-wide{grid-column:1/-1}
-.provider-shell .field em{display:block;margin-top:3px;color:#82745c;font-size:10px;font-style:normal;font-weight:400}
-.provider-shell .field em:empty{display:none}
-/* The stored-key note shares the label line so the key input stays level
-   with the API-kind select next to it (block would push the input down). */
-.provider-shell #pv-key-note{display:inline;margin:0 0 0 6px}
-.provider-shell .load-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
-.provider-shell .load-row .quiet-button{display:inline-flex;align-items:center;gap:7px}
-.provider-shell .field-hint{margin:0;color:#8d8069;font-size:10.5px;line-height:1.5;overflow-wrap:anywhere}
-.provider-shell .discovery-status,.provider-shell .form-status{margin:0;color:#75664e;font-size:12px;line-height:1.5;overflow-wrap:anywhere}
+/* The stored-key and mode notes share their label line so inputs keep level. */
+.provider-shell #pv-key-note{display:inline;margin:0 0 0 6px;padding:1px 6px;border-radius:999px;font-style:normal;font-size:var(--fs-2xs);font-weight:500;background:#eaf1e4;color:#456344}
+.provider-shell #pv-key-note:empty{display:none}
+.provider-shell .is-danger{color:#9c4f3f;border-color:#d8ac98;background:transparent}
+.provider-shell .is-danger:hover{background:#fdf1ed}
+.provider-shell .model-editor{display:grid;gap:10px;min-width:0}
+.provider-shell .model-mode-tag{display:inline;margin-left:6px;padding:1px 7px;border-radius:999px;font-style:normal;font-size:var(--fs-2xs);font-weight:600;background:#f0e7d4;color:#665842;border:1px solid #d9ccb4}
+.provider-shell .model-mode-tag[data-mode="new"]{background:#eef3ea;color:var(--forest);border-color:#98ad91}
+.provider-shell .model-pick-row{display:flex;align-items:flex-end;gap:8px;flex-wrap:wrap;min-width:0}
+.provider-shell .model-picker-field{flex:1 1 260px;min-width:0}
+.provider-shell .model-pick-row .quiet-button{display:inline-flex;align-items:center;gap:6px;min-height:36px;white-space:nowrap}
+.provider-shell #m-picker{white-space:normal}
+.provider-shell .discovery-status,.provider-shell .form-status{margin:0;color:#75664e;font-size:var(--fs-xs);line-height:1.5;overflow-wrap:anywhere}
 .provider-shell .discovery-status.s-ok,.provider-shell .form-status.s-ok{color:#456344}
 .provider-shell .discovery-status.s-error,.provider-shell .form-status.s-error{color:#944f3d}
 .provider-shell .form-status.s-warn{color:#805627}
-.provider-shell .model-editor{display:grid;grid-template-columns:minmax(0,1fr);gap:8px;padding:10px 12px;border:1px solid #e0d3bc;border-radius:12px;background:#fffbf1ad;min-width:0}
-.provider-shell .model-picker-field{max-width:100%}
-.provider-shell #m-picker{white-space:normal}
-.provider-shell .model-limits-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 12px}
-.provider-shell .model-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:2px}
-.provider-shell .model-actions .is-danger{color:#9c4f3f;border-color:#d8ac98}
-.provider-shell .ownership-warning,.provider-shell .legacy-url-warning{margin:0;padding:8px 10px;border-radius:8px;background:#fff4e2;color:#805627;font-size:11px;line-height:1.5;overflow-wrap:anywhere}
+.provider-shell .ownership-warning,.provider-shell .legacy-url-warning{margin:0;padding:7px 10px;border-radius:8px;background:#fff4e2;color:#805627;font-size:var(--fs-xs);line-height:1.5;overflow-wrap:anywhere}
 .provider-shell .legacy-url-warning{background:#f5eee1;color:#79694e}
-.provider-shell .price-heading{display:flex;justify-content:space-between;gap:8px;align-items:baseline;margin-top:1px;color:#65563d;font-size:12px}
-.provider-shell .price-heading span{color:#8d8069;font-size:10.5px}
-.provider-shell .price-fields{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;min-width:0}
-.provider-shell .current-default{padding:8px 11px;border-radius:9px;background:#f4eddd;color:#65563d;font-size:12px;overflow-wrap:anywhere}
-.provider-shell .saved-models{margin-top:12px;padding-top:10px;border-top:1px solid #e0d3bc;min-width:0}
-.provider-shell .saved-models-head h2{margin:0;font-size:15px;color:#54442f}
-.provider-shell .saved-models-head .card-copy{margin:4px 0 8px;color:#8d8069;font-size:11px;overflow-wrap:anywhere}
-.provider-shell .saved-model-rows{list-style:none;margin:0;padding:0;display:grid;gap:7px}
-.provider-shell .saved-model-row{display:flex;align-items:center;gap:10px;padding:8px 11px;border:1px solid #e0d3bc;border-radius:10px;background:#fffbf1ad;min-width:0}
-.provider-shell .saved-model-name{font-weight:600;color:#4a4034;overflow-wrap:anywhere;min-width:0;flex:1 1 auto}
-.provider-shell .saved-model-meta{color:#8d8069;font-size:11px;overflow-wrap:anywhere}
-/* Status pill reuses the shared active-chip tokens (same family as the
-   Memories filter chips), not a one-off green. */
-.provider-shell .saved-model-default{display:inline-flex;align-items:center;justify-content:center;font-size:11.5px;font-weight:600;line-height:1.2;color:#465c3e;background:#eef2e3;border:1px solid #8e9b78;border-radius:8px;padding:6px 11px;white-space:nowrap}
-/* Row actions align cleanly with .saved-model-default via matching padding/line-height. */
-.provider-shell .saved-model-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-left:auto;flex-shrink:0}
-.provider-shell .saved-model-actions .quiet-button{padding:6px 11px;font-size:11.5px;line-height:1.2;border-radius:8px;white-space:nowrap}
-.provider-shell .editor-footer{display:flex;align-items:center;gap:9px;flex-wrap:wrap;padding-top:2px}
-.provider-shell .editor-footer .primary-action{min-height:40px;padding:7px 13px}
-.provider-shell .editor-footer .save-status{margin-left:auto;font-size:11.5px}
-.provider-shell .effort-checks{display:flex;gap:8px;flex-wrap:wrap;padding:4px 0 2px}
-.provider-shell .effort-chip{position:relative;display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border:1px solid #d7c8ad;border-radius:999px;font-size:11.5px;line-height:1.4;color:#6c5e46;background:#fffaf0a8;cursor:pointer;user-select:none}
-.provider-shell .effort-chip[data-active="true"]{border-color:#5c8a52;background:#eaf3e2;color:#33582f;font-weight:600}
+.provider-shell .model-advanced{border-top:1px dashed var(--line);padding-top:8px;min-width:0}
+.provider-shell .model-advanced-toggle{display:flex;align-items:baseline;justify-content:space-between;gap:10px;cursor:pointer;list-style:none;padding:3px 0;color:var(--ink)}
+.provider-shell .model-advanced-toggle::-webkit-details-marker{display:none}
+.provider-shell .model-advanced-label{display:inline-flex;align-items:center;gap:6px;font-size:var(--fs-xs);font-weight:600;color:#5a4b35;flex-shrink:0}
+.provider-shell .model-advanced-label::before{content:'▸';font-size:var(--fs-xs);color:var(--muted);transition:transform .15s}
+.provider-shell .model-advanced[open] .model-advanced-label::before{transform:rotate(90deg)}
+.provider-shell .model-advanced[open] .model-advanced-summary{display:none}
+.provider-shell .model-advanced-summary{font-size:var(--fs-xs);color:var(--muted);text-align:right;overflow-wrap:anywhere;min-width:0;font-variant-numeric:tabular-nums}
+.provider-shell .model-advanced-body{display:grid;gap:10px;padding-top:8px;min-width:0}
+.provider-shell .advanced-row{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);gap:10px 22px;align-items:start;min-width:0}
+.provider-shell .advanced-group{display:grid;gap:6px;min-width:0}
+.provider-shell .price-heading,.provider-shell .limits-heading{display:flex;justify-content:space-between;gap:8px;align-items:baseline;color:#65563d;font-size:var(--fs-xs)}
+.provider-shell .price-heading span,.provider-shell .limits-heading span{color:var(--muted);font-size:var(--fs-xs)}
+.provider-shell .price-fields{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;min-width:0}
+.provider-shell .price-fields input,.provider-shell .model-limits-grid input{font-variant-numeric:tabular-nums}
+.provider-shell .model-limits-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 10px;min-width:0}
+.provider-shell .effort-checks{display:inline-flex;flex-wrap:wrap;gap:3px;padding:3px;border:1px solid #d9ccb4;border-radius:8px;background:#f4ecda99;max-width:100%}
+.provider-shell .effort-chip{position:relative;display:inline-flex;align-items:center;justify-content:center;padding:4px 10px;border:1px solid transparent;border-radius:6px;font-size:var(--fs-xs);line-height:1.3;color:var(--muted);background:transparent;cursor:pointer;user-select:none;transition:background-color .12s,border-color .12s,color .12s}
+.provider-shell .effort-chip:hover{color:var(--ink)}
+.provider-shell .effort-chip[data-active="true"]{border-color:#7d9575;background:#e6efe2;color:#2f513d;font-weight:600}
 .provider-shell .effort-check{position:absolute;width:1px;height:1px;padding:0;margin:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
 .provider-shell .effort-chip:focus-within{outline:2px solid #4c7a4f;outline-offset:2px}
-.provider-shell .effort-tick{font-weight:700}
+.provider-shell .editor-footer{display:flex;align-items:center;gap:9px;flex-wrap:wrap;padding-top:6px}
+.provider-shell .editor-footer .primary-action{min-height:38px;padding:7px 16px}
+.provider-shell .editor-footer .save-status{margin-left:auto;font-size:var(--fs-xs)}
+.provider-shell .editor-footer #delete-provider{padding:6px 11px;font-size:var(--fs-xs)}
+.provider-shell .save-status{font-size:var(--fs-xs);color:#6b5c43;white-space:normal}
+.provider-shell .save-status.s-ok{color:#456344}.provider-shell .save-status.s-warn{color:#8b5a2d}.provider-shell .save-status.s-error{color:#944f3d}
+.provider-shell .saved-models{margin-top:2px;padding-top:12px;border-top:1px dashed var(--line);min-width:0}
+.provider-shell .saved-models-head{display:flex;align-items:baseline;justify-content:space-between;gap:6px 14px;flex-wrap:wrap;margin-bottom:6px}
+.provider-shell .saved-models-head h2{margin:0;color:#54442f}
+.provider-shell .saved-models-head .card-copy{margin:0;color:var(--muted);font-size:var(--fs-xs);overflow-wrap:anywhere}
+.provider-shell .saved-model-rows{list-style:none;margin:0;padding:0;display:grid;border-top:1px dashed #e2d7c0}
+.provider-shell .saved-model-rows:empty{border-top:0}
+.provider-shell .saved-model-row{display:flex;align-items:center;gap:8px 12px;flex-wrap:wrap;padding:8px 6px 8px 10px;border-bottom:1px dashed #e2d7c0;border-left:2px solid transparent;min-width:0;transition:background-color .15s,border-color .15s}
+.provider-shell .saved-model-row[data-editing="true"]{background:#f3ead699;border-left-color:var(--forest)}
+.provider-shell .saved-model-info{display:flex;align-items:baseline;gap:4px 10px;flex-wrap:wrap;flex:1 1 240px;min-width:0}
+.provider-shell .saved-model-name{font-weight:600;color:#4a4034;font-size:var(--fs-md);overflow-wrap:anywhere;min-width:0}
+.provider-shell .saved-model-meta{color:var(--muted);font-size:var(--fs-xs);font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.provider-shell .saved-model-meta:empty{display:none}
+/* Status pill reuses the shared active-chip tokens (same family as the
+   Memories filter chips), not a one-off green. */
+.provider-shell .saved-model-default{display:inline-flex;align-items:center;justify-content:center;font-size:var(--fs-xs);font-weight:600;line-height:1.2;color:#465c3e;background:#eef2e3;border:1px solid #8e9b78;border-radius:7px;padding:4px 9px;white-space:nowrap}
+.provider-shell .saved-model-actions{display:flex;align-items:center;gap:5px;flex-wrap:wrap;margin-left:auto;flex-shrink:0}
+.provider-shell .saved-model-actions .quiet-button{padding:4px 9px;font-size:var(--fs-xs);line-height:1.2;border-radius:7px;white-space:nowrap}
 .provider-shell button{overflow-wrap:anywhere}
 @media(max-width:850px){
-  .provider-shell .page-title h1{font-size:19px}
   .provider-shell .page-scroll{padding:12px 14px 20px}
-  .provider-shell .page-actions{flex:0 1 auto;justify-content:flex-end}
+  .provider-shell .advanced-row{grid-template-columns:minmax(0,1fr);gap:12px}
 }
 @media(max-width:600px){
-  .provider-shell .page-actions{justify-content:flex-start}
-  .provider-shell .editor-topline{grid-template-columns:minmax(0,1fr)}
-  .provider-shell .editor-topline>.quiet-button{justify-self:start}
-  .provider-shell .connection-fields,.provider-shell .model-limits-grid,.provider-shell .price-fields{grid-template-columns:minmax(0,1fr)}
-  .provider-shell .field-wide{grid-column:auto}
-  .provider-shell .price-heading{align-items:flex-start;flex-direction:column;gap:2px}
-  .provider-shell .editor-footer>*{flex:0 1 auto}
-  .provider-shell .saved-model-row{flex-wrap:wrap}
+  .provider-shell .connection-fields,.provider-shell .price-fields,.provider-shell .model-limits-grid{grid-template-columns:minmax(0,1fr)}
+  .provider-shell .model-picker-field{flex-basis:100%}
+  .provider-shell .price-heading,.provider-shell .limits-heading,.provider-shell .model-advanced-toggle{align-items:flex-start;flex-direction:column;gap:2px}
+  .provider-shell .model-advanced-summary{text-align:left}
   .provider-shell .saved-model-actions{margin-left:0}
+  .provider-shell .editor-footer #delete-provider{margin-left:auto}
+  .provider-shell .editor-footer .save-status{order:4;flex:1 0 100%;margin-left:0}
+  .provider-shell .editor-footer .save-status:empty{display:none}
 }

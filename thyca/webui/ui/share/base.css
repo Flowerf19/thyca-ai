@@ -1,5 +1,5 @@
 /* Shared base: tokens, reset, shell chrome, header, dialogs, toast. */
-:root{--paper:#fbf5e8;--paper-deep:#f0e7d4;--ink:#3c372c;--muted:#877d69;--line:#d9ccb4;--forest:#315d4c;--rust:#aa5638;--sidebar-width:175px;--serif:'Thyca Serif',Georgia,'Times New Roman',serif;--sans:'Thyca Sans',Arial,sans-serif;--shadow:0 6px 22px #5140240c,0 1px 3px #5b483016}
+:root{--paper:#fbf5e8;--paper-deep:#f0e7d4;--ink:#3c372c;--muted:#877d69;--line:#d9ccb4;--forest:#315d4c;--rust:#aa5638;--sidebar-full:clamp(168px,calc(130px + 2.4vw),216px);--bot-avatar:clamp(56px,min(calc(48px + .9vw),calc(44px + 2.4dvh)),72px);--rail-width:calc(var(--bot-avatar) + 10px);--drawer-width:min(clamp(184px,52vw,248px),calc(100vw - 48px));--sidebar-width:var(--sidebar-full);--shell-gap:clamp(6px,min(.6vw,.9dvh),10px);--shell-radius:clamp(14px,min(1.2vw,2.1dvh),22px);--header-h:clamp(36px,4.3dvh,46px);--page-pad-x:clamp(12px,2vw,42px);--chat-pad-x:clamp(12px,1.4vw,30px);--chat-content-max:clamp(720px,calc(460px + 34vw),1360px);--page-content-max:clamp(760px,calc(500px + 35vw),1420px);--dialog-max:clamp(680px,52vw,860px);--fs-2xs:clamp(10px,calc(9.6px + .06vw),11.5px);--fs-xs:clamp(11px,calc(10.5px + .08vw),13px);--fs-sm:clamp(12px,calc(11.6px + .09vw),14.5px);--fs-md:clamp(13px,calc(12.2px + .11vw),15.5px);--fs-lg:clamp(14.5px,calc(13.3px + .15vw),18px);--fs-xl:clamp(17px,calc(16px + .18vw),22px);--fs-2xl:clamp(19.5px,calc(18.5px + .25vw),26px);--serif:'Thyca Serif',Georgia,'Times New Roman',serif;--sans:'Thyca Sans',Arial,sans-serif;--shadow:0 6px 22px #5140240c,0 1px 3px #5b483016}
 *{box-sizing:border-box}
 *{scrollbar-width:thin;scrollbar-color:#c8b99e transparent}
 *::-webkit-scrollbar{width:6px;height:6px}
@@ -7,19 +7,23 @@
 *::-webkit-scrollbar-thumb{background:#c8b99e;border-radius:999px}
 *::-webkit-scrollbar-thumb:hover{background:#a89678}
 *::-webkit-scrollbar-button{display:none;width:0;height:0}
-body{margin:0;background:#e9dfcb;color:var(--ink);font:14px var(--sans);height:100dvh;overflow:hidden}
+body{margin:0;background:#e9dfcb;color:var(--ink);font:var(--fs-md) var(--sans);height:100dvh;overflow:hidden}
 button,input,textarea,select{font:inherit}
 button{cursor:pointer;color:inherit}
 button:disabled{cursor:not-allowed;opacity:.45}
 button,select{touch-action:manipulation}
 button{border:0;background:none}
 a{color:inherit}
+h1{font:600 var(--fs-2xl)/1.2 var(--serif);margin:0}
+h2{font:500 var(--fs-xl)/1.25 var(--serif);margin:0}
+h3{font:600 var(--fs-lg)/1.3 var(--serif);margin:0}
+h4{font:600 var(--fs-md)/1.35 var(--serif);margin:0}
 svg.icon{width:19px;height:19px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
 button:focus-visible,select:focus-visible,input:focus-visible,textarea:focus-visible,[tabindex]:focus-visible{outline:2px solid var(--forest);outline-offset:4px}
 button:not(.bot-select):hover{filter:brightness(.97)}
 [hidden]{display:none!important}
 .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
-.notebook-shell{height:calc(100dvh - 16px);margin:8px;border-radius:20px;background:#f5eddd;border:1px solid #fffc;box-shadow:0 12px 48px #574b3120;display:grid;grid-template-rows:40px minmax(0,1fr);grid-template-columns:minmax(0,1fr);overflow:hidden;position:relative}
+.notebook-shell{height:calc(100dvh - var(--shell-gap) * 2);margin:var(--shell-gap);border-radius:var(--shell-radius);background:#f5eddd;border:1px solid #fffc;box-shadow:0 12px 48px #574b3120;display:grid;grid-template-rows:var(--header-h) minmax(0,1fr);grid-template-columns:minmax(0,1fr);overflow:hidden;position:relative}
 /* One shared paper layer for the whole shell: a single backdrop sized to
    .notebook-shell, so the artwork continues spatially across the header,
    sidebar and workspace instead of restarting inside each pane. The panes
@@ -34,13 +38,13 @@ button:not(.bot-select):hover{filter:brightness(.97)}
    cream: the shell falls back to its base color and dialogs/drawer drop
    the paper image. */
 html[data-ornaments="off"] .notebook-shell::before,html[data-ornaments="off"] .screen-dialog,html[data-ornaments="off"] .sidebar{background-image:none}
-.site-header{display:flex;align-items:center;justify-content:space-between;padding:0 18px;color:var(--muted);gap:14px;min-width:0;z-index:30}
+.site-header{display:flex;align-items:center;justify-content:space-between;padding:0 clamp(8px,1vw,22px);color:var(--muted);gap:clamp(6px,.8vw,16px);min-width:0;z-index:30}
 .header-left,.header-right{display:flex;align-items:center;gap:10px;min-width:0}
 .header-left{flex:1 1 auto}
 .header-right{flex-shrink:0}
-.wordmark{font:italic 21px/1 var(--serif);color:var(--forest);letter-spacing:-.7px;padding:4px 9px;border-radius:8px;display:inline-flex;align-items:center;gap:6px;flex-shrink:0}
+.wordmark{font:italic var(--fs-xl)/1 var(--serif);color:var(--forest);letter-spacing:-.7px;padding:4px 9px;border-radius:8px;display:inline-flex;align-items:center;gap:6px;flex-shrink:0}
 .header-rule{width:1px;height:16px;background:var(--line);flex-shrink:0}
-.site-kicker{font-size:10px;letter-spacing:1.9px;text-transform:uppercase}
+.site-kicker{font-size:var(--fs-2xs);letter-spacing:1.9px;text-transform:uppercase}
 /* The header bot strip was removed: bot status now lives on the sidebar
    cards (and on the avatar rail when the sidebar is collapsed to <140px).
    These chip rules remain for any cached markup still carrying the strip. */
@@ -50,43 +54,43 @@ html[data-ornaments="off"] .notebook-shell::before,html[data-ornaments="off"] .s
    so its styles live here next to .site-header, not in app-shell. */
 .page-menu-toggle{display:none}
 .page-links{display:flex;gap:2px}
-.page-links a{font-size:12px;color:var(--muted);text-decoration:none;padding:5px 10px;border-radius:7px;white-space:nowrap}
+.page-links a{font-size:var(--fs-xs);color:var(--muted);text-decoration:none;padding:clamp(4px,.4dvh,6px) clamp(8px,.6vw,12px);border-radius:7px;white-space:nowrap}
 .page-links a:hover{color:var(--ink);background:#f3ead6}
 .page-links a.is-current{color:var(--forest);font-weight:600;background:#eef0e2;box-shadow:inset 0 0 0 1px #cfd8bf}
 .icon-button{width:32px;height:32px;display:inline-flex;align-items:center;justify-content:center;border-radius:8px;color:var(--muted)}
 .icon-button:hover{background:#b7a47a16}
 .menu-button{display:none}
-.main-grid{display:grid;grid-template-columns:var(--sidebar-width) 12px minmax(0,1fr);padding:0 12px 12px;min-height:0;min-width:0;gap:0}
+.main-grid{display:grid;grid-template-columns:var(--sidebar-width) 12px minmax(0,1fr);padding:0 clamp(6px,.7vw,14px) clamp(6px,.7dvh,14px);min-height:0;min-width:0;gap:0}
 .dots{display:inline-flex;gap:4px;align-items:center;flex-shrink:0}
 .dots i{width:4px;height:4px;border-radius:50%;background:currentColor;display:block;opacity:.65}
 .dots i:nth-child(2){animation-delay:.22s!important}
 .dots i:nth-child(3){animation-delay:.44s!important}
-.splitter{position:relative;cursor:pointer;border-radius:8px;display:grid;place-items:center;font-size:16px;color:#7a694b;background:transparent;border:0;padding:0}
+.splitter{position:relative;cursor:pointer;border-radius:8px;display:grid;place-items:center;font-size:var(--fs-lg);color:#7a694b;background:transparent;border:0;padding:0}
 .splitter:hover,.splitter:focus-visible{background:#f3ead6;color:var(--forest)}
 /* Original wax-seal SVGs from the supplied prototype. All four source states
    are supported. The upload did not include shared/css/bot-avatar.css;
    these self-contained styles implement its named visual parts. */
-.screen-dialog{padding:0;border:1px solid #cfbea0;border-radius:17px;color:var(--ink);background-color:#fbf5e8;background-image:linear-gradient(#fbf4e5a6,#fbf4e5a6),url(../../images/thyca-bg-paper.png);background-position:center;background-size:cover;box-shadow:0 20px 70px #30291b40;width:min(740px,calc(100vw - 32px));max-height:calc(100dvh - 48px);overflow:auto;scrollbar-width:thin;scrollbar-color:#c8b99e transparent}
+.screen-dialog{padding:0;border:1px solid #cfbea0;border-radius:17px;color:var(--ink);background-color:#fbf5e8;background-image:linear-gradient(#fbf4e5a6,#fbf4e5a6),url(../../images/thyca-bg-paper.png);background-position:center;background-size:cover;box-shadow:0 20px 70px #30291b40;width:min(var(--dialog-max),calc(100vw - 32px));max-height:calc(100dvh - 48px);overflow:auto;scrollbar-width:thin;scrollbar-color:#c8b99e transparent}
 .screen-dialog::backdrop{background:#3e372e55;backdrop-filter:blur(5px)}
 .dialog-heading{display:flex;justify-content:space-between;align-items:flex-start;gap:20px;padding:25px 27px 18px;border-bottom:1px solid var(--line)}
-.dialog-heading h2{font:500 27px var(--serif);margin:0 0 7px}
-.dialog-heading p{font-size:12px;line-height:1.6;color:var(--muted);margin:0;max-width:510px}
+.dialog-heading h2{margin:0 0 7px}
+.dialog-heading p{font-size:var(--fs-xs);line-height:1.6;color:var(--muted);margin:0;max-width:510px}
 .dialog-body{padding:24px 27px}
 .dialog-controls{display:flex;align-items:center;gap:12px;margin-bottom:18px;flex-wrap:wrap}
-.dialog-controls label{font-size:12px;color:var(--muted)}
+.dialog-controls label{font-size:var(--fs-xs);color:var(--muted)}
 .dialog-controls select{border:1px solid #cdbd9e;border-radius:6px;padding:6px;background:#fff8e8;color:#62553f}
-.primary-action{background:var(--forest);border-radius:7px;color:#fff5de;padding:11px 17px;font:16px var(--serif)}
+.primary-action{background:var(--forest);border-radius:7px;color:#fff5de;padding:11px 17px;font:var(--fs-lg) var(--serif)}
 .dialog-actions{display:flex;justify-content:flex-end;margin-top:20px}
-.toast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%);z-index:100;background:#435747;color:#fff9e9;padding:12px 19px;border-radius:10px;box-shadow:var(--shadow);font-size:12px;max-width:90vw;text-align:center}
+.toast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%);z-index:100;background:#435747;color:#fff9e9;padding:12px 19px;border-radius:10px;box-shadow:var(--shadow);font-size:var(--fs-xs);max-width:90vw;text-align:center}
 .mobile-overlay{position:fixed;inset:0;z-index:10;background:#29261d50;backdrop-filter:blur(3px)}
 .motion-paused *,.motion-paused *:before,.motion-paused *:after{animation-play-state:paused!important}
 @media(min-width:851px){
-/* Collapsed desktop sidebar renders as a narrow avatar rail (74px) instead
+/* Collapsed desktop sidebar renders as a narrow avatar rail instead
    of disappearing: the full card list hides, the round avatar rail shows,
    and the settings button keeps icon-only form. The splitter stays visible
-   so the rail can be widened again by dragging. */
-.notebook-shell[data-sidebar-collapsed="true"] .main-grid{grid-template-columns:74px 12px minmax(0,1fr)}
-.notebook-shell[data-sidebar-collapsed="true"] .sidebar{width:74px;min-width:0}
+   so the rail can be widened again by clicking. */
+.notebook-shell[data-sidebar-collapsed="true"] .main-grid{grid-template-columns:var(--rail-width) 12px minmax(0,1fr)}
+.notebook-shell[data-sidebar-collapsed="true"] .sidebar{width:var(--rail-width);min-width:0}
 .notebook-shell[data-sidebar-collapsed="true"] .sessions-heading{display:none}
 .notebook-shell[data-sidebar-collapsed="true"] .side-scroll{display:none}
 .notebook-shell[data-sidebar-collapsed="true"] .rail-scroll{display:flex}
@@ -94,27 +98,20 @@ html[data-ornaments="off"] .notebook-shell::before,html[data-ornaments="off"] .s
 .notebook-shell[data-sidebar-collapsed="true"] .sidebar-footer #open-settings .settings-label{display:none}
 .notebook-shell[data-sidebar-collapsed="true"] .sidebar-footer #open-settings svg{width:18px;height:18px}
 }
-@media(min-width:1600px){
-:root{--sidebar-width:175px}
-}
-@media(max-width:1150px){
-:root{--sidebar-width:125px}
-}
 @media(max-width:950px){
 .header-right{position:relative;flex:0 0 auto;justify-content:flex-end}
-.page-menu-toggle{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:8px;font:600 12px/1.2 var(--sans);color:var(--forest);background:#eef0e2;border:1px solid #cfd8bf;white-space:nowrap}
-.page-menu-toggle::after{content:'';width:5px;height:5px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:rotate(45deg);opacity:.7;transition:transform .18s ease}
-.page-menu-toggle[aria-expanded="true"]::after{transform:rotate(-135deg)}
-.page-links{display:none;position:absolute;top:calc(100% + 6px);right:0;min-width:168px;flex-direction:column;gap:2px;padding:6px;border:1px solid #cfbea0;border-radius:12px;background:#fbf5e8;box-shadow:0 12px 32px #30291b2e;z-index:40}
+.page-menu-toggle{display:inline-flex;align-items:center;gap:6px;padding:clamp(4px,.4dvh,6px) 10px;border-radius:8px;font:600 var(--fs-xs)/1.2 var(--sans);color:var(--forest);background:#eef0e2;border:1px solid #cfd8bf;white-space:nowrap}
+.page-menu-toggle::after{content:'';width:5px;height:5px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:translateY(-1.75px) rotate(45deg);opacity:.7;transition:transform .18s ease}
+.page-menu-toggle[aria-expanded="true"]::after{transform:translateY(1.75px) rotate(-135deg)}
+.page-links{display:none;position:absolute;top:calc(100% + 6px);right:0;min-width:168px;max-width:calc(100vw - 24px);flex-direction:column;gap:2px;padding:6px;border:1px solid #cfbea0;border-radius:12px;background:#fbf5e8;box-shadow:0 12px 32px #30291b2e;z-index:40}
 .header-right.page-menu-open .page-links{display:flex}
 .page-links a{padding:7px 11px;border-radius:7px}
 }
 @media(max-width:850px){
-.notebook-shell{margin:8px;height:calc(100dvh - 16px);border-radius:18px;grid-template-rows:40px minmax(0,1fr)}
+:root{--bot-avatar:clamp(52px,calc(38px + 2.8dvh),64px)}
+.notebook-shell{grid-template-rows:var(--header-h) minmax(0,1fr)}
 .main-grid{grid-template-columns:1fr;padding:0 8px 8px;position:relative}
-.splitter{display:none;position:absolute;top:47px;bottom:8px;width:14px;border-radius:8px;cursor:pointer;z-index:21;left:calc(8px + var(--sidebar-width,125px) - 7px);opacity:.8;pointer-events:auto;background:#2b3d3030}
-.sidebar.mobile-open ~ .splitter,.notebook-shell[data-sidebar-collapsed="true"] .splitter{display:grid}
-.sidebar.mobile-open ~ .splitter:hover,.sidebar.mobile-open ~ .splitter:focus-visible{opacity:1;background:#2b3d3040}
+.splitter{display:none}
 .site-header{padding:0 10px;gap:8px}
 .header-left{flex:1 1 auto;min-width:0;gap:6px;overflow:hidden}
 .header-rule{display:none}
@@ -122,12 +119,17 @@ html[data-ornaments="off"] .notebook-shell::before,html[data-ornaments="off"] .s
 .head-actions .icon-button{display:none}
 }
 @media(max-width:520px){
-.notebook-shell{margin:0;height:100dvh;border-radius:0;border:none;grid-template-rows:42px minmax(0,1fr)}
+:root{--shell-gap:0px;--shell-radius:0px;--header-h:clamp(38px,5.2dvh,44px)}
+.notebook-shell{border:none}
 .site-header{padding:0 8px;gap:6px}
 .main-grid{padding:0 5px 5px}
 .dialog-heading{padding:20px}
 .dialog-body{padding:20px}
 .screen-dialog{max-height:calc(100dvh - 24px)}
+}
+@media(max-height:680px){
+.dialog-heading{padding:16px 22px 14px}
+.dialog-body{padding:16px 22px}
 }
 @media(prefers-reduced-motion:reduce){
 *,*:before,*:after{animation:none!important;transition:none!important;scroll-behavior:auto!important}
@@ -137,77 +139,70 @@ html[data-ornaments="off"] .notebook-shell::before,html[data-ornaments="off"] .s
    Self-sufficient under #settings-dialog: app-shell.css only loads on
    non-chat pages, so the dialog carries its own component rules instead of
    borrowing page-scoped ones. Values mirror share/app-shell.css. */
-#settings-dialog .paper-card{position:relative;border:1px solid #dccfb7;background:linear-gradient(125deg,#fffaf0,#f8f0df);border-radius:15px;padding:24px 27px;box-shadow:0 3px 12px #5d4b2a08;margin-bottom:22px}
+#settings-dialog .paper-card{position:relative;border:1px solid #dccfb7;background:linear-gradient(125deg,#fffaf0,#f8f0df);border-radius:15px;padding:clamp(16px,1.8vw,26px) clamp(16px,2vw,28px);box-shadow:0 3px 12px #5d4b2a08;margin-bottom:22px}
 #settings-dialog .paper-card:last-child{margin-bottom:0}
-#settings-dialog .eyebrow{display:flex;align-items:center;gap:12px;font-size:10px;letter-spacing:1.9px;text-transform:uppercase;color:var(--muted);margin-bottom:8px}
+#settings-dialog .eyebrow{display:flex;align-items:center;gap:12px;font-size:var(--fs-2xs);letter-spacing:1.9px;text-transform:uppercase;color:var(--muted);margin-bottom:8px}
 #settings-dialog .eyebrow:after{content:'';height:1px;background:var(--line);flex:1}
-#settings-dialog .card-title{margin:0 0 15px;font:500 22px var(--serif);color:#574831}
-#settings-dialog .card-copy{font-size:13px;line-height:1.7;color:#6d614f;margin:0 0 14px}
+#settings-dialog .card-title{margin:0 0 clamp(10px,1.4dvh,16px);color:#574831}
+#settings-dialog .card-copy{font-size:var(--fs-sm);line-height:1.7;color:#6d614f;margin:0 0 14px}
 #settings-dialog .card-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(220px,100%),1fr));gap:14px}
-#settings-dialog .field{display:grid;gap:7px;font-size:12px;color:#6d5d44}
-#settings-dialog .field>span{color:var(--muted);font-size:11px;letter-spacing:.4px}
-#settings-dialog .field input,#settings-dialog .field select,#settings-dialog .field textarea{border:1px solid #d1c1a2;border-radius:8px;background:#fff9ea;color:var(--ink);padding:9px 11px;font:14px var(--sans);min-width:0;width:100%}
+#settings-dialog .field{display:grid;gap:7px;font-size:var(--fs-xs);color:#6d5d44}
+#settings-dialog .field>span{color:var(--muted);font-size:var(--fs-xs);letter-spacing:.4px}
+#settings-dialog .field input,#settings-dialog .field select,#settings-dialog .field textarea{border:1px solid #d1c1a2;border-radius:8px;background:#fff9ea;color:var(--ink);padding:9px 11px;font:var(--fs-md) var(--sans);min-width:0;width:100%}
 #settings-dialog .field input:focus,#settings-dialog .field select:focus,#settings-dialog .field textarea:focus{outline:2px solid #56705b66;outline-offset:1px;border-color:#8d9a77}
-#settings-dialog .checkbox-row{display:flex;align-items:center;gap:9px;font-size:13px;color:#675b45}
+#settings-dialog .checkbox-row{display:flex;align-items:center;gap:9px;font-size:var(--fs-sm);color:#675b45}
 #settings-dialog .checkbox-row input{accent-color:#596f5f;width:16px;height:16px;flex-shrink:0}
 #settings-dialog .pref-rows{display:grid;gap:14px;max-width:480px}
 #settings-dialog .pref-rows .field{max-width:230px}
 #settings-dialog .cfg-section{margin-bottom:20px}
 #settings-dialog .cfg-section:last-of-type{margin-bottom:0}
-#settings-dialog .cfg-section-title{margin:0 0 12px;font:600 11px var(--sans);letter-spacing:.8px;text-transform:uppercase;color:#7a6b4f}
-#settings-dialog .field-range{display:block;margin-top:3px;font-size:10px;letter-spacing:.2px;color:#a5987c;text-transform:none}
+#settings-dialog .cfg-section-title{margin:0 0 12px;font:600 var(--fs-2xs) var(--sans);letter-spacing:.8px;text-transform:uppercase;color:#7a6b4f}
+#settings-dialog .field-range{display:block;margin-top:3px;font-size:var(--fs-2xs);letter-spacing:.2px;color:#a5987c;text-transform:none}
 #settings-dialog .form-footer{display:flex;align-items:center;gap:14px;margin-top:20px;flex-wrap:wrap}
-#settings-dialog .form-hint{font-size:12px;color:var(--muted)}
-#settings-dialog .form-status{flex-basis:100%;margin:0;font-size:12px;line-height:1.6;color:var(--muted);overflow-wrap:anywhere}
+#settings-dialog .form-hint{font-size:var(--fs-xs);color:var(--muted)}
+#settings-dialog .form-status{flex-basis:100%;margin:0;font-size:var(--fs-xs);line-height:1.6;color:var(--muted);overflow-wrap:anywhere}
 #settings-dialog .form-status.is-ok{color:#456344}
 #settings-dialog .form-status.is-error{color:#9c4f3f}
-#settings-dialog .meta-list{display:grid;gap:8px;margin:0;padding:0;list-style:none;font-size:12px;color:#6f6350}
-#settings-dialog .meta-list li{display:flex;justify-content:space-between;gap:14px;border-bottom:1px dashed #e2d7c0;padding-bottom:7px}
+#settings-dialog .meta-list{display:grid;gap:8px;margin:0;padding:0;list-style:none;font-size:var(--fs-xs);color:#6f6350}
+#settings-dialog .meta-list li{display:flex;justify-content:space-between;flex-wrap:wrap;gap:4px 14px;border-bottom:1px dashed #e2d7c0;padding-bottom:7px}
 #settings-dialog .meta-list li:last-child{border-bottom:0;padding-bottom:0}
-#settings-dialog .status-line{display:inline-flex;align-items:center;gap:8px;font-size:12px;color:var(--muted)}
+#settings-dialog .meta-list span:last-child{overflow-wrap:anywhere;min-width:0}
+#settings-dialog .status-line{display:inline-flex;align-items:center;gap:8px;font-size:var(--fs-xs);color:var(--muted)}
 #settings-dialog .status-line:before{content:'';width:7px;height:7px;border-radius:50%;background:#82916e;flex-shrink:0}
 #settings-dialog .status-line.s-error{color:#9c4f3f}
 #settings-dialog .status-line.s-error:before{background:#c05c4b}
 #settings-dialog .status-line.s-ok{color:#456344}
-#settings-dialog .empty-note{border:1px dashed #d5c6aa;border-radius:11px;padding:19px 21px;color:var(--muted);font-size:13px;line-height:1.65;background:#fff9ec80}
-#settings-dialog .empty-note strong{display:block;font:500 19px var(--serif);color:#5f5039;margin-bottom:6px}
+#settings-dialog .empty-note{border:1px dashed #d5c6aa;border-radius:11px;padding:19px 21px;color:var(--muted);font-size:var(--fs-sm);line-height:1.65;background:#fff9ec80}
+#settings-dialog .empty-note strong{display:block;font:500 var(--fs-xl) var(--serif);color:#5f5039;margin-bottom:6px}
 #settings-dialog .bot-pick{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
 #settings-dialog .bot-pick .field{flex:1;min-width:180px}
 #settings-dialog .bot-pick-seal{display:inline-flex;align-items:center;gap:11px;min-width:0}
 #settings-dialog .bot-pick-seal .seal-avatar{width:46px;height:46px;flex-shrink:0}
 #settings-dialog .bot-pick-seal>span:last-child{display:grid;gap:1px;min-width:0}
-#settings-dialog .bot-pick-seal strong{font:600 15px var(--sans);color:#4d4232}
-#settings-dialog .bot-pick-seal span span{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#settings-dialog .bot-pick-seal strong{font:600 var(--fs-md) var(--sans);color:#4d4232}
+#settings-dialog .bot-pick-seal span span{font-size:var(--fs-xs);color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #settings-dialog .settings-bot-model-form{margin-top:18px;padding-top:18px;border-top:1px dashed #e2d7c0}
 #settings-dialog .settings-bot-model-form .card-grid{margin-top:4px;grid-template-columns:repeat(auto-fit,minmax(min(220px,100%),1fr))}
 #settings-dialog .settings-bot-model-form .bot-model-meta{display:flex;align-items:baseline;gap:8px 18px;flex-wrap:wrap;margin-top:12px}
-#settings-dialog .settings-bot-model-form .bot-provider-line,#settings-dialog .settings-bot-model-form .bot-effective{margin:0;font-size:13px;color:#4d4232;overflow-wrap:anywhere}
-#settings-dialog .settings-bot-model-form .field-hint{margin:8px 0 0;font-size:12px;color:var(--muted)}
+#settings-dialog .settings-bot-model-form .bot-provider-line,#settings-dialog .settings-bot-model-form .bot-effective{margin:0;font-size:var(--fs-sm);color:#4d4232;overflow-wrap:anywhere}
+#settings-dialog .settings-bot-model-form .field-hint{margin:8px 0 0;font-size:var(--fs-xs);color:var(--muted)}
 @media(max-width:520px){
 #settings-dialog .paper-card{padding:20px 18px}
 }
 
 /* Type scale (moved from the old per-page settings sheet so the zoom
-   applies globally): the sheet is px-based, so the whole notebook zooms
-   instead, with height/width divided back so the shell keeps filling the
-   desk frame at every breakpoint. */
-html[data-type-scale="small"] .notebook-shell{zoom:.93;height:calc((100dvh - 16px)/.93);width:calc((100vw - 16px)/.93)}
-html[data-type-scale="large"] .notebook-shell{zoom:1.07;height:calc((100dvh - 16px)/1.07);width:calc((100vw - 16px)/1.07)}
-@media(max-width:850px){
-html[data-type-scale="small"] .notebook-shell{height:calc((100dvh - 16px)/.93);width:calc((100vw - 16px)/.93)}
-html[data-type-scale="large"] .notebook-shell{height:calc((100dvh - 16px)/1.07);width:calc((100vw - 16px)/1.07)}
-}
-@media(max-width:520px){
-html[data-type-scale="small"] .notebook-shell{height:calc(100dvh/.93);width:calc(100vw/.93)}
-html[data-type-scale="large"] .notebook-shell{height:calc(100dvh/1.07);width:calc(100vw/1.07)}
-}
+   applies globally): the sheet scales smoothly via tokens, so the whole
+   notebook zooms cleanly, with height/width divided back by var(--shell-gap)
+   so the shell keeps filling the desk frame at every breakpoint. */
+html[data-type-scale="small"] .notebook-shell{zoom:.93;margin:calc(var(--shell-gap) / .93);height:calc((100dvh - var(--shell-gap) * 2)/.93);width:calc((100vw - var(--shell-gap) * 2)/.93)}
+html[data-type-scale="large"] .notebook-shell{zoom:1.07;margin:calc(var(--shell-gap) / 1.07);height:calc((100dvh - var(--shell-gap) * 2)/1.07);width:calc((100vw - var(--shell-gap) * 2)/1.07)}
 
 /* Dialogs are siblings of .notebook-shell, so the type zoom above misses
    them — including the controls that manage the preference. Zoom dialogs
    too; like the shell, the large step divides its viewport bounds back so
    the rendered box still fits (bodies scroll inside). */
 html[data-type-scale="small"] .screen-dialog{zoom:.93}
-html[data-type-scale="large"] .screen-dialog{zoom:1.07;width:min(calc(740px / 1.07),calc((100vw - 32px) / 1.07));max-height:calc((100dvh - 48px) / 1.07)}
+html[data-type-scale="large"] .screen-dialog{zoom:1.07;width:min(calc(var(--dialog-max) / 1.07),calc((100vw - 32px) / 1.07));max-height:calc((100dvh - 48px) / 1.07)}
 @media(max-width:520px){
 html[data-type-scale="large"] .screen-dialog{max-height:calc((100dvh - 24px) / 1.07)}
 }

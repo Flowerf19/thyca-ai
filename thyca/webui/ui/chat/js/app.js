@@ -43,7 +43,9 @@ $('#composer').onsubmit = e => {
 let typedMention = '';
 $('#message').addEventListener('keydown', e => { if (e.isComposing) return; if (e.key === 'Escape') $('#mention-popup').hidden = true; if (e.key === 'ArrowDown' && !$('#mention-popup').hidden) { e.preventDefault(); $('.mention-option').focus(); return; } if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('#composer').requestSubmit(); } });
 $('#message').addEventListener('input', e => {
-  const el = e.target; idleInput(selectedBot); el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+  const el = e.target; idleInput(selectedBot); el.style.height = 'auto';
+  const maxH = (typeof getComputedStyle === 'function' ? parseFloat(getComputedStyle(el).maxHeight) : NaN) || 120;
+  el.style.height = Math.min(el.scrollHeight, maxH) + 'px';
   const complete = el.value.match(new RegExp(mentionPattern().source.replace('\\b', '') + '(?=\\s|$)', 'i'));
   if (complete && typedMention !== complete[1].toLowerCase()) { typedMention = complete[1].toLowerCase(); mentionBot(typedMention); }
   if (!complete) typedMention = '';

@@ -357,11 +357,15 @@ def test_profile_screen_renders_markdown() -> None:
     assert "sharedBotId" not in script
     assert "let selectedBot = '';" in script
     assert "state.tab" in script
-    # The edit dialog is still one dialog with a real editor textarea — its
-    # larger footprint is page CSS, not a shared dialog size.
-    assert 'id="edit-dialog"' in script
-    assert "#edit-dialog" in css
-    assert "min-height:46vh" in css
+    # Canonical docs keep #profile-doc-tabs, split ## headings into section
+    # cards (.profile-section-grid), edit either per-section or whole-file
+    # inline (#edit-form), and keep the 2-column bot dossier (.profile-bot-grid).
+    assert 'id="edit-dialog"' not in script
+    assert 'id="profile-doc-tabs"' in script
+    assert "profile-section-grid" in script and "profile-bot-grid" in script
+    assert 'id="edit-form"' in script and 'id="edit-preview"' in script
+    assert ".profile-doc-tabs" in css and ".profile-section-grid" in css and ".profile-bot-grid" in css
+    assert ".profile-inline-editor" in css and "#edit-content" in css
     # Body text is markdown, rendered by the shared chat renderer (a module,
     # so profile.js falls back to escaped paragraphs before it evaluates).
     assert "../share/markdown.js" in app
@@ -390,9 +394,9 @@ def test_profile_screen_renders_markdown() -> None:
     assert "showShared('file-' + hash)" in script
 
     # Blanking a profile is a real action, so it asks first rather than being
-    # blocked by native `required` validation (the factory owns the dialog
-    # markup; the exact textarea carries no `required` attribute).
-    assert '<textarea id="edit-content" spellcheck="false">' in script
+    # blocked by native `required` validation (the factory owns the inline
+    # editor markup; the exact textarea carries no `required` attribute).
+    assert '<textarea id="edit-content" spellcheck="false"></textarea>' in script
     assert 'confirm(`Xoá trắng nội dung “${name}”?`)' in script
 
     # Switching tabs moves focus to the sidebar bot card, whose own label
@@ -411,7 +415,6 @@ def test_profile_screen_renders_markdown() -> None:
     assert 'class="paper-card profile-doc"' in script
     assert 'data-edit="' in script
     assert ".profile-doc" in css
-    assert ".profile-doc + .profile-doc" in css
     assert 'class="paper-card profile-bot"' in script
     assert "profile-readonly" in script
     assert "session-body" not in script

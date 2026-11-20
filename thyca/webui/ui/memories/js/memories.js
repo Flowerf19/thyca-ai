@@ -58,6 +58,8 @@ const PAGE_HTML = `
         <option value="">Lọc mức dùng</option>
         <option value="used">Dùng nhiều</option>
         <option value="untouched">Không dùng bao giờ</option>
+        <option value="expiring">Sắp hết hạn</option>
+        <option value="suggest">Gợi ý xóa</option>
       </select>
       <input class="inline-field" id="memory-search" type="search" autocomplete="off"
         placeholder="Tìm trong nhật ký…" aria-label="Tìm trong nhật ký">
@@ -68,10 +70,9 @@ const PAGE_HTML = `
       <div class="mem-stats" id="memory-stats"></div>
     </article>
     <article class="paper-card" aria-label="Các lá nhớ">
-      <div class="eyebrow">Lá nhớ</div>
       <div class="mem-list-top">
+        <div class="mem-list-heading"><span class="eyebrow">Lá nhớ</span><span class="mem-count" id="memory-count"></span></div>
         <span class="status-line" id="memory-loading">Đang đọc bộ nhớ…</span>
-        <span class="mem-count" id="memory-count"></span>
       </div>
       <div id="memory-leaves" aria-live="polite"></div>
     </article>
@@ -153,35 +154,56 @@ function leafSuggest(leaf) {
   return Number.isFinite(touched) && Date.now() - touched >= SUGGEST_IDLE_DAYS * 864e5;
 }
 
-/* Snippet is raw markdown leaf text (≤250 chars, may cut mid-structure);
-   render with the shared sanitizer when it loaded, escaped text otherwise. */
+/* Strip a single leading Markdown list marker when the snippet is one item,
+   so one-line memories align flush left with title and meta. */
 function snippetHtml(text) {
+  const raw = String(text || '').trim();
+  const single = (/^[-*]\s+/.test(raw) && !/\n\s*(?:[-*+]|\d+\.)\s+/.test(raw))
+    ? raw.replace(/^[-*]\s+/, '').trim()
+    : raw;
   if (window.formatMarkdown) {
-    const html = window.formatMarkdown(text);
+    const html = window.formatMarkdown(single);
     if (html) return html;
   }
-  const t = String(text || '').trim();
-  return t ? `<p>${escapeHTML(t).replace(/\n/g, '<br>')}</p>` : '<p><em>(trống)</em></p>';
+  return single ? `<p>${escapeHTML(single).replace(/\n/g, '<br>')}</p>` : '<p><em>(trống)</em></p>';
 }
 
 function chipsHtml(leaf) {
   const chips = [];
-  if (leaf.is_today) chips.push('<span class="chip" data-active="true">Hôm nay</span>');
-  if (memState.expiring.has(leaf.chunk_id) || leafExpiring(leaf)) chips.push('<span class="chip">Sắp hết hạn</span>');
-  if (memState.suggest.has(leaf.chunk_id) || leafSuggest(leaf)) chips.push('<span class="chip">Gợi ý xóa</span>');
-  if (leaf.kind) chips.push(`<span class="chip">${escapeHTML(KIND_LABEL[leaf.kind] || leaf.kind)}${leaf.habit ? ' · ' + escapeHTML(leaf.habit) : ''}</span>`);
-  if (leaf.status) chips.push(`<span class="chip">${escapeHTML(STATUS_LABEL[leaf.status] || leaf.status)}</span>`);
+  if (memState.expiring.has(leaf.chunk_id) || leafExpiring(leaf)) chips.push('<span class="chip mem-chip-warn">Sắp hết hạn</span>');
+  if (memState.suggest.has(leaf.chunk_id) || leafSuggest(leaf)) chips.push('<span class="chip mem-chip-danger">Gợi ý xóa</span>');
+  if (leaf.kind) chips.push(`<span class="chip mem-chip-kind">${escapeHTML(KIND_LABEL[leaf.kind] || leaf.kind)}${leaf.habit ? ' · ' + escapeHTML(leaf.habit) : ''}</span>`);
+  if (leaf.status) chips.push(`<span class="chip mem-chip-status">${escapeHTML(STATUS_LABEL[leaf.status] || leaf.status)}</span>`);
   return chips.join('');
+}
+
+function fmtExpiry(iso, soon) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (!Number.isFinite(d.getTime())) return `<span class="${soon ? 'mem-expiring' : 'mem-expiry'}">hết hạn ${escapeHTML(iso)}</span>`;
+  const full = fmtTs(iso);
+  const shortDate = d.toLocaleDateString('vi-VN');
+  if (soon) {
+    const days = Math.ceil((d.getTime() - Date.now()) / 864e5);
+    const label = days > 1 ? `hết hạn sau ${days} ngày` : days === 1 ? 'hết hạn ngày mai' : days === 0 ? 'hết hạn hôm nay' : `hết hạn ${shortDate}`;
+    return `<span class="mem-expiring" title="Hết hạn ${escapeHTML(full)}">${escapeHTML(label)}</span>`;
+  }
+  return `<span class="mem-expiry" title="Hết hạn ${escapeHTML(full)}">hết hạn ${escapeHTML(shortDate)}</span>`;
 }
 
 function metaHtml(leaf) {
   const parts = [];
-  if (leaf.timeline_day) parts.push(`<span>${escapeHTML(dayLabel(leaf))}</span>`);
-  parts.push(`<span>đã dùng ${leaf.get_count || 0}</span>`);
-  parts.push(`<span>tìm thấy ${leaf.search_count || 0}</span>`);
-  if (leaf.expires_at) parts.push(`<span class="mem-expiring">hết hạn ${escapeHTML(fmtTs(leaf.expires_at))}</span>`);
+  const used = leaf.get_count || 0;
+  const searched = leaf.search_count || 0;
+  if (used > 0) parts.push(`<span>đã dùng ${used}</span>`);
+  if (searched > 0) parts.push(`<span>tìm thấy ${searched}</span>`);
+  if (!used && !searched) parts.push('<span class="mem-idle">chưa dùng</span>');
+  if (leaf.expires_at) {
+    const soon = memState.expiring.has(leaf.chunk_id) || leafExpiring(leaf);
+    parts.push(fmtExpiry(leaf.expires_at, soon));
+  }
   parts.push(`<span>${ownerLabel(leaf.bots)}</span>`);
-  parts.push(`<span class="mem-sid">${escapeHTML(leaf.memory_id || '')}</span>`);
+  if (leaf.memory_id) parts.push(`<span class="mem-sid">${escapeHTML(leaf.memory_id)}</span>`);
   return parts.join('');
 }
 
@@ -189,17 +211,16 @@ function metaHtml(leaf) {
 
 function renderStats() {
   const s = memState.stats;
-  const tiles = s ? [
-    ['Tổng lá', s.total],
-    ['Đã dùng', s.used],
-    ['Chưa dùng', s.unused],
-    ['Được tìm', s.searched],
-    ['Chưa đụng tới', s.untouched],
-    ['Sắp hết hạn', (s.expiring || []).length, 'm-warn'],
-    ['Gợi ý xóa', (s.suggest_removal || []).length, 'm-danger'],
-  ] : [['Tổng lá', '—'], ['Đã dùng', '—'], ['Chưa dùng', '—'], ['Được tìm', '—'], ['Chưa đụng tới', '—'], ['Sắp hết hạn', '—', 'm-warn'], ['Gợi ý xóa', '—', 'm-danger']];
-  $('#memory-stats').innerHTML = tiles.map(([label, value, cls]) =>
-    `<div class="mem-stat${cls ? ' ' + cls : ''}"><b>${value ?? 0}</b><span>${label}</span></div>`).join('');
+  const kpis = [
+    ['', s ? (s.total ?? 0) : '—', 'Tổng lá', s ? `chưa đụng tới ${s.untouched ?? 0}` : '—', ''],
+    ['used', s ? (s.used ?? 0) : '—', 'Đã dùng', s ? `Được tìm ${s.searched ?? 0}` : '—', ''],
+    ['expiring', s ? (s.expiring || []).length : '—', 'Sắp hết hạn', 'trong 14 ngày', 'm-warn'],
+    ['suggest', s ? (s.suggest_removal || []).length : '—', 'Gợi ý xóa', 'chưa dùng >7 ngày', 'm-danger'],
+  ];
+  $('#memory-stats').innerHTML = kpis.map(([filter, value, label, sub, cls]) => {
+    const active = memState.use === filter;
+    return `<button type="button" class="mem-stat${cls ? ' ' + cls : ''}" data-stat-filter="${filter}" aria-pressed="${active}"><b>${value}</b><span class="mem-stat-label">${label}</span><small class="mem-stat-sub">${sub}</small></button>`;
+  }).join('');
 }
 
 function updateMemoryTitle() {
@@ -235,9 +256,11 @@ function filteredLeaves() {
   /* kind mirrors TASK_KINDS in memory/heading.py — 'none' means untyped. */
   if (memState.kind === 'none') leaves = leaves.filter(l => !l.kind);
   else if (memState.kind) leaves = leaves.filter(l => l.kind === memState.kind);
-  /* use mirrors stats.py: used = get_count>=1, untouched = no get and no search. */
+  /* use mirrors stats.py plus client quick-filters for expiring / suggest. */
   if (memState.use === 'used') leaves = leaves.filter(l => (l.get_count || 0) >= 1);
   else if (memState.use === 'untouched') leaves = leaves.filter(l => !(l.get_count || 0) && !(l.search_count || 0));
+  else if (memState.use === 'expiring') leaves = leaves.filter(l => memState.expiring.has(l.chunk_id) || leafExpiring(l));
+  else if (memState.use === 'suggest') leaves = leaves.filter(l => memState.suggest.has(l.chunk_id) || leafSuggest(l));
   const needle = memState.query.trim().toLocaleLowerCase('vi');
   if (!needle) return leaves;
   return leaves.filter(leaf => {
@@ -249,18 +272,23 @@ function filteredLeaves() {
 
 function leafHtml(leaf) {
   const { time, title } = splitHeading(leaf);
+  const chips = chipsHtml(leaf);
   return `<article class="mem-leaf" data-chunk="${escapeHTML(leaf.chunk_id)}">
-  <div class="mem-leaf-main">
-    <div class="mem-leaf-head"><h4 class="mem-leaf-title">${escapeHTML(title)}</h4>${time ? `<time class="mem-leaf-time">${escapeHTML(time)}</time>` : ''}</div>
-    <div class="mem-chips">${chipsHtml(leaf)}</div>
-    <div class="mem-snippet markdown-body">${snippetHtml(leaf.snippet)}</div>
-    <p class="mem-meta">${metaHtml(leaf)}</p>
+  <div class="mem-leaf-top">
+    <div class="mem-leaf-head">
+      <h4 class="mem-leaf-title">${escapeHTML(title)}</h4>
+      ${time ? `<time class="mem-leaf-time">${escapeHTML(time)}</time>` : ''}
+      ${chips ? `<div class="mem-chips">${chips}</div>` : ''}
+    </div>
+    <div class="mem-actions">
+      <button class="quiet-button" data-act="reinforce" type="button">${icon('retry')}<span>Gia hạn</span></button>
+      <button class="quiet-button" data-act="edit" type="button">Sửa</button>
+      <button class="quiet-button is-danger" data-act="forget" type="button">Quên</button>
+    </div>
   </div>
-  <div class="mem-actions">
-    <button class="quiet-button" data-act="reinforce" type="button">${icon('retry')}<span>Gia hạn</span></button>
-    <button class="quiet-button" data-act="edit" type="button">Sửa</button>
-    <button class="quiet-button is-danger" data-act="forget" type="button">Quên</button>
-  </div></article>`;
+  <div class="mem-snippet markdown-body">${snippetHtml(leaf.snippet)}</div>
+  <p class="mem-meta">${metaHtml(leaf)}</p>
+</article>`;
 }
 
 function renderLeaves() {
@@ -387,7 +415,18 @@ function openEdit(leaf) {
 
 function wirePage() {
   $('#memory-kind').onchange = e => { memState.kind = e.target.value; memState.page = 1; renderLeaves(); };
-  $('#memory-use').onchange = e => { memState.use = e.target.value; memState.page = 1; renderLeaves(); };
+  $('#memory-use').onchange = e => { memState.use = e.target.value; memState.page = 1; renderStats(); renderLeaves(); };
+  $('#memory-stats').addEventListener('click', e => {
+    const statBtn = e.target.closest('[data-stat-filter]');
+    if (!statBtn) return;
+    const filter = statBtn.dataset.statFilter || '';
+    memState.use = (filter && memState.use === filter) ? '' : filter;
+    const useSel = $('#memory-use');
+    if (useSel) useSel.value = memState.use;
+    memState.page = 1;
+    renderStats();
+    renderLeaves();
+  });
   $('#memory-scope-card').addEventListener('click', e => { if (e.target.closest('.mem-scope-clear')) selectBot(''); });
   $('#memory-search').addEventListener('input', e => { memState.query = e.target.value; memState.page = 1; renderLeaves(); });
   $('#memory-reload').onclick = () => loadStats();
@@ -416,7 +455,17 @@ function wirePage() {
       const res = await postJson('/api/memory/reinforce', { memory_id: sid }).catch(err => { toast('Không gia hạn được: ' + (err.message || '')); return null; });  // API: POST /api/memory/reinforce
       btn.disabled = false;
       if (res && res.ok) {
-        if (res.expires_at) { leaf.expires_at = res.expires_at; refreshLeafDom(leaf); }
+        if (res.expires_at) {
+          leaf.expires_at = res.expires_at;
+          if (!leafExpiring(leaf)) {
+            memState.expiring.delete(leaf.chunk_id);
+            if (Array.isArray(memState.stats?.expiring)) {
+              memState.stats.expiring = memState.stats.expiring.filter(x => x.chunk_id !== leaf.chunk_id);
+            }
+          }
+          refreshLeafDom(leaf);
+          renderStats();
+        }
         toast('Đã gia hạn trang.');
       }
     }

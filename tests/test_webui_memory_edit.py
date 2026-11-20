@@ -388,8 +388,22 @@ const pageTwo = {
   leaves: leafCount(), memPage: page.memState.page,
   info: (document.querySelector('#memory-leaves').innerHTML.match(/Trang \d+\/\d+/) || [''])[0],
 };
+const fireStat = filter => {
+  const btn = { dataset: { statFilter: filter }, closest: s => (s === '[data-stat-filter]' ? btn : null) };
+  fire(document.querySelector('#memory-stats'), 'click', { target: btn });
+};
+// Single-bullet snippets align flush left without wrapping in <ul><li>.
+const usedBtnHtml = document.querySelector('#memory-leaves').innerHTML;
+const hasSingleBulletParagraph = !usedBtnHtml.includes('<ul><li>') && usedBtnHtml.includes('<p>nội dung');
+// Clicking KPI filter strips narrows leaves client-side without refetching.
+fireStat('used');
+const statUsed = { leaves: leafCount(), useVal: document.querySelector('#memory-use').value };
+fireStat('expiring');
+const statExpiring = { leaves: leafCount(), useVal: document.querySelector('#memory-use').value };
+fireStat('expiring');
+const statReset = { leaves: leafCount(), useVal: document.querySelector('#memory-use').value };
 console.log(JSON.stringify({
-  pageOne, habit, habitUntouched, pageTwo, gets: calls.gets,
+  pageOne, habit, habitUntouched, pageTwo, hasSingleBulletParagraph, statUsed, statExpiring, statReset, gets: calls.gets,
 }));
 """),
 }
@@ -608,4 +622,8 @@ def test_kind_use_filters_page_through_60_leaves(filters: dict) -> None:
     assert filters["pageTwo"]["leaves"] == 5
     assert filters["pageTwo"]["info"] == "Trang 2/2"
     assert filters["pageTwo"]["memPage"] == 2
+    assert filters["hasSingleBulletParagraph"] is True
+    assert filters["statUsed"] == {"leaves": 32, "useVal": "used"}
+    assert filters["statExpiring"] == {"leaves": 0, "useVal": "expiring"}
+    assert filters["statReset"] == {"leaves": 60, "useVal": ""}
     assert filters["gets"] == ["/api/memory/stats"]

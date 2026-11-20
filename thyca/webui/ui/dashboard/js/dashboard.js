@@ -20,6 +20,7 @@ const MAX_SESSIONS = 200;
 
 let rangeFrom = '', rangeTo = '';
 let rangeAll = false;
+let customRangeOpen = false;
 let botScope = '';
 let dayMetric = 'tokens';
 let statsData = null, statsError = '', statsLoading = false;
@@ -165,9 +166,13 @@ const PAGE_HTML = `
           <button class="chip" type="button" data-preset="30">30 ngày</button>
           <button class="chip" type="button" data-preset="all">Tất cả</button>
         </span>
-        <label class="range-field"><span>Từ</span><input type="date" id="range-from"></label>
-        <label class="range-field"><span>Đến</span><input type="date" id="range-to"></label>
-        <button class="quiet-button" id="range-apply" type="button">Áp dụng</button>
+        <button class="chip range-custom-toggle" id="range-custom-toggle" type="button" aria-expanded="false" aria-pressed="false" aria-controls="range-custom-bar" title="Chọn khoảng ngày tùy chỉnh">Tùy chọn</button>
+        </div>
+        <div class="range-custom" id="range-custom-bar" hidden>
+          <label class="range-field"><span>Từ</span><input type="date" id="range-from"></label>
+          <span class="range-sep" aria-hidden="true">–</span>
+          <label class="range-field"><span>Đến</span><input type="date" id="range-to"></label>
+          <button class="quiet-button" id="range-apply" type="button">Áp dụng</button>
         </div>
       </div>
     </div>
@@ -175,20 +180,15 @@ const PAGE_HTML = `
     <div class="stat-grid" id="stat-grid" aria-live="polite"></div>
     <section class="usage-view-panel" id="usage-panel-usage" aria-label="Sử dụng token">
       <article class="paper-card">
-        <div class="card-head"><div><h2 class="card-title">Nhịp token từng ngày</h2><p class="card-copy">Input gồm cả Cache; cột tách Input chưa cache, Cache và Output.</p></div>
+        <div class="card-head"><div><h2 class="card-title">Nhịp token từng ngày</h2></div>
           <div class="seg-toggle" role="group" aria-label="Chỉ số cột">
             <button class="chip" type="button" data-day-metric="tokens" aria-pressed="true">Token</button>
             <button class="chip" type="button" data-day-metric="requests" aria-pressed="false">Gọi model</button>
           </div>
         </div>
-        <div class="token-legend" aria-label="Chú giải biểu đồ"><span><i class="legend-input"></i>Input chưa cache</span><span><i class="legend-cache"></i>Cache</span><span><i class="legend-output"></i>Output</span></div>
+        <div class="token-legend" aria-label="Chú giải biểu đồ"><span title="Không bao gồm Cache read."><i class="legend-input"></i>Input <strong id="usage-input-total">—</strong></span><span title="Tính riêng, không nằm trong Input."><i class="legend-cache"></i>Cache <strong id="usage-cache-total">—</strong></span><span title="Token hoàn tất từ model."><i class="legend-output"></i>Output <strong id="usage-output-total">—</strong></span></div>
         <div id="chart-day"></div><p class="card-note" id="chart-day-note"></p>
       </article>
-      <section class="token-summary-grid" aria-label="Thành phần token">
-        <article class="panel token-summary"><h2 class="panel-title">Input</h2><strong id="usage-input-total">—</strong><p>Không bao gồm Cache read.</p></article>
-        <article class="panel token-summary"><h2 class="panel-title">Cache read</h2><strong id="usage-cache-total">—</strong><p>Tính riêng, không nằm trong Input.</p></article>
-        <article class="panel token-summary"><h2 class="panel-title">Output</h2><strong id="usage-output-total">—</strong><p>Token hoàn tất từ model.</p></article>
-      </section>
       <details class="paper-card analysis-panel" id="analysis-details">
         <summary>Phân tích</summary>
         <div class="analysis-panels">
@@ -199,9 +199,8 @@ const PAGE_HTML = `
       </details>
     </section>
     <section class="usage-view-panel" id="usage-panel-cost" aria-label="Chi phí" hidden>
-      <p class="card-copy" id="cost-coverage"></p>
       <article class="paper-card">
-        <div class="card-head"><div><h2 class="card-title">Chi phí đã ghi nhận theo ngày</h2><p class="card-copy">Lượt có ghi nhận giá có thể vẫn có phần chưa được định giá; phần thiếu không được tính là $0.</p></div></div>
+        <div class="card-head"><div><h2 class="card-title">Chi phí đã ghi nhận theo ngày</h2><p class="card-copy" id="cost-coverage"></p></div></div>
         <div id="chart-cost"></div><p class="card-note" id="chart-cost-note"></p>
       </article>
       <div class="analysis-panels cost-analysis">
@@ -239,15 +238,29 @@ function updateRangeNote() {
   const nice = v => v ? new Date(v + 'T00:00:00').toLocaleDateString('vi-VN', { day: 'numeric', month: 'numeric', year: 'numeric' }) : '…';
   $('#range-note').textContent = rangeAll ? 'Tất cả' : 'Kỳ ' + nice(f) + ' – ' + nice(t);
 }
+function syncRangeCustomUI() {
+  const bar = $('#range-custom-bar'), toggle = $('#range-custom-toggle');
+  if (bar) bar.hidden = !customRangeOpen;
+  if (toggle) {
+    toggle.setAttribute('aria-expanded', String(customRangeOpen));
+    toggle.setAttribute('aria-pressed', String(customRangeOpen));
+  }
+}
 function updatePresetButtons() {
   const from = $('#range-from').value, to = $('#range-to').value;
   const today = new Date();
   const preset = days => { const start = new Date(today); start.setDate(start.getDate() - (days - 1)); return [isoDay(start), isoDay(today)]; };
+  const matchesPreset = rangeAll || [1, 7, 30].some(days => {
+    const [pFrom, pTo] = preset(days);
+    return pFrom === from && pTo === to;
+  });
+  if (!matchesPreset && (from || to)) customRangeOpen = true;
   $$('.range-presets .chip').forEach(button => {
     const days = button.dataset.preset;
     const active = days === 'all' ? rangeAll : !rangeAll && days && preset(Number(days))[0] === from && preset(Number(days))[1] === to;
     button.setAttribute('aria-pressed', String(!!active));
   });
+  syncRangeCustomUI();
 }
 function applyRange() {
   const f = $('#range-from').value, t = $('#range-to').value;
@@ -257,6 +270,7 @@ function applyRange() {
   applyControlRoute();
 }
 function setPreset(days) {
+  customRangeOpen = false;
   if (String(days) === 'all') {
     rangeFrom = ''; rangeTo = ''; rangeAll = true;
   } else {
@@ -587,18 +601,15 @@ function applyRoute(route, { force = false } = {}) {
 
 /* ---------- render: hero stats ---------- */
 function heroCard(label, value, hint) {
-  return `<section class="panel stat"><p class="stat-label">${label}</p><p class="stat-value">${value}</p>${hint ? `<p class="stat-hint">${hint}</p>` : ''}</section>`;
+  return `<section class="stat"><p class="stat-label">${label}</p><p class="stat-value">${value}</p>${hint ? `<p class="stat-hint">${hint}</p>` : ''}</section>`;
 }
 function renderStats(s, { loading = false } = {}) {
   if (loading) {
     $('#stat-grid').innerHTML = [
-      heroCard('Gọi model', '—', 'request tới model'),
-      heroCard('Gọi tool', '—', 'lần dùng công cụ'),
       heroCard('Token', '—', 'Input — · Cache — · Output —'),
-      heroCard('Chi phí đã ghi nhận', '—', ''),
+      heroCard('Chi phí', '—', ''),
+      heroCard('Gọi model', '—', '— tool · — lượt'),
       heroCard('Độ trễ p50', '—', 'p90 —'),
-      heroCard('Phiên', '—', 'mỗi phiên một lần'),
-      heroCard('Lượt', '—', 'lượt trong kỳ'),
     ].join('');
     for (const id of ['chart-day', 'chart-cost', 'chart-hour', 'rows-bot', 'rows-model', 'rows-bot-cost', 'rows-model-cost']) $(`#${id}`).innerHTML = '';
     $('#chart-day-note').textContent = ''; $('#chart-cost-note').textContent = ''; $('#cost-coverage').textContent = '';
@@ -613,22 +624,19 @@ function renderStats(s, { loading = false } = {}) {
   const t = s.totals || {};
   const inTok = typeof t.prompt_tokens === 'number' ? Math.max(0, t.prompt_tokens - (typeof t.cached_tokens === 'number' ? t.cached_tokens : 0)) : t.prompt_tokens;
   $('#stat-grid').innerHTML = [
-    heroCard('Gọi model', fmtInt(t.requests), 'request tới model'),
-    heroCard('Gọi tool', fmtInt(t.tool_calls), 'lần dùng công cụ'),
     heroCard('Token', fmtInt(t.total_tokens), `Input ${fmtCompact(inTok)} · Cache ${fmtCompact(t.cached_tokens)} · Output ${fmtCompact(t.completion_tokens)}`),
-    heroCard('Chi phí đã ghi nhận', fmtCost(t.cost_usd),
-      t.cost_usd == null ? 'chưa có lượt nào ghi nhận giá'
-        : (typeof t.requests === 'number' && t.requests ? 'TB ' + fmtCost(t.cost_usd / t.requests) + ' / request · phần đã ghi nhận' : '')),
+    heroCard('Chi phí', fmtCost(t.cost_usd),
+      t.cost_usd == null ? 'chưa có giá'
+        : (typeof t.requests === 'number' && t.requests ? 'TB ' + fmtCost(t.cost_usd / t.requests) + ' / req' : '')),
+    heroCard('Gọi model', fmtInt(t.requests), `${fmtInt(t.tool_calls)} tool · ${fmtInt(t.turns)} lượt`),
     heroCard('Độ trễ p50', fmtDur(t.latency_ms_p50), 'p90 ' + fmtDur(t.latency_ms_p90)),
-    heroCard('Phiên', fmtInt(t.conversations), botScope ? 'phiên có đóng góp' : 'mỗi phiên một lần'),
-    heroCard('Lượt', fmtInt(t.turns), botScope ? 'lượt có đóng góp' : 'lượt trong kỳ'),
   ].join('');
   $('#usage-input-total').textContent = fmtInt(inTok);
   $('#usage-cache-total').textContent = fmtInt(t.cached_tokens);
   $('#usage-output-total').textContent = fmtInt(t.completion_tokens);
   $('#cost-coverage').textContent = typeof t.priced_turns === 'number' && typeof t.turns === 'number'
-    ? `${fmtInt(t.priced_turns)} / ${fmtInt(t.turns)} lượt có ghi nhận giá; một lượt vẫn có thể chỉ được định giá một phần. Phần thiếu không tính là $0.`
-    : 'Số lượt có ghi nhận giá chưa có trong dữ liệu.';
+    ? `${fmtInt(t.priced_turns)} / ${fmtInt(t.turns)} lượt có giá · phần thiếu không tính là $0.`
+    : 'Chưa có dữ liệu tỷ lệ định giá.';
   renderDayChart(); renderCostChart(); renderBotRows(); renderModelRows(); renderCostRows(); renderHourChart();
   fillModelFilter(s.models || []);
   fillStatusFilter(s.by_status || []);
@@ -679,8 +687,8 @@ function renderDayChart() {
     return `<div class="dc-col${total === null ? ' is-unavailable' : ''}" title="${escapeHTML(tip)}"><span class="dc-track">${bars || '<i class="dc-unavailable">—</i>'}</span><span class="dc-day">${index % step === 0 || index === cols.length - 1 ? fmtDay(day.day) : ''}</span></div>`;
   }).join('') + '</div>';
   $('#chart-day-note').textContent = dayMetric === 'tokens'
-    ? 'Input gồm Cache; cột tách Input chưa cache, Cache read và Output. Ngày theo UTC; dữ liệu thiếu được để trống.'
-    : 'Cột biểu thị lượt gọi model theo ngày UTC; dữ liệu thiếu được để trống.';
+    ? 'Ngày theo UTC; cột tách Input chưa cache, Cache và Output.'
+    : 'Ngày theo UTC; số lượt gọi model mỗi ngày.';
 }
 function renderCostChart() {
   const box = $('#chart-cost');
@@ -695,7 +703,7 @@ function renderCostChart() {
     const tip = `${fmtDayFull(day.day)} · chi phí đã ghi nhận ${fmtCost(day.cost_usd)}`;
     return `<div class="dc-col${value === null ? ' is-unavailable' : ''}" title="${escapeHTML(tip)}"><span class="dc-track">${value === null ? '<i class="dc-unavailable">—</i>' : `<i class="dc-bar dc-bar-cost${value ? '' : ' is-zero'}" style="height:${pct}%"></i>`}</span><span class="dc-day">${index % step === 0 || index === cols.length - 1 ? fmtDay(day.day) : ''}</span></div>`;
   }).join('') + '</div>';
-  $('#chart-cost-note').textContent = 'Chỉ hiển thị chi phí được ghi nhận theo ngày UTC; “—” không phải $0.';
+  $('#chart-cost-note').textContent = 'Ngày theo UTC; “—” là chưa có giá, không phải $0.';
 }
 
 /* ---------- render: authoritative token and cost breakdowns ---------- */
@@ -885,6 +893,7 @@ function buildPage() {
   $('.workspace').insertAdjacentHTML('beforeend', PAGE_HTML);
   ensureOverviewScopeButton();
   $('#range-apply').onclick = applyRange;
+  $('#range-custom-toggle').onclick = () => { customRangeOpen = !customRangeOpen; syncRangeCustomUI(); };
   $('#usage-scope-card').addEventListener('click', event => {
     if (event.target?.closest?.('#scope-clear, .bot-scope-clear')) selectBot('');
   });

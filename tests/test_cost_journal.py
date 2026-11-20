@@ -131,10 +131,11 @@ def test_share_denominator_and_vi_format(node: str) -> None:
 
 
 def test_hero_cards_carry_the_cost_and_token_split(node: str) -> None:
-    """The shared stat grid keeps calls, token totals, recorded cost,
-    latency, and additive conversation/turn counts with the Input/Cache/Output split."""
+    """The shared stat grid consolidates into four compact KPIs: Token
+    (with Input/Cache/Output split), Chi phí, Gọi model (with tool & turn
+    counts), and Độ trễ p50."""
     totals = {
-        "requests": 5, "tool_calls": 7, "prompt_tokens": 150,
+        "requests": 5, "tool_calls": 7, "turns": 4, "prompt_tokens": 150,
         "cached_tokens": 30, "completion_tokens": 15, "total_tokens": 165,
         "cost_usd": 0.03, "latency_ms_p50": 1200, "latency_ms_p90": 3400,
     }
@@ -143,19 +144,20 @@ def test_hero_cards_carry_the_cost_and_token_split(node: str) -> None:
         f"renderStats({{ totals: {json.dumps(totals)} }});\n"
         "console.log(JSON.stringify(document.querySelector('#stat-grid').innerHTML));",
     )
-    assert ">Gọi model</p>" in html and ">5</p>" in html
-    assert "request tới model" in html
-    assert ">Gọi tool</p>" in html and ">7</p>" in html
     assert ">Token</p>" in html
     # Cache is a subset of prompt: "in" is the uncached input (150 − 30), so
     # the parts sum to the server total (120 + 30 + 15 = 165), never
     # 150 + 30 + 15.
     assert "Input 120 · Cache 30 · Output 15" in html
     assert ">165</p>" in html
-    assert ">Chi phí đã ghi nhận</p>" in html and "$0.0300" in html
-    assert "TB $0.006000 / request · phần đã ghi nhận" in html  # 0.03 / 5 requests
+    assert ">Chi phí</p>" in html and "$0.0300" in html
+    assert "TB $0.006000 / req" in html  # 0.03 / 5 requests
+    assert ">Gọi model</p>" in html and ">5</p>" in html
+    assert "7 tool · 4 lượt" in html
     assert ">Độ trễ p50</p>" in html
     assert "1,2 giây" in html and "p90 3,4 giây" in html
+    for removed in (">Gọi tool</p>", ">Phiên</p>", ">Lượt</p>"):
+        assert removed not in html
 
 
 def test_cost_card_without_any_priced_turn(node: str) -> None:
@@ -167,7 +169,7 @@ def test_cost_card_without_any_priced_turn(node: str) -> None:
         " latency_ms_p50: null, latency_ms_p90: null } });\n"
         "console.log(JSON.stringify(document.querySelector('#stat-grid').innerHTML));",
     )
-    assert "chưa có lượt nào ghi nhận giá" in html
+    assert "chưa có giá" in html
     assert ">—</p>" in html
     assert "$0" not in html
     assert "TB " not in html

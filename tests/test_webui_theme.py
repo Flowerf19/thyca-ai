@@ -37,7 +37,12 @@ def test_base_tokens_define_the_paper_palette() -> None:
     for token in (
         "--paper:#fbf5e8", "--paper-deep:#f0e7d4", "--ink:#3c372c",
         "--muted:#877d69", "--line:#d9ccb4", "--forest:#315d4c",
-        "--rust:#aa5638", "--sidebar-width:175px",
+        "--rust:#aa5638", "--sidebar-width:var(--sidebar-full)",
+        "--sidebar-full:", "--rail-width:", "--drawer-width:",
+        "--header-h:", "--bot-avatar:", "--chat-content-max:",
+        "--page-content-max:",
+        "--fs-2xs:", "--fs-xs:", "--fs-sm:", "--fs-md:",
+        "--fs-lg:", "--fs-xl:", "--fs-2xl:",
     ):
         assert token in root, token
     assert "'Thyca Serif'" in root and "--serif" in root
@@ -45,6 +50,34 @@ def test_base_tokens_define_the_paper_palette() -> None:
     # The rebuild has one palette: no oklch theme overrides survive anywhere.
     for sheet in UI.rglob("*.css"):
         assert "oklch" not in sheet.read_text(encoding="utf-8"), sheet.name
+
+
+def test_unified_type_scale_and_heading_rules() -> None:
+    """All WebUI stylesheets share one 7-step --fs-* scale and canonical
+    h1-h4 rules in base.css, with zero hardcoded px font sizes outside
+    base.css :root and no rem font overrides in markdown.css."""
+    base = BASE_CSS.read_text(encoding="utf-8")
+    for tag in ("h1{", "h2{", "h3{", "h4{"):
+        assert tag in base, tag
+
+    root_block = _block(base, ":root")
+    px_font_re = re.compile(r"(?:^|[;{])\s*(?:font-size\s*:\s*[^;}]*?\dpx|font\s*:\s*[^;}]*?\dpx)")
+    heading_re = re.compile(r"(?:^|[\s,>~+])h[1-6](?:$|[\s,.#:[>+~])")
+    heading_font_re = re.compile(r"(?:^|[;{])\s*font(?:-size)?\s*:")
+    for sheet in sorted(UI.rglob("*.css")):
+        text = sheet.read_text(encoding="utf-8")
+        if sheet == BASE_CSS:
+            text = text.replace(root_block, "", 1)
+        hits = px_font_re.findall(text)
+        assert not hits, f"{sheet.name} has hardcoded px font declarations: {hits}"
+        if sheet != BASE_CSS:
+            for m in re.finditer(r"([^{}]*)\{([^}]*)\}", text):
+                sel, body = m.group(1), m.group(2)
+                if heading_re.search(sel) and heading_font_re.search(body):
+                    raise AssertionError(f"{sheet.name} overrides heading font on {sel.strip()!r}")
+
+    md = MARKDOWN_CSS.read_text(encoding="utf-8")
+    assert not re.search(r"font(?:-size)?\s*:[^;}]*rem", md)
 
 
 def test_spa_entry_links_the_shared_stylesheets() -> None:
@@ -129,25 +162,69 @@ def test_decoration_preference_drives_the_shared_artwork() -> None:
 
 def test_narrow_drawer_stays_paper_backed_and_opaque() -> None:
     """At <=850px the sidebar becomes an overlay drawer: paper-backed like
-    the shell (same image + 65% cream overlay) but over an opaque cream base
-    so workspace text never ghosts through the drawer.
-
-    The drawer is as wide as the desktop sidebar and stays hidden until
-    the menu opens it."""
+    the shell (same image + 65% cream overlay) over an opaque cream base
+    so workspace text never ghosts through, flush under the header (top:0)
+    with full card layout (no rail collapse or vertical splitter)."""
     sidebar = SIDEBAR_CSS.read_text(encoding="utf-8")
     drawer = sidebar.split("@media(max-width:850px){", 1)[1]
     assert "images/thyca-bg-paper.png" in drawer
     assert "#fbf4e5a6" in drawer and "background-size:cover" in drawer
     assert "background-color:#f8efde" in drawer  # opaque base: no ghosted chat text
     base = BASE_CSS.read_text(encoding="utf-8")
-    # Drawer width matches the desktop column (250px token, var-driven drawer).
-    assert "--sidebar-width:175px" in _block(base, ":root")
+    assert "--sidebar-width:var(--sidebar-full)" in _block(base, ":root")
     assert "grid-template-columns:var(--sidebar-width" in base
-    assert "width:min(var(--sidebar-width,125px),calc(50vw - 8px))" in drawer
+    assert "width:var(--drawer-width)" in drawer
+    assert "top:0" in drawer
+    assert "top:47px" not in sidebar and "top:47px" not in base
     assert "min(360px" not in drawer
+    assert 'data-sidebar-collapsed="true"' not in drawer
+    narrow_base = base.split("@media(max-width:850px){", 1)[1]
+    assert ".splitter{display:none}" in narrow_base
+    assert "mobile-open ~ .splitter" not in base
     # Hidden by default: slid off-screen; .mobile-open slides it in.
     assert "transform:translateX(calc(-100% - 18px))" in drawer
     assert ".sidebar.mobile-open" in sidebar
+
+
+def test_responsive_fluid_scale_guards() -> None:
+    """Fluid tokens and media guards: avatars.css base rule precedes media
+    overrides, sidebar.css does not enlarge .bot-name on narrower screens,
+    sidebar.css carries short-height density rules, memories.css uses
+    an adaptive grid instead of a fixed 7-column track, and downstream
+    responsive rules follow their base declarations."""
+    avatars = (UI / "share" / "avatars" / "avatars.css").read_text(encoding="utf-8")
+    first_media = avatars.find("@media")
+    base_seal = avatars.find(".seal-avatar{")
+    assert base_seal != -1 and (first_media == -1 or base_seal < first_media)
+
+    sidebar = SIDEBAR_CSS.read_text(encoding="utf-8")
+    med_band = sidebar.split("@media(max-width:1150px){", 1)[1].split("}", 1)[0]
+    assert ".bot-name{font-size:14px}" not in med_band
+    assert "@media(max-height:680px){" in sidebar
+    assert "max-width:120px" not in _block(sidebar, ".group-meta")
+
+    memories = (UI / "memories" / "memoriescss" / "memories.css").read_text(encoding="utf-8")
+    assert "repeat(7,minmax(0,1fr))" not in memories
+    assert "repeat(auto-fit," in memories
+
+    dashboard = (UI / "dashboard" / "dashboardcss" / "dashboard.css").read_text(encoding="utf-8")
+    base_panels = dashboard.find(".dashboard-shell .analysis-panels{")
+    resp_panels = dashboard.find(".dashboard-shell .analysis-panels,.dashboard-shell .cost-analysis{")
+    assert base_panels != -1 and resp_panels > base_panels
+    assert ".analysis-panels:not(.cost-analysis)>section:last-child" in dashboard
+
+    studio = (UI / "share" / "avatars" / "studio.css").read_text(encoding="utf-8")
+    assert "flex-wrap:wrap" in _block(studio, ".group-preview-members")
+    assert studio.rfind("@media(max-width:520px){") > studio.find("#expression-grid")
+
+    chat_css = (UI / "chat" / "chatcss" / "chat.css").read_text(encoding="utf-8")
+    assert "scrollbar-gutter:stable both-edges" in chat_css
+    mention = _block(chat_css, ".mention-popup")
+    assert "max-width:" in mention and "overflow-y:auto" in mention
+
+    base = BASE_CSS.read_text(encoding="utf-8")
+    assert "--rail-width:calc(var(--bot-avatar) + 10px)" in base
+    assert "width:var(--bot-avatar);height:var(--bot-avatar)" in _block(sidebar, ".rail-avatar .seal-avatar")
 
 
 def test_current_page_and_selected_bot_marks() -> None:

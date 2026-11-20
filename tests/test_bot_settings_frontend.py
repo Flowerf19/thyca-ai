@@ -73,33 +73,97 @@ def _setup_dialog_bots(roster_js=_ROSTER):
 # ---------------------------------------------------------------------------
 
 def test_profile_shared_by_default(node) -> None:
-    """No ?bot= shows the shared canonical USER/SOUL/IDENTITY cards with the
-    'Hồ sơ chung' title, nothing selected, no bot model form."""
+    """No ?bot= shows canonical tabs defaulting to USER.md ('Về người dùng'),
+    switching to SOUL.md/IDENTITY.md, and splitting ## headings into section cards."""
     out = _run(node, """
         const SETTINGS = %s;
         %s
         globalThis.location.search = '';
         globalThis.location.pathname = '/ui/profile/index.html';
         await tick(); await boot(); await tick(20);
-        const root = document.querySelector('#profile-root').innerHTML;
+        const userRoot = document.querySelector('#profile-root').innerHTML;
+        selectDoc('SOUL.md');
+        const soulRoot = document.querySelector('#profile-root').innerHTML;
+        selectDoc('IDENTITY.md');
+        const identityRoot = document.querySelector('#profile-root').innerHTML;
         return {
             title: $('#profile-title').textContent,
-            shared: selectedBot, tab: state.tab,
+            shared: selectedBot, tab: state.tab, doc: state.doc,
             sharedBtnHidden: $('#profile-shared').hidden,
-            hasUser: root.includes('file-USER'),
-            hasSoul: root.includes('file-SOUL'),
-            hasIdentity: root.includes('file-IDENTITY'),
-            hasBotForm: root.includes('bot-settings-form'),
-            hasBotModelCard: root.includes('bot-model-card'),
-            hasBotHeading: root.includes('Bạn và'),
+            hasAllTabs: userRoot.includes('data-doc="USER.md"') && userRoot.includes('data-doc="SOUL.md"') && userRoot.includes('data-doc="IDENTITY.md"'),
+            hasUserLabel: userRoot.includes('Về người dùng') && !userRoot.includes('Hồ sơ của bạn'),
+            userOnlyFirst: userRoot.includes('id="file-USER.md"') && !userRoot.includes('id="file-SOUL.md"'),
+            soulSwitched: soulRoot.includes('id="file-SOUL.md"') && !soulRoot.includes('id="file-USER.md"'),
+            identitySwitched: identityRoot.includes('id="file-IDENTITY.md"') && !identityRoot.includes('id="file-USER.md"'),
+            hasBotForm: userRoot.includes('bot-settings-form'),
+            hasBotModelCard: userRoot.includes('bot-model-card'),
+            hasBotHeading: userRoot.includes('Bạn và'),
         };
     """ % (_SETTINGS, _mock_fetch(_ROSTER, _CONFIG)), via="profile", emit="profile")
     assert out["title"] == "Hồ sơ chung"
-    assert out["shared"] == "" and out["tab"] == ""
-    assert out["hasUser"] and out["hasSoul"] and out["hasIdentity"]
+    assert out["shared"] == "" and out["tab"] == "" and out["doc"] == "IDENTITY.md"
+    assert out["hasAllTabs"] and out["hasUserLabel"] and out["userOnlyFirst"] and out["soulSwitched"] and out["identitySwitched"]
     assert out["hasBotForm"] is False and out["hasBotModelCard"] is False
     assert out["hasBotHeading"] is False
     assert out["sharedBtnHidden"] is True
+
+
+def test_profile_section_cards_partial_edit_and_add(node) -> None:
+    """USER.md ## headings split into section cards without splitting ## inside
+    fenced code blocks; editing or adding one section preserves preamble, HTML
+    comments, and sibling sections byte-for-byte."""
+    raw_user = (
+        "# User\\n\\nIntro note.\\n\\n"
+        "## Habits\\n<!-- keep:comment -->\\n- Thói quen 1\\n\\n"
+        "## Context\\n\\n```md\\n## not-a-heading\\n```\\n- Chi tiết B\\n\\n"
+        "## Goals\\n"
+    )
+    out = _run(node, """
+        const posted = [];
+        let savedUser = %s;
+        installFetch((url, opts = {}) => {
+            if (url === '/api/bots') return { bots: %s };
+            if (url === '/api/conversations') return { conversations: [] };
+            if (url === '/api/config') return %s;
+            if (url === '/api/memory/stats') return { files: [
+                { name: 'USER.md', content: savedUser },
+                { name: 'SOUL.md', content: 'plain soul' },
+            ] };
+            if (url === '/api/memory/canonical' && opts.method === 'POST') {
+                const payload = JSON.parse(opts.body);
+                posted.push(payload);
+                if (payload.name === 'USER.md') savedUser = payload.content;
+                return { ok: true };
+            }
+            return {};
+        });
+        globalThis.location.search = '';
+        globalThis.location.pathname = '/ui/profile/index.html';
+        await tick(); await boot(); await tick(20);
+        const beforeHtml = document.querySelector('#profile-root').innerHTML;
+        openSectionEdit('USER.md', 2, null);
+        $('#section-edit-body').value = '- Mục tiêu mới';
+        await submitSectionEdit({ preventDefault() {} });
+        await tick(20);
+        const afterGoalEdit = savedUser;
+        openSectionEdit('USER.md', -1, null);
+        $('#section-edit-title').value = 'Projects';
+        $('#section-edit-body').value = '- Dự án WebUI';
+        await submitSectionEdit({ preventDefault() {} });
+        await tick(20);
+        const afterAdd = savedUser;
+        selectDoc('SOUL.md');
+        const plainHtml = document.querySelector('#profile-root').innerHTML;
+        return { beforeHtml, afterGoalEdit, afterAdd, plainHtml, posted };
+    """ % (repr(raw_user).replace("'", '"').replace("\\\\n", "\\n"), _ROSTER, _CONFIG), via="profile", emit="profile")
+    assert 'profile-section-grid' in out["beforeHtml"]
+    assert out["beforeHtml"].count('class="profile-section-card"') == 3
+    assert '<!-- keep:comment -->' in out["afterGoalEdit"]
+    assert '## Context\n\n```md\n## not-a-heading\n```\n- Chi tiết B' in out["afterGoalEdit"]
+    assert '## Goals\n\n- Mục tiêu mới' in out["afterGoalEdit"]
+    assert '## Projects\n\n- Dự án WebUI' in out["afterAdd"]
+    assert len(out["posted"]) == 2
+    assert 'profile-section-grid' not in out["plainHtml"] and 'profile-content' in out["plainHtml"]
 
 
 def test_profile_sidebar_select_shows_dossier_only(node) -> None:
@@ -243,6 +307,70 @@ def test_profile_sidebar_select_labels_scope(node) -> None:
         return { label: btn.getAttribute('aria-label') };
     """ % (_SETTINGS, _mock_fetch(_ROSTER, _CONFIG)), via="profile", emit="profile")
     assert out["label"] == "Hồ sơ của Alpha"
+
+
+def test_profile_inline_editor_preview_dirty_guard_and_cancel(node) -> None:
+    out = _run(node, """
+        const SETTINGS = %s;
+        %s
+        globalThis.location.search = '';
+        globalThis.location.pathname = '/ui/profile/index.html';
+        await tick(); await boot(); await tick(20);
+        openEdit('USER.md', null);
+        const editingOpen = document.querySelector('#profile-root').innerHTML.includes('id="edit-form"');
+        const dirtyInitially = $('#edit-dirty').hidden;
+        $('#edit-content').value = 'Bản nháp mới';
+        $('#edit-content').oninput();
+        const dirtyAfterType = $('#edit-dirty').hidden;
+        const previewHtml = $('#edit-preview').innerHTML;
+        globalThis.confirm = () => false;
+        selectDoc('SOUL.md');
+        const stayedAfterDoc = state.doc === 'USER.md' && state.editing === 'USER.md';
+        showTab('coder');
+        const stayedOnDirtyEdit = state.tab === '' && state.editing === 'USER.md' && stayedAfterDoc;
+        const canceledBlocked = closeEdit();
+        globalThis.confirm = () => true;
+        const canceledConfirmed = closeEdit();
+        const afterCancelHtml = document.querySelector('#profile-root').innerHTML;
+        return {
+            editingOpen, dirtyInitially, dirtyAfterType, previewHtml, stayedOnDirtyEdit,
+            canceledBlocked, canceledConfirmed,
+            stillEditing: afterCancelHtml.includes('id="edit-form"'),
+            restoredAll: afterCancelHtml.includes('id="file-USER.md"')
+                && afterCancelHtml.includes('data-doc="SOUL.md"')
+                && afterCancelHtml.includes('data-doc="IDENTITY.md"'),
+        };
+    """ % (_SETTINGS, _mock_fetch(_ROSTER, _CONFIG)), via="profile", emit="profile")
+    assert out == {
+        "editingOpen": True, "dirtyInitially": True, "dirtyAfterType": False,
+        "previewHtml": "<p>Bản nháp mới</p>", "stayedOnDirtyEdit": True,
+        "canceledBlocked": False, "canceledConfirmed": True,
+        "stillEditing": False, "restoredAll": True,
+    }
+
+
+def test_profile_bot_dossier_top_bar_navigates_shared_and_opens_settings(node) -> None:
+    out = _run(node, """
+        const SETTINGS = %s;
+        %s
+        let openedSettings = 0;
+        globalThis.openSettingsDialog = () => { openedSettings++; return true; };
+        globalThis.location.search = '?bot=coder';
+        globalThis.location.pathname = '/ui/profile/index.html';
+        await tick(); await boot(); await tick(20);
+        const markup = document.querySelector('#profile-root').innerHTML;
+        openBotSettings();
+        const sharedOk = showShared();
+        return {
+            hasBotGrid: markup.includes('profile-bot-grid')
+                && markup.includes('profile-bot-aside')
+                && markup.includes('profile-bot-specs')
+                && markup.includes('data-action="show-shared"')
+                && markup.includes('id="profile-open-settings"'),
+            openedSettings, sharedOk, tabAfter: state.tab,
+        };
+    """ % (_SETTINGS, _mock_fetch(_ROSTER, _CONFIG)), via="profile", emit="profile")
+    assert out == {"hasBotGrid": True, "openedSettings": 1, "sharedOk": True, "tabAfter": ""}
 
 
 def test_profile_provider_no_bot_scope(node) -> None:

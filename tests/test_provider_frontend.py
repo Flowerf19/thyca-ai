@@ -114,23 +114,26 @@ def test_first_connection_save_then_explicit_set_default(node: str) -> None:
     out = _run(node, f"""
         {_mock_fetch(_empty_config(), models=['first/model'])}
         await __controller.ready; await tick(10);
-        const pickerBefore = [...document.querySelectorAll('#connection-picker option')].map(option => option.value);
+        const tabsBefore = [...document.querySelectorAll('#connection-tabs .conn-tab')].map(btn => btn.dataset.provider);
+        const newSelectedBefore = $('#new-connection').getAttribute('aria-selected');
         openNewConnection();
         $('#pv-id').value='first'; $('#pv-base-url').value='https://first.invalid/v1'; $('#pv-key').value='mock-first';
         await verifyQuick(); chooseModel('first/model');
         const checks = [...document.querySelectorAll('#m-efforts input')].map(input => [input.value, input.checked]);
         const saved = await submitEditor(null);
         const afterSave = {{posts: configPosts.length, posted: configPosts[0],
+                            tabs: [...document.querySelectorAll('#connection-tabs .conn-tab')].map(btn => [btn.dataset.provider, btn.getAttribute('aria-selected')]),
                             defaultLine: $('#current-default').textContent,
                             rows: document.querySelector('#saved-model-rows').textContent}};
         const setDefault = await setDefaultModel('first/model');
-        return {{pickerBefore, saved, afterSave, setDefault, posts: configPosts.length,
+        return {{tabsBefore, newSelectedBefore, saved, afterSave, setDefault, posts: configPosts.length,
                 second: configPosts[1], events: configSavedEvents, checks,
                 defaultLine: $('#current-default').textContent, keyAfter: $('#pv-key').value,
                 editing: state.editingProvider, status: $('#save-status').textContent}};
     """, via="provider")
-    assert out["pickerBefore"] == ["__new__"]
+    assert out["tabsBefore"] == [] and out["newSelectedBefore"] == "true"
     assert out["saved"] and out["afterSave"]["posts"] == 1
+    assert out["afterSave"]["tabs"] == [["first", "true"]]
     assert out["afterSave"]["posted"]["providers"]["first"]["baseUrl"] == "https://first.invalid/v1"
     assert out["afterSave"]["posted"]["providers"]["first"]["apiKey"] == "mock-first"
     assert out["afterSave"]["posted"]["defaultProvider"] == "first"
@@ -201,10 +204,17 @@ def test_provider_page_has_one_editor_and_no_persist_before_explicit_save(node: 
           loadButton: markup.includes(' Tải model</button>'), loadTitle: markup.includes('title="Chỉ tải danh sách, không gọi model hay lưu cấu hình."'),
           loadHintAbsent: !markup.includes('Tải chỉ kiểm tra danh sách'), discoveryHidden: $('#discovery-status').hidden, discoveryText: $('#discovery-status').textContent,
           keyTitle: markup.includes('title="Key được lưu trên máy này và gửi tới URL API khi kết nối."'), storedKeyNote: $('#pv-key-note').textContent, priceHint: markup.includes('Nhập đủ 3 giá hoặc để trống.'),
-          priceTitle: markup.includes('title="Giá chỉ dùng để ước tính chi phí; API không trả giá này.'), noAdvancedToggle: !markup.includes('<summary'), currentDefault: $('#current-default').textContent,
-          apiInConnectionFields: (() => {{ const seg = markup.slice(markup.indexOf('class="connection-fields"'), markup.indexOf('load-row')); return seg.includes('id="pv-key"') && seg.includes('id="pv-api"'); }})(),
+          priceTitle: markup.includes('title="Giá chỉ dùng để ước tính chi phí; API không trả giá này.'),
+          hasAdvancedToggle: markup.includes('<details class="model-advanced"') && markup.includes('<summary') && !$('#model-advanced').open,
+          tabsPresent: markup.includes('id="connection-tabs"') && !markup.includes('connection-picker') && !markup.includes('load-row'),
+          pvIdHiddenOnExisting: $('#pv-id-field').hidden,
+          deleteInFooter: (() => {{ const bar = markup.slice(markup.indexOf('class="provider-bar"'), markup.indexOf('<form')); const foot = markup.slice(markup.indexOf('class="editor-footer"')); return !bar.includes('id="delete-provider"') && foot.includes('id="delete-provider"'); }})(),
+          loadInModelRow: (() => {{ const row = markup.slice(markup.indexOf('class="model-pick-row"'), markup.indexOf('id="discovery-status"')); return row.includes('id="m-picker"') && row.includes('id="v-submit"'); }})(),
+          currentDefault: $('#current-default').textContent,
+          apiInConnectionFields: (() => {{ const seg = markup.slice(markup.indexOf('class="connection-fields"'), markup.indexOf('class="model-editor"')); return seg.includes('id="pv-key"') && seg.includes('id="pv-api"'); }})(),
           noRemovedIds: ['id="reload-config"', 'id="save-catalog"', 'id="test-provider"', 'id="m-loop"', 'id="m-hot"', 'id="cfg-default-provider"', 'id="m-provider"', 'id="pv-effort"', 'id="m-id"', 'id="connection-extra"', 'class="advanced"'].every(id => !markup.includes(id))}};
         openNewConnection();
+        copy.pvIdShownOnNew = !$('#pv-id-field').hidden;
         copy.newKeyNote = $('#pv-key-note').textContent; copy.newDiscoveryHidden = $('#discovery-status').hidden;
         $('#pv-id').value = 'fresh'; $('#pv-base-url').value = 'https://fresh.invalid/v1'; $('#pv-key').value = 'mock-fresh-key';
         await verifyQuick(); const listingStatus = $('#discovery-status').textContent; chooseModel('new/model');
@@ -220,7 +230,8 @@ def test_provider_page_has_one_editor_and_no_persist_before_explicit_save(node: 
         "titleMarkup": True, "noEyebrow": True, "noSubtitle": True, "namePlaceholder": True, "noVisibleNameHint": True, "nameHintSpacer": True,
         "loadButton": True, "loadTitle": True, "loadHintAbsent": True,
         "discoveryHidden": True, "discoveryText": "", "keyTitle": True,
-        "storedKeyNote": "Đã lưu key", "priceHint": True, "priceTitle": True, "noAdvancedToggle": True,
+        "storedKeyNote": "Đã lưu key", "priceHint": True, "priceTitle": True, "hasAdvancedToggle": True,
+        "tabsPresent": True, "pvIdHiddenOnExisting": True, "pvIdShownOnNew": True, "deleteInFooter": True, "loadInModelRow": True,
         "apiInConnectionFields": True, "noRemovedIds": True,
         "currentDefault": "Hiện tại: global-only · alpha", "newKeyNote": "", "newDiscoveryHidden": True,
     }, out["copy"]
@@ -233,7 +244,7 @@ def test_provider_page_has_one_editor_and_no_persist_before_explicit_save(node: 
                  "loadButton": True, "loadTitle": True, "loadHintAbsent": True,
                  "discoveryHidden": True, "discoveryText": "", "keyTitle": True,
                  "storedKeyNote": "Đã lưu key", "priceHint": True,
-                 "priceTitle": True, "noAdvancedToggle": True, "apiInConnectionFields": True, "noRemovedIds": True, "currentDefault": "Hiện tại: global-only · alpha", "newKeyNote": "", "newDiscoveryHidden": True},
+                 "priceTitle": True, "hasAdvancedToggle": True, "tabsPresent": True, "pvIdHiddenOnExisting": True, "pvIdShownOnNew": True, "deleteInFooter": True, "loadInModelRow": True, "apiInConnectionFields": True, "noRemovedIds": True, "currentDefault": "Hiện tại: global-only · alpha", "newKeyNote": "", "newDiscoveryHidden": True},
     }
 
 
@@ -466,7 +477,7 @@ def test_model_effort_multi_select_and_untick_all(node: str) -> None:
         await verifyQuick(); chooseModel('eff/model');
         const cleanAfterChoose = modelIsDirty();
         const checks = [...document.querySelectorAll('#m-efforts input')].map(input => [input.value, input.checked]);
-        const chipMarks = [...document.querySelectorAll('#m-efforts .effort-chip')].map(chip => [chip.dataset.level, chip.dataset.active, chip.querySelector('.effort-tick').textContent]);
+        const chipMarks = [...document.querySelectorAll('#m-efforts .effort-chip')].map(chip => [chip.dataset.level, chip.dataset.active]);
         const cleanAfterLoad = editorIsDirty();
         const maxBox = [...document.querySelectorAll('#m-efforts input')].find(input => input.value === 'max');
         maxBox.checked = false; $('#m-efforts').dispatch('change');
@@ -474,14 +485,14 @@ def test_model_effort_multi_select_and_untick_all(node: str) -> None:
         const dirtyAfterUntick = modelIsDirty();
         const saved = await submitEditor(null);
         return {{checks, chipMarks, cleanAfterChoose,
-                chipAfter: [chipAfter.dataset.active, chipAfter.querySelector('.effort-tick').textContent],
+                chipAfter: [chipAfter.dataset.level, chipAfter.dataset.active],
                 dirtyAfterUntick, saved,
                 posted: configPosts[0]?.models['eff/model'], defaultModel: configPosts[0]?.defaultModel}};
     """, via="provider")
     assert out["checks"] == [["low", True], ["medium", True], ["high", True], ["xhigh", True], ["max", True]]
-    assert out["chipMarks"] == [["low", "true", "\u2713"], ["medium", "true", "\u2713"], ["high", "true", "\u2713"], ["xhigh", "true", "\u2713"], ["max", "true", "\u2713"]]
+    assert out["chipMarks"] == [["low", "true"], ["medium", "true"], ["high", "true"], ["xhigh", "true"], ["max", "true"]]
     assert out["cleanAfterChoose"] is False
-    assert out["chipAfter"] == ["false", ""]
+    assert out["chipAfter"] == ["max", "false"]
     assert out["dirtyAfterUntick"] is True and out["saved"]
     assert out["posted"] == {"provider": "eff", "reasoningEfforts": ["low", "medium", "high", "xhigh"],
                               "contextTokens": 272000}
@@ -528,8 +539,8 @@ def test_dirty_status_tracks_editor_and_confirmed_reload_resets_its_baseline(nod
         globalThis.confirm = () => true; const reloaded = await reloadConfig();
         return {{initial, dirty, canceled, retained, reloaded, clean: editorIsDirty(), after: $('#save-status').textContent}};
     """, via="provider")
-    assert out == {"initial": "Đã tải cấu hình", "dirty": "Chưa lưu thay đổi", "canceled": False,
-                  "retained": "https://draft.invalid/v1", "reloaded": True, "clean": False, "after": "Đã tải cấu hình"}
+    assert out == {"initial": "", "dirty": "Chưa lưu thay đổi", "canceled": False,
+                  "retained": "https://draft.invalid/v1", "reloaded": True, "clean": False, "after": ""}
 
 
 def test_switching_existing_connections_clears_raw_key_and_preserves_canceled_draft(node: str) -> None:
@@ -934,6 +945,84 @@ def test_delete_saved_model_blocked_while_editor_dirty(node: str) -> None:
     assert out["posts"] == 0
     assert "Lưu hoặc hủy" in out["status"]
     assert out["draft"] == "9"
+
+
+def test_connection_tabs_switch_and_highlight_active_and_new(node: str) -> None:
+    out = _run(node, f"""
+        {_mock_fetch(_config())}
+        await __controller.ready; await tick(10);
+        const initialIdHidden = $('#pv-id-field').hidden;
+        const initialTabs = [...document.querySelectorAll('#connection-tabs .conn-tab')].map(btn => [btn.dataset.provider, btn.dataset.active, btn.querySelectorAll('.conn-tab-dot').length > 0]);
+        const betaTab = [...document.querySelectorAll('#connection-tabs .conn-tab')].find(btn => btn.dataset.provider === 'beta');
+        betaTab.click();
+        const afterBeta = {{editing: state.editingProvider, url: $('#pv-base-url').value, idHidden: $('#pv-id-field').hidden,
+                          tabs: [...document.querySelectorAll('#connection-tabs .conn-tab')].map(btn => [btn.dataset.provider, btn.getAttribute('aria-selected')]),
+                          newSel: $('#new-connection').getAttribute('aria-selected')}};
+        $('#new-connection').click();
+        const afterNew = {{editing: state.editingProvider, url: $('#pv-base-url').value, idHidden: $('#pv-id-field').hidden,
+                         newActive: $('#new-connection').dataset.active,
+                         tabs: [...document.querySelectorAll('#connection-tabs .conn-tab')].map(btn => [btn.dataset.provider, btn.dataset.active])}};
+        return {{initialIdHidden, initialTabs, afterBeta, afterNew}};
+    """, via="provider")
+    assert out["initialIdHidden"] is True
+    assert out["initialTabs"] == [["alpha", "true", True], ["beta", "false", False]]
+    assert out["afterBeta"] == {"editing": "beta", "url": "https://beta.invalid/v1", "idHidden": True, "tabs": [["alpha", "false"], ["beta", "true"]], "newSel": "false"}
+    assert out["afterNew"] == {"editing": "", "url": "", "idHidden": False, "newActive": "true", "tabs": [["alpha", "false"], ["beta", "false"]]}
+
+
+def test_existing_connection_edits_save_without_requiring_model_choice(node: str) -> None:
+    out = _run(node, f"""
+        {_mock_fetch(_config())}
+        await __controller.ready; await tick(10);
+        openExistingConnection('alpha');
+        $('#pv-base-url').value = 'https://alpha-v2.invalid/v1';
+        $('#pv-key').value = 'new-alpha-key';
+        $('#pv-api').value = 'openai_responses';
+        $('#pv-api').dispatch('change');
+        const saved = await submitEditor(null);
+        return {{saved, posts: configPosts.length, posted: configPosts[0], status: $('#editor-status').textContent, selected: selectedModelId()}};
+    """, via="provider")
+    assert out["saved"] is True and out["posts"] == 1
+    assert out["posted"]["providers"]["alpha"]["baseUrl"] == "https://alpha-v2.invalid/v1"
+    assert out["posted"]["providers"]["alpha"]["api"] == "openai_responses"
+    assert out["posted"]["providers"]["alpha"]["apiKey"] == "new-alpha-key"
+    assert out["posted"]["models"] == _config()["values"]["models"]
+    assert "alpha" in out["status"] and out["selected"] == ""
+
+
+def test_advanced_summary_updates_live_and_auto_opens_on_validation_error(node: str) -> None:
+    out = _run(node, f"""
+        {_mock_fetch(_config())}
+        await __controller.ready; await tick(10);
+        openExistingConnection('alpha');
+        const editBtn = [...document.querySelectorAll('#saved-model-rows button')].find(btn => btn.dataset.action === 'edit');
+        editBtn.click();
+        const editingRow = document.querySelector('#saved-model-rows .saved-model-row').dataset.editing;
+        const modeTag = [$('#model-editor-mode').hidden, $('#model-editor-mode').textContent];
+        const summaryBefore = $('#model-advanced-summary').textContent;
+        const closedBefore = $('#model-advanced').open;
+        $('#m-in').value = '1.5';
+        $('#m-cache').value = '';
+        $('#connection-form').dispatch('input');
+        const summaryPartial = $('#model-advanced-summary').textContent;
+        const saved = await submitEditor(null);
+        const openedAfterError = $('#model-advanced').open;
+        const invalidCache = $('#m-cache').getAttribute('aria-invalid');
+        globalThis.matchMedia = (q) => ({{ matches: q.includes('851px'), media: q, addEventListener() {{}}, removeEventListener() {{}}, addListener() {{}}, removeListener() {{}} }});
+        initAdvancedState();
+        const openDesktop = $('#model-advanced').open;
+        globalThis.matchMedia = () => ({{ matches: false, media: '', addEventListener() {{}}, removeEventListener() {{}}, addListener() {{}}, removeListener() {{}} }});
+        initAdvancedState();
+        const openMobile = $('#model-advanced').open;
+        return {{editingRow, modeTag, summaryBefore, closedBefore, summaryPartial, saved, openedAfterError, invalidCache, openDesktop, openMobile}};
+    """, via="provider")
+    assert out["editingRow"] == "true"
+    assert out["modeTag"] == [False, "Đang sửa"]
+    assert "$0.1/$0.01/$0.2" in out["summaryBefore"] and "272k" in out["summaryBefore"]
+    assert out["closedBefore"] is False
+    assert "Giá chưa đủ 3 mức" in out["summaryPartial"]
+    assert out["saved"] is False and out["openedAfterError"] is True and out["invalidCache"] == "true"
+    assert out["openDesktop"] is True and out["openMobile"] is False
 
 
 @pytest.mark.skipif(not shutil.which("google-chrome"), reason="Google Chrome is required for the isolated Provider browser check")

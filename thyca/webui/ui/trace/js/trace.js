@@ -93,7 +93,7 @@
       if (!d || typeof d !== 'object') return;
       if (d.type === 'reasoning.text' && d.text) parts.push(String(d.text));
       else if (d.type === 'reasoning.summary' && d.summary) parts.push(String(d.summary));
-      else if (d.type === 'reasoning.encrypted') parts.push('(đoạn suy nghĩ đã mã hoá)');
+      else if (d.type === 'reasoning.encrypted' || d.type === 'redacted_thinking') parts.push('(đoạn suy nghĩ đã mã hoá)');
     });
     if (!parts.length) return '';
     return `<details class="tl-reason"><summary>Suy nghĩ</summary><pre class="tl-code">${escapeHTML(parts.join('\n\n'))}</pre></details>`;

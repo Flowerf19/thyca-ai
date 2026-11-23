@@ -506,9 +506,25 @@ def _unit_renderer_source(path: Path, source: str) -> str:
     return source[start:end]
 
 
+def _index_templates_prelude() -> str:
+    html = INDEX_HTML.read_text(encoding="utf-8")
+    templates = {
+        m.group(1): m.group(2)
+        for m in re.finditer(r'<template id="([^"]+)">([\s\S]*?)</template>', html)
+    }
+    return (
+        f"for (const [id, markup] of Object.entries({json.dumps(templates)})) {{\n"
+        "  const tpl = document.createElement('template');\n"
+        "  tpl.id = id;\n"
+        "  tpl.innerHTML = markup;\n"
+        "  document.body.appendChild(tpl);\n"
+        "}\n"
+    )
+
+
 def _run(node: str, body: str, via: str = "side", emit: str | None = None, timeout: int = 30):
     """Evaluate <body> inside an async main() after the bundle files load."""
-    parts = [_PRELUDE]
+    parts = [_PRELUDE, _index_templates_prelude()]
     if emit:
         parts.append(f"ctx.route.page = {json.dumps(emit)};")
     for f in _BUNDLES[via]:
@@ -4571,20 +4587,20 @@ def test_bottom_action_placements_and_sr_only_top_bars() -> None:
     assert ".composer-toolbar .head-actions .icon-button{display:inline-flex" in chat_css
     assert "clip-path:inset(50%)" in chat_css.split(".chat-title-head{", 1)[1].split("}", 1)[0]
 
-    profile_js = PROFILE_JS.read_text(encoding="utf-8")
-    profile_nav = profile_js.split('<header class="page-nav">', 1)[1].split("</header>", 1)[0]
+    profile_tpl = html.split('<template id="tpl-profile">', 1)[1].split("</template>", 1)[0]
+    profile_nav = profile_tpl.split('<header class="page-nav">', 1)[1].split("</header>", 1)[0]
     assert 'id="profile-shared"' not in profile_nav and 'id="profile-reload"' not in profile_nav
-    assert '<div id="profile-root"></div>' in profile_js
-    after_root = profile_js.split('<div id="profile-root"></div>', 1)[1].split("</div>\n</div>", 1)[0]
+    assert '<div id="profile-root"></div>' in profile_tpl
+    after_root = profile_tpl.split('<div id="profile-root"></div>', 1)[1].split("</div>\n</div>", 1)[0]
     assert 'class="page-actions profile-footer-actions"' in after_root
     assert 'id="profile-shared"' in after_root and 'id="profile-reload"' in after_root
     profile_css = (UI / "profile" / "profilecss" / "profile.css").read_text(encoding="utf-8")
     assert "clip-path:inset(50%)" in profile_css.split(".profile-shell .page-nav{", 1)[1].split("}", 1)[0]
 
-    provider_js = PROVIDER_JS.read_text(encoding="utf-8")
-    provider_nav = provider_js.split('<header class="page-nav">', 1)[1].split("</header>", 1)[0]
+    provider_tpl = html.split('<template id="tpl-provider">', 1)[1].split("</template>", 1)[0]
+    provider_nav = provider_tpl.split('<header class="page-nav">', 1)[1].split("</header>", 1)[0]
     assert 'id="save-status"' not in provider_nav
-    provider_footer = provider_js.split('<div class="editor-footer">', 1)[1].split("</div>", 1)[0]
+    provider_footer = provider_tpl.split('<div class="editor-footer">', 1)[1].split("</div>", 1)[0]
     assert 'id="save-status"' in provider_footer
     provider_css = (UI / "provider" / "providercss" / "provider.css").read_text(encoding="utf-8")
     assert "clip-path:inset(50%)" in provider_css.split(".provider-shell .page-nav{", 1)[1].split("}", 1)[0]

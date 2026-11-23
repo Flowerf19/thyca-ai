@@ -360,6 +360,109 @@ def test_provider_api_dispatches_to_wire_api() -> None:
         assert seen_resp[-1]["path"] == "/responses"
     finally:
         _stop(rhttpd, rthread)
+    seen_anth: list = []
+    anth_payload = json.dumps(
+        {
+            "model": "claude-sonnet-4-6",
+            "stop_reason": "end_turn",
+            "content": [{"type": "text", "text": "ok"}],
+        }
+    ).encode()
+    ahttpd, athread = _chat_server(anth_payload, seen=seen_anth)
+    try:
+        abase = f"http://127.0.0.1:{ahttpd.server_address[1]}"
+        result = probe_dispatch("anthropic_messages", abase, "sk-ant", "claude-sonnet-4-6")
+        assert result["model"] == "claude-sonnet-4-6"
+        assert seen_anth[-1]["path"] == "/messages"
+    finally:
+        _stop(ahttpd, athread)
+    seen_goog: list = []
+    goog_payload = json.dumps(
+        {
+            "modelVersion": "gemini-2.5-flash",
+            "candidates": [{"content": {"parts": [{"text": "ok"}]}, "finishReason": "STOP"}],
+        }
+    ).encode()
+    ghttpd, gthread = _chat_server(goog_payload, seen=seen_goog)
+    try:
+        gbase = f"http://127.0.0.1:{ghttpd.server_address[1]}"
+        result = probe_dispatch("google_gemini", gbase, "AIza-test", "gemini-2.5-flash")
+        assert result["model"] == "gemini-2.5-flash"
+        assert seen_goog[-1]["path"] == "/models/gemini-2.5-flash:streamGenerateContent?alt=sse"
+    finally:
+        _stop(ghttpd, gthread)
+
+
+def test_validate_provider_anthropic_and_google_headers_and_models() -> None:
+    seen_headers: list[dict[str, str]] = []
+    seen_paths: list[str] = []
+
+    def _capture_server(payload: bytes):
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self) -> None:
+                seen_paths.append(self.path)
+                seen_headers.append({k.lower(): v for k, v in self.headers.items()})
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+
+            def log_message(self, format: str, *args: object) -> None:
+                return
+
+        httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        return httpd, thread
+
+    anth_body = json.dumps({"data": [{"id": "claude-sonnet-4-6"}, {"id": "claude-opus-4-6"}]}).encode()
+    ahttpd, athread = _capture_server(anth_body)
+    try:
+        models = validate_provider(
+            f"http://127.0.0.1:{ahttpd.server_address[1]}",
+            "sk-ant-k",
+            api="anthropic_messages",
+        )
+        assert models == ["claude-opus-4-6", "claude-sonnet-4-6"]
+        assert seen_paths[-1] == "/models"
+        assert seen_headers[-1]["x-api-key"] == "sk-ant-k"
+        assert "anthropic-version" in seen_headers[-1]
+        assert "authorization" not in seen_headers[-1]
+    finally:
+        _stop(ahttpd, athread)
+
+    goog_body = json.dumps(
+        {
+            "models": [
+                {
+                    "name": "models/gemini-2.5-flash",
+                    "supportedGenerationMethods": ["generateContent", "countTokens"],
+                },
+                {
+                    "name": "models/text-embedding-004",
+                    "supportedGenerationMethods": ["embedContent"],
+                },
+                {
+                    "name": "models/gemini-2.5-pro",
+                    "supportedGenerationMethods": ["generateContent"],
+                },
+            ]
+        }
+    ).encode()
+    ghttpd, gthread = _capture_server(goog_body)
+    try:
+        models = validate_provider(
+            f"http://127.0.0.1:{ghttpd.server_address[1]}",
+            "AIza-k",
+            api="google_gemini",
+        )
+        assert models == ["gemini-2.5-flash", "gemini-2.5-pro"]
+        assert seen_paths[-1] == "/models?pageSize=100"
+        assert seen_headers[-1]["x-goog-api-key"] == "AIza-k"
+        assert "authorization" not in seen_headers[-1]
+    finally:
+        _stop(ghttpd, gthread)
 
 
 def test_x22_network_error_mapping_matrix() -> None:

@@ -45,6 +45,37 @@ def _extract_responses(raw: dict) -> tuple[int | None, int | None, int | None, i
     return prompt, cached, completion, total, reasoning
 
 
+def _extract_anthropic(raw: dict) -> tuple[int | None, int | None, int | None, int | None, int | None]:
+    raw_in = _coerce_int(raw.get("input_tokens"))
+    cache_create = _coerce_int(raw.get("cache_creation_input_tokens"))
+    cache_read = _coerce_int(raw.get("cache_read_input_tokens"))
+    if raw_in is not None or cache_create is not None or cache_read is not None:
+        prompt: int | None = (raw_in or 0) + (cache_create or 0) + (cache_read or 0)
+    else:
+        prompt = None
+    completion = _coerce_int(raw.get("output_tokens"))
+    reasoning = None
+    c_details = raw.get("output_tokens_details")
+    if isinstance(c_details, dict):
+        reasoning = _coerce_int(c_details.get("thinking_tokens"))
+    return prompt, cache_read, completion, None, reasoning
+
+
+def _extract_google(raw: dict) -> tuple[int | None, int | None, int | None, int | None, int | None]:
+    prompt = _coerce_int(raw.get("promptTokenCount"))
+    cached = _coerce_int(raw.get("cachedContentTokenCount"))
+    candidates = _coerce_int(raw.get("candidatesTokenCount"))
+    thoughts = _coerce_int(raw.get("thoughtsTokenCount"))
+    if candidates is not None:
+        completion: int | None = candidates + (thoughts or 0)
+    elif thoughts is not None:
+        completion = thoughts
+    else:
+        completion = None
+    total = _coerce_int(raw.get("totalTokenCount"))
+    return prompt, cached, completion, total, thoughts
+
+
 def _extract_generic(raw: dict) -> tuple[int | None, int | None, int | None, int | None, int | None]:
     return (
         _coerce_int(raw.get("prompt_tokens")),
@@ -68,6 +99,10 @@ def normalize_usage(raw: dict | None, provider: str) -> dict | None:
         prompt, cached, completion, total, reasoning = _extract_openai(raw)
     elif provider == "openai_responses":
         prompt, cached, completion, total, reasoning = _extract_responses(raw)
+    elif provider in ("anthropic", "anthropic_messages"):
+        prompt, cached, completion, total, reasoning = _extract_anthropic(raw)
+    elif provider in ("google", "google_gemini", "gemini"):
+        prompt, cached, completion, total, reasoning = _extract_google(raw)
     else:
         prompt, cached, completion, total, reasoning = _extract_generic(raw)
     if prompt is None and completion is None and total is None:

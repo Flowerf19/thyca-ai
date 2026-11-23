@@ -11,7 +11,7 @@ import dataclasses
 from dataclasses import fields
 from typing import Any
 
-from .defaults import LIMIT_RANGES, REASONING_EFFORTS
+from .defaults import LIMIT_RANGES, PROVIDER_APIS, REASONING_EFFORTS
 from .limits import LimitsCfg
 from .providers import ProviderEntry
 from .timeline import TimelineCfg
@@ -22,6 +22,7 @@ _LABELS: dict[str, str] = {
     "apiKeyEnv": "Tên biến môi trường API key",
     "reasoningEffort": "Mức suy luận (thinking)",
     "apiKey": "API key",
+    "api": "Kiểu API",
     "timeline": "Khác",
     "timezone": "Múi giờ",
     "limits": "Giới hạn",
@@ -56,6 +57,8 @@ def _field_entry(prefix: str, field: dataclasses.Field) -> dict[str, Any]:
         entry["default"] = field.default
     if field.name == "reasoningEffort":
         entry["choices"] = list(REASONING_EFFORTS)
+    if field.name == "api":
+        entry["choices"] = list(PROVIDER_APIS)
     if field.name in ("timezone", "apiKeyEnv"):
         entry["hidden"] = True
     if field.name in LIMIT_RANGES:

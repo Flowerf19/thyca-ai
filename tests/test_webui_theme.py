@@ -245,8 +245,8 @@ def test_inline_fields_use_the_paper_surface() -> None:
     assert "outline:2px solid" in focus
     memories = (UI / "memories" / "memoriescss" / "memories.css").read_text(encoding="utf-8")
     assert "#memory-search" in memories
-    page_js = (UI / "memories" / "js" / "memories.js").read_text(encoding="utf-8")
-    assert 'class="inline-field" id="memory-search"' in page_js
+    index_html = (UI / "chat" / "index.html").read_text(encoding="utf-8")
+    assert 'class="inline-field" id="memory-search"' in index_html
 
 
 def test_trace_code_keeps_the_light_syntax_surface() -> None:

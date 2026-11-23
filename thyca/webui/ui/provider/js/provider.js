@@ -8,6 +8,19 @@ const PROVIDER_ID_RE = /^[A-Za-z0-9_-]+$/;
 const FALLBACK_LIMITS = { loopMax: [1, 200], hotTailKB: [1, 64], contextTokens: [1000, 2000000], maxTokens: [1, 2000000] };
 const CHOOSE_MODEL = '__choose__';
 const ADVANCED_FIELDS = new Set(['#m-in', '#m-cache', '#m-out', '#m-context', '#m-max']);
+const OFFICIAL_URLS = {
+  openai: 'https://api.openai.com/v1',
+  google_gemini: 'https://generativelanguage.googleapis.com/v1beta',
+  anthropic_messages: 'https://api.anthropic.com/v1',
+};
+const OFFICIAL_URL_SET = new Set(Object.values(OFFICIAL_URLS));
+const WIRE_API_MAP = {
+  openai: 'openai_responses',
+  google_gemini: 'google_gemini',
+  anthropic_messages: 'anthropic_messages',
+  openai_chat: 'openai_chat',
+  openai_responses: 'openai_responses',
+};
 const state = {
   schema: null, values: null, meta: {}, loading: true, saving: false, reloading: false,
   editingProvider: '', providerBaseline: null, modelBaseline: null, editorBaseline: null, cleanStatus: '',
@@ -22,71 +35,8 @@ let externalSyncInFlight = false;
 const workspace = $('.workspace');
 document.querySelector('.notebook-shell').setAttribute('aria-label', 'Thyca — kết nối AI');
 workspace.setAttribute('aria-label', 'Nội dung kết nối AI');
-workspace.insertAdjacentHTML('beforeend', `
-<header class="page-nav">
-  <div class="page-title"><h1 id="provider-title">Kết nối AI</h1></div>
-</header>
-<div class="page-scroll"><div class="page-inner">
-  <p class="page-status" id="page-status" role="status" aria-live="polite" hidden></p>
-  <section class="paper-card connection-editor" id="connection-editor" aria-labelledby="provider-title">
-    <fieldset id="editor-controls">
-      <div class="provider-bar">
-        <div class="provider-tabs-wrap">
-          <div class="connection-tabs" id="connection-tabs" role="tablist" aria-label="Kết nối đã lưu" tabindex="-1"></div>
-          <button class="conn-tab conn-tab-new" id="new-connection" type="button" role="tab" aria-selected="false">${icon('plus')} Thêm kết nối</button>
-        </div>
-        <div class="current-default" id="current-default" aria-live="polite"></div>
-      </div>
-      <form class="editor-form" id="connection-form" aria-label="Cấu hình kết nối và model" novalidate>
-        <div class="connection-fields">
-          <label class="field" id="pv-id-field"><span>Tên kết nối</span><input id="pv-id" maxlength="64" autocomplete="off" spellcheck="false" placeholder="Không dấu, không khoảng trắng" required></label>
-          <label class="field"><span>URL API</span><input id="pv-base-url" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://api.example.com/v1" required></label>
-          <label class="field"><span>API key <em id="pv-key-note"></em></span><input id="pv-key" type="password" autocomplete="new-password" maxlength="200" placeholder="Nhập API key" title="Key được lưu trên máy này và gửi tới URL API khi kết nối."></label>
-          <label class="field"><span>Kiểu API</span><select id="pv-api"><option value="openai_chat">Chat completions</option><option value="openai_responses">Responses</option></select></label>
-        </div>
-        <div class="model-editor">
-          <div class="model-pick-row">
-            <label class="field model-picker-field"><span>Model để dùng <em class="model-mode-tag" id="model-editor-mode" hidden></em></span><select id="m-picker" aria-label="Chọn model"><option value="__choose__">Chọn model…</option></select></label>
-            <button class="quiet-button" id="v-submit" type="button" title="Chỉ tải danh sách, không gọi model hay lưu cấu hình.">${icon('list')} Tải model</button>
-            <button class="quiet-button is-danger" type="button" id="delete-model" hidden>Xóa model</button>
-          </div>
-          <p class="discovery-status" id="discovery-status" role="status" aria-live="polite" hidden></p>
-          <p class="ownership-warning" id="ownership-warning" role="status" hidden></p>
-          <p class="legacy-url-warning" id="legacy-url-warning" role="status" hidden></p>
-          <details class="model-advanced" id="model-advanced">
-            <summary class="model-advanced-toggle"><span class="model-advanced-label">Tùy chỉnh nâng cao</span><span class="model-advanced-summary" id="model-advanced-summary"></span></summary>
-            <div class="model-advanced-body">
-              <div class="advanced-row">
-                <div class="advanced-group">
-                  <div class="price-heading" title="Giá chỉ dùng để ước tính chi phí; API không trả giá này. Điền đủ ba mức hoặc để trống cả ba."><strong>Giá (USD / 1M token)</strong><span>Nhập đủ 3 giá hoặc để trống.</span></div>
-                  <div class="price-fields">
-                    <label class="field"><span>Input</span><input id="m-in" type="number" min="0" step="any" inputmode="decimal" placeholder="0.00"></label>
-                    <label class="field"><span>Cache</span><input id="m-cache" type="number" min="0" step="any" inputmode="decimal" placeholder="0.00"></label>
-                    <label class="field"><span>Output</span><input id="m-out" type="number" min="0" step="any" inputmode="decimal" placeholder="0.00"></label>
-                  </div>
-                </div>
-                <div class="advanced-group">
-                  <div class="limits-heading"><strong>Giới hạn (token)</strong><span>Để trống để dùng mặc định.</span></div>
-                  <div class="model-limits-grid">
-                    <label class="field"><span>Ngữ cảnh (token)</span><input id="m-context" type="number" min="1000" max="2000000" step="16000" inputmode="numeric" placeholder="Kế thừa"></label>
-                    <label class="field"><span>Output tối đa (token)</span><input id="m-max" type="number" min="1" max="2000000" step="16000" inputmode="numeric" placeholder="16384"></label>
-                  </div>
-                </div>
-              </div>
-              <fieldset class="field" id="m-efforts-wrap"><legend>Mức suy luận model hỗ trợ</legend><div class="effort-checks" id="m-efforts"></div></fieldset>
-            </div>
-          </details>
-          <p class="form-status" id="editor-status" role="status" aria-live="polite" hidden></p>
-          <div class="editor-footer"><button class="primary-action" id="save-use" type="submit" form="connection-form">Lưu</button><button class="quiet-button" type="button" id="cancel-editor">Hủy thay đổi</button><span class="save-status" id="save-status" role="status" aria-live="polite"></span><button class="quiet-button is-danger" type="button" id="delete-provider" hidden>Xóa kết nối</button></div>
-        </div>
-        <section class="saved-models" id="saved-models" aria-label="Model đã lưu">
-          <div class="saved-models-head"><h2>Model đã lưu</h2><p class="card-copy" id="saved-models-note" aria-live="polite"></p></div>
-          <ul class="saved-model-rows" id="saved-model-rows"></ul>
-        </section>
-      </form>
-    </fieldset>
-  </section>
-</div></div>`);
+const providerTemplate = document.querySelector('template#tpl-provider');
+workspace.insertAdjacentHTML('beforeend', providerTemplate ? providerTemplate.innerHTML : '');
 
 function setStatus(text, kind = '') {
   const el = $('#page-status'); el.hidden = !text; el.textContent = text || '';
@@ -311,13 +261,29 @@ function renderConnectionTabs() {
     newBtn.setAttribute('aria-selected', isNew ? 'true' : 'false');
   }
 }
+function normalizeBaseUrl(raw) { return String(raw || '').trim().replace(/\/+$/, ''); }
+function selectValueForEntry(entry) {
+  if (!entry) return 'openai_chat';
+  if (entry.api === 'google_gemini') return 'google_gemini';
+  if (entry.api === 'anthropic_messages') return 'anthropic_messages';
+  if (entry.api === 'openai_responses') {
+    return normalizeBaseUrl(entry.baseUrl) === OFFICIAL_URLS.openai ? 'openai' : 'openai_responses';
+  }
+  return 'openai_chat';
+}
+function wireApiForSelect(value) { return Object.hasOwn(WIRE_API_MAP, value) ? WIRE_API_MAP[value] : 'openai_chat'; }
+function syncUrlPlaceholder(selectValue) {
+  const input = $('#pv-base-url');
+  if (input) input.placeholder = OFFICIAL_URLS[selectValue] || 'https://api.example.com/v1';
+}
 function renderProviderSelects() {
   const apiSelect = $('#pv-api');
   const providers = state.values?.providers || {};
   const entry = state.editingProvider && Object.hasOwn(providers, state.editingProvider) ? providers[state.editingProvider] : null;
   if (entry) {
-    if (!apiSelect.dataset.edited) apiSelect.value = entry.api === 'openai_responses' ? 'openai_responses' : 'openai_chat';
+    if (!apiSelect.dataset.edited) apiSelect.value = selectValueForEntry(entry);
   } else if (!apiSelect.dataset.edited) apiSelect.value = 'openai_chat';
+  syncUrlPlaceholder(apiSelect.value);
 }
 function renderModelPicker() {
   const select = $('#m-picker'); if (!select || !state.values) return;
@@ -554,8 +520,10 @@ function fillConnection(id, { initial = false } = {}) {
   const providers = state.values?.providers || {};
   const provider = id && Object.hasOwn(providers, id) ? providers[id] : null;
   $('#pv-id').value = id || ''; $('#pv-base-url').value = provider?.baseUrl || ''; $('#pv-key').value = '';
-  $('#pv-api').value = provider?.api === 'openai_responses' ? 'openai_responses' : 'openai_chat';
+  const apiValue = selectValueForEntry(provider);
+  $('#pv-api').value = apiValue;
   $('#pv-api').dataset.edited = '';
+  syncUrlPlaceholder(apiValue);
   state.discovery = null; state.selectedModel = ''; state.selectedModelFromDiscovery = false;
   const ids = modelsOf(id);
   const preferred = initial && state.values?.defaultModel && ids.includes(state.values.defaultModel)
@@ -585,7 +553,7 @@ function invalidateDiscovery(message = 'URL/key đã đổi. Tải lại model.'
   if (state.activeVerify) { state.activeVerify = null; state.verifying = false; }
   renderModelPicker(); setDiscoveryStatus(message); refreshBusyState();
 }
-function sourceDraft() { return { url: $('#pv-base-url').value, key: $('#pv-key').value.trim(), providerId: state.editingProvider }; }
+function sourceDraft() { return { url: $('#pv-base-url').value, key: $('#pv-key').value.trim(), api: wireApiForSelect($('#pv-api').value), providerId: state.editingProvider }; }
 async function verifyQuick() {
   if (state.verifying || state.loading || state.saving || state.reloading || !state.values) return false;
   clearFieldErrors(); setFormStatus('');
@@ -595,16 +563,16 @@ async function verifyQuick() {
   if (!source.key && !existingId) {
     setDiscoveryStatus('Nhập API key để tải model.', ''); return false;
   }
-  const payload = { baseUrl };
+  const payload = { baseUrl, api: source.api };
   if (source.key) payload.apiKey = source.key;
   else payload.providerId = existingId;
-  const snapshot = { generation: ++state.verifyGeneration, baseUrl, key: source.key, providerId: existingId, connectionRevision: state.connectionRevision };
+  const snapshot = { generation: ++state.verifyGeneration, baseUrl, api: source.api, key: source.key, providerId: existingId, connectionRevision: state.connectionRevision };
   state.activeVerify = snapshot; state.verifying = true; refreshBusyState(); setDiscoveryStatus('Đang tải model…');
   try {
     const response = await postJson('/api/onboarding/verify', payload);
     if (state.activeVerify !== snapshot || snapshot.generation !== state.verifyGeneration || snapshot.connectionRevision !== state.connectionRevision || JSON.stringify(sourceDraft()) !== JSON.stringify(source)) return false;
     const models = Array.isArray(response.models) ? response.models.filter(id => typeof id === 'string' && id.length) : [];
-    state.discovery = { models, sourceUrl: baseUrl, providerId: snapshot.providerId, connectionRevision: snapshot.connectionRevision, generation: snapshot.generation };
+    state.discovery = { models, sourceUrl: baseUrl, sourceApi: source.api, providerId: snapshot.providerId, connectionRevision: snapshot.connectionRevision, generation: snapshot.generation };
     renderModelPicker();
     setDiscoveryStatus(models.length ? `Đã tải ${models.length} model.` : 'Không có model nào trên kết nối này.', models.length ? 'ok' : '');
     return true;
@@ -620,7 +588,7 @@ function draftForSave() {
   if (!id) throw new FieldError('Nhập tên kết nối.', '#pv-id');
   if (!PROVIDER_ID_RE.test(id)) throw new FieldError('Tên kết nối chỉ gồm chữ, số, _ và -.', '#pv-id');
   const baseUrl = parseBaseUrl($('#pv-base-url').value);
-  const api = $('#pv-api').value === 'openai_responses' ? 'openai_responses' : 'openai_chat';
+  const api = wireApiForSelect($('#pv-api').value);
   const apiKey = $('#pv-key').value.trim();
   const modelId = selectedModelId();
   if (!modelId) {
@@ -629,7 +597,7 @@ function draftForSave() {
     }
     throw new FieldError('Chọn model trong danh sách.', '#m-picker');
   }
-  if (state.selectedModelFromDiscovery && (!state.discovery || state.discovery.connectionRevision !== state.connectionRevision || state.discovery.sourceUrl !== baseUrl || state.discovery.providerId !== (state.editingProvider || ''))) {
+  if (state.selectedModelFromDiscovery && (!state.discovery || state.discovery.connectionRevision !== state.connectionRevision || state.discovery.sourceUrl !== baseUrl || state.discovery.sourceApi !== api || state.discovery.providerId !== (state.editingProvider || ''))) {
     throw new FieldError('URL hoặc kết nối đã đổi. Tải lại danh sách model.', '#m-picker');
   }
   const prices = parsePrices();
@@ -707,7 +675,10 @@ async function commitValues(buildValues, { note = '', onPosted = null } = {}) {
     try {
       await refreshConfig();
       setSaveStatus('Đã lưu', response.ready === false ? 'warn' : 'ok');
-      setFormStatus(response.ready === false ? 'Đã lưu cấu hình. Chưa thể xác nhận model chạy được; kiểm tra API key/kết nối.' : note, response.ready === false ? 'warn' : 'ok');
+      const notReadyText = !state.values?.defaultModel
+        ? (note || 'Đã lưu cấu hình. Chọn “Đặt mặc định” ở danh sách bên dưới để bắt đầu trò chuyện.')
+        : 'Đã lưu cấu hình. Chưa thể xác nhận model chạy được; kiểm tra API key/kết nối.';
+      setFormStatus(response.ready === false ? notReadyText : note, response.ready === false ? 'warn' : 'ok');
     } catch (error) {
       setSaveStatus('Đã lưu', 'warn');
       setFormStatus(`Đã lưu thành công nhưng chưa tải lại được cấu hình: ${error.message}${response.ready === false ? '. Cấu hình chưa sẵn sàng cho lượt chat.' : ''}`, 'warn');
@@ -790,7 +761,20 @@ function bind() {
   });
   $('#connection-form').addEventListener('input', () => { renderAdvancedSummary(); syncDirtyStatus(); });
   $('#connection-form').addEventListener('change', () => { renderAdvancedSummary(); syncDirtyStatus(); });
-  $('#pv-api').addEventListener('change', () => { $('#pv-api').dataset.edited = 'true'; });
+  $('#pv-api').addEventListener('change', () => {
+    const val = $('#pv-api').value;
+    $('#pv-api').dataset.edited = 'true';
+    const urlInput = $('#pv-base-url');
+    const currentUrl = normalizeBaseUrl(urlInput.value);
+    if (Object.hasOwn(OFFICIAL_URLS, val)) {
+      if (!currentUrl || OFFICIAL_URL_SET.has(currentUrl)) urlInput.value = OFFICIAL_URLS[val];
+    } else if (OFFICIAL_URL_SET.has(currentUrl)) {
+      urlInput.value = '';
+    }
+    syncUrlPlaceholder(val);
+    invalidateDiscovery('Kiểu API đã đổi. Tải lại model.');
+    syncDirtyStatus();
+  });
   $('#m-efforts').addEventListener('change', () => { paintEffortChips($('#m-efforts')); renderAdvancedSummary(); syncDirtyStatus(); });
   $('#delete-provider').onclick = deleteProvider;
   $('#delete-model').onclick = deleteModel;

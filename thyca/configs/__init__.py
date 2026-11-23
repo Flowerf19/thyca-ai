@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from .auth import merge_saved_keys
 from .defaults import (
+    ANTHROPIC_BASE_URL,
     DEFAULT_LIMITS_CONTEXT_TOKENS,
     DEFAULT_LIMITS_CONTEXT_TOKENS_MAX,
     DEFAULT_LIMITS_HOT_TAIL_KB,
@@ -28,6 +29,7 @@ from .defaults import (
     DEFAULT_PROVIDER_MODEL,
     DEFAULT_PROVIDER_REASONING_EFFORT,
     DEFAULT_TIMELINE_TIMEZONE,
+    GOOGLE_GEMINI_BASE_URL,
     PROVIDER_APIS,
     REASONING_EFFORTS,
 )
@@ -55,6 +57,7 @@ from .store import (
 from .timeline import TimelineCfg
 
 __all__ = [
+    "ANTHROPIC_BASE_URL",
     "DEFAULT_LIMITS_CONTEXT_TOKENS",
     "DEFAULT_LIMITS_CONTEXT_TOKENS_MAX",
     "DEFAULT_LIMITS_HOT_TAIL_KB",
@@ -67,6 +70,7 @@ __all__ = [
     "DEFAULT_PROVIDER_MODEL",
     "DEFAULT_PROVIDER_REASONING_EFFORT",
     "DEFAULT_TIMELINE_TIMEZONE",
+    "GOOGLE_GEMINI_BASE_URL",
     "GUIDE_NAME",
     "PROVIDER_APIS",
     "REASONING_EFFORTS",

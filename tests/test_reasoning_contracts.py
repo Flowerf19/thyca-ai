@@ -281,3 +281,19 @@ async def test_chat_transport_after_provider_switch() -> None:
     assert sent["reasoning_details"] == [
         {"type": "reasoning.text", "text": "t", "signature": "sig"}
     ]
+
+
+def test_chat_boundary_filters_anthropic_and_google_reasoning_details() -> None:
+    payload = _to_openai_message(
+        Message(
+            role="assistant",
+            content="hi",
+            reasoning_details=[
+                {"type": "thinking", "thinking": "t", "signature": "s"},
+                {"type": "redacted_thinking", "data": "d"},
+                {"type": "gemini.thought", "thoughtSignature": "g"},
+                {"type": "gemini.call_signature", "call_id": "c1", "thoughtSignature": "g2"},
+            ],
+        )
+    )
+    assert "reasoning_details" not in payload

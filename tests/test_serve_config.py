@@ -1691,3 +1691,136 @@ def test_m7_providers_test_explicit_empty_model_is_400(tmp_path: Path) -> None:
         httpd.shutdown()
         thread.join(timeout=2)
         httpd.server_close()
+
+
+def test_onboarding_verify_rejects_invalid_api_and_supports_google_and_anthropic(
+    tmp_path: Path,
+) -> None:
+    seen: list[tuple[str, dict[str, str]]] = []
+    response_body = [b""]
+
+    class Stub(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            seen.append((self.path, {k.lower(): v for k, v in self.headers.items()}))
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(response_body[0])))
+            self.end_headers()
+            self.wfile.write(response_body[0])
+
+        def log_message(self, format: str, *args: object) -> None:
+            return
+
+    stub = ThreadingHTTPServer(("127.0.0.1", 0), Stub)
+    sthread = threading.Thread(target=stub.serve_forever, daemon=True)
+    sthread.start()
+    httpd, thread = _start_config_server(tmp_path)
+    try:
+        base = f"http://127.0.0.1:{stub.server_address[1]}"
+        status, body = _post(
+            httpd, "/api/onboarding/verify", {"baseUrl": base, "apiKey": "k", "api": "bogus"}
+        )
+        assert status == 400 and body == {"error": "invalid api"}
+
+        response_body[0] = json.dumps(
+            {
+                "models": [
+                    {
+                        "name": "models/gemini-2.5-flash",
+                        "supportedGenerationMethods": ["generateContent"],
+                    }
+                ]
+            }
+        ).encode()
+        status, body = _post(
+            httpd,
+            "/api/onboarding/verify",
+            {"baseUrl": base, "apiKey": "AIza-demo", "api": "google_gemini"},
+        )
+        assert status == 200 and body == {"models": ["gemini-2.5-flash"], "apiKeyOk": True}
+        assert seen[-1][1]["x-goog-api-key"] == "AIza-demo"
+
+        response_body[0] = json.dumps({"data": [{"id": "claude-sonnet-4-6"}]}).encode()
+        status, body = _post(
+            httpd,
+            "/api/onboarding/verify",
+            {"baseUrl": base, "apiKey": "sk-ant-demo", "api": "anthropic_messages"},
+        )
+        assert status == 200 and body == {"models": ["claude-sonnet-4-6"], "apiKeyOk": True}
+        assert seen[-1][1]["x-api-key"] == "sk-ant-demo"
+    finally:
+        httpd.shutdown()
+        thread.join(timeout=2)
+        httpd.server_close()
+        stub.shutdown()
+        sthread.join(timeout=2)
+        stub.server_close()
+
+
+def test_providers_test_dispatches_anthropic_and_google(tmp_path: Path) -> None:
+    anth_payload = json.dumps(
+        {
+            "model": "claude-sonnet-4-6",
+            "stop_reason": "end_turn",
+            "content": [{"type": "text", "text": "pong"}],
+        }
+    ).encode()
+    goog_payload = json.dumps(
+        {
+            "modelVersion": "gemini-2.5-flash",
+            "candidates": [{"content": {"parts": [{"text": "pong"}]}, "finishReason": "STOP"}],
+        }
+    ).encode()
+    anth_paths: list = []
+    goog_paths: list = []
+    astub, athread = _chat_stub(anth_payload, paths=anth_paths)
+    gstub, gthread = _chat_stub(goog_payload, paths=goog_paths)
+    httpd, thread = _start(tmp_path)
+    try:
+        abase = f"http://127.0.0.1:{astub.server_address[1]}"
+        gbase = f"http://127.0.0.1:{gstub.server_address[1]}"
+        _, got = _call(httpd, "/api/config")
+        values = got["values"]
+        values["providers"] = {
+            "anth": {
+                "baseUrl": abase,
+                "apiKeyEnv": "THYCA_TOKEN",
+                "apiKey": "sk-ant-live",
+                "api": "anthropic_messages",
+                "reasoningEffort": "high",
+            },
+            "goog": {
+                "baseUrl": gbase,
+                "apiKeyEnv": "THYCA_TOKEN",
+                "apiKey": "AIza-live",
+                "api": "google_gemini",
+                "reasoningEffort": "high",
+            },
+        }
+        values["defaultProvider"] = "goog"
+        values["defaultModel"] = "gemini-2.5-flash"
+        assert _call(httpd, "/api/config", method="POST", data=values)[0] == 200
+        status, body = _call(
+            httpd,
+            "/api/providers/test",
+            method="POST",
+            data={"providerId": "anth", "model": "claude-sonnet-4-6"},
+        )
+        assert status == 200 and body["ok"] is True and body["model"] == "claude-sonnet-4-6"
+        assert anth_paths == ["/messages"]
+        status, body = _call(
+            httpd,
+            "/api/providers/test",
+            method="POST",
+            data={"providerId": "goog", "model": "gemini-2.5-flash"},
+        )
+        assert status == 200 and body["ok"] is True and body["model"] == "gemini-2.5-flash"
+        assert goog_paths == ["/models/gemini-2.5-flash:streamGenerateContent?alt=sse"]
+    finally:
+        _stop(httpd, thread)
+        astub.shutdown()
+        athread.join(timeout=2)
+        astub.server_close()
+        gstub.shutdown()
+        gthread.join(timeout=2)
+        gstub.server_close()

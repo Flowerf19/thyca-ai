@@ -61,13 +61,18 @@ class OpenAIChat(BaseConnect):
         return parse_chat_bytes(raw, key)
 
 
+_CHAT_REASONING_TYPES = frozenset(
+    {"reasoning.text", "reasoning.summary", "reasoning.encrypted"}
+)
+
+
 def _to_openai_message(message: Message) -> dict[str, Any]:
     payload: dict[str, Any] = {"role": message.role, "content": message.content}
     if message.reasoning_details:
         kept = [
             dict(detail)
             for detail in message.reasoning_details
-            if isinstance(detail, dict) and detail.get("type") != "reasoning"
+            if isinstance(detail, dict) and detail.get("type") in _CHAT_REASONING_TYPES
         ]
         if kept:
             payload["reasoning_details"] = kept

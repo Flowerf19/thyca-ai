@@ -21,5 +21,12 @@ LIMIT_RANGES: dict[str, tuple[int, int]] = {
     "maxTokens": (1, DEFAULT_LIMITS_CONTEXT_TOKENS_MAX),
 }
 DEFAULT_PROVIDER_ID = "default"
-PROVIDER_APIS = ("openai_chat", "openai_responses")
+ANTHROPIC_BASE_URL = "https://api.anthropic.com/v1"
+GOOGLE_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
+PROVIDER_APIS = (
+    "openai_chat",
+    "openai_responses",
+    "anthropic_messages",
+    "google_gemini",
+)
 DEFAULT_PROVIDER_API = "openai_chat"

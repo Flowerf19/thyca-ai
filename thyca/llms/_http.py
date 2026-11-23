@@ -85,7 +85,11 @@ async def _sleep_retry_after(response: httpx.Response) -> None:
 
 
 class _DropParam(Exception):
-    """Retry the request once without the dropped reasoning param."""
+    """Retry the request with an adjusted payload without the rejected reasoning param."""
+
+    def __init__(self, payload: dict[str, Any]) -> None:
+        super().__init__()
+        self.payload = payload
 
 
 class BaseConnect(Connect):
@@ -97,6 +101,7 @@ class BaseConnect(Connect):
 
     DROP_PARAM = ""
     DROP_MARKER = ""
+    MAX_REASONING_DROPS = 2
 
     def __init__(
         self,
@@ -127,6 +132,17 @@ class BaseConnect(Connect):
         if self._owns_client:
             await self._client.aclose()
 
+    def _drop_reasoning(self, payload: dict[str, Any], body: str) -> dict[str, Any] | None:
+        """Return a retry payload with rejected reasoning settings removed, or None."""
+        if (
+            self.DROP_PARAM
+            and self.DROP_PARAM in payload
+            and self.DROP_MARKER
+            and self.DROP_MARKER in body
+        ):
+            return {k: v for k, v in payload.items() if k != self.DROP_PARAM}
+        return None
+
     async def _request(
         self,
         url: str,
@@ -139,18 +155,23 @@ class BaseConnect(Connect):
         max_attempts = 3
         last_error: LLMError | None = None
         transient = 0
-        dropped = False
+        drops_remaining = self.MAX_REASONING_DROPS
         while True:
             try:
                 async with self._client.stream(
                     "POST", url, json=payload, headers=headers
                 ) as response:
                     reply = await self._consume(
-                        response, payload, key, on_reasoning, on_content, dropped
+                        response,
+                        payload,
+                        key,
+                        on_reasoning,
+                        on_content,
+                        drops_remaining > 0,
                     )
-            except _DropParam:
-                payload = {k: v for k, v in payload.items() if k != self.DROP_PARAM}
-                dropped = True
+            except _DropParam as exc:
+                payload = exc.payload
+                drops_remaining -= 1
                 continue
             except httpx.RequestError as exc:
                 transient += 1
@@ -179,13 +200,14 @@ class BaseConnect(Connect):
         key: str,
         on_reasoning: Callable[[str], None] | None,
         on_content: Callable[[str], None] | None,
-        dropped: bool,
+        can_drop: bool,
     ) -> ChatReply | LLMError:
         status = response.status_code
-        if status == 400 and self.DROP_PARAM and self.DROP_PARAM in payload and not dropped:
+        if status == 400 and can_drop:
             body = (await response.aread()).decode("utf-8", errors="replace")
-            if self.DROP_MARKER and self.DROP_MARKER in body:
-                raise _DropParam
+            adjusted = self._drop_reasoning(payload, body)
+            if adjusted is not None and adjusted != payload:
+                raise _DropParam(adjusted)
             raise LLMError(f"provider HTTP 400: {redact(cap(body), key)}")
         if status in _RETRY_STATUS:
             await _sleep_retry_after(response)

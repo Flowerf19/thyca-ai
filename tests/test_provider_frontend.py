@@ -335,7 +335,9 @@ def test_provider_page_has_one_editor_and_no_persist_before_explicit_save(node: 
         "primary": True,
         "savedList": True,
         "beforeSavePosts": 0,
-        "verifyPosts": [{"baseUrl": "https://fresh.invalid/v1", "apiKey": "mock-fresh-key"}],
+        "verifyPosts": [
+            {"baseUrl": "https://fresh.invalid/v1", "api": "openai_chat", "apiKey": "mock-fresh-key"}
+        ],
         "listingStatus": "Đã tải 1 model.",
         "testPosts": [],
         "model": "new/model",
@@ -503,7 +505,7 @@ def test_new_blank_key_does_not_borrow_default_key_for_listing(node: str) -> Non
     )
     assert out["noRequest"] is False and out["countAfterBlank"] == 0
     assert out["status"] == "Đã tải 1 model." and out["verifyPosts"] == [
-        {"baseUrl": "https://random.invalid/v1", "apiKey": "mock-key"}
+        {"baseUrl": "https://random.invalid/v1", "api": "openai_chat", "apiKey": "mock-key"}
     ]
     assert out["saved"] and len(out["posts"]) == 1
     assert out["posts"][0]["models"]["manual/model"]["provider"] == "new-id"
@@ -526,8 +528,8 @@ def test_existing_keyless_draft_uses_own_provider_and_typed_key_takes_precedence
         via="provider",
     )
     assert out["verifyPosts"] == [
-        {"baseUrl": "https://alpha.invalid/v1", "providerId": "alpha"},
-        {"baseUrl": "https://alpha.invalid/v1", "apiKey": "mock-typed-key"},
+        {"baseUrl": "https://alpha.invalid/v1", "api": "openai_chat", "providerId": "alpha"},
+        {"baseUrl": "https://alpha.invalid/v1", "api": "openai_chat", "apiKey": "mock-typed-key"},
     ]
 
 
@@ -610,6 +612,7 @@ def test_name_changes_do_not_invalidate_an_inflight_model_listing(node: str) -> 
     assert out["result"] is True and out["discovery"]["models"] == ["late/model"]
     assert out["name"] == "named-after-discovery" and out["posts"] == {
         "baseUrl": "https://provider.invalid/v1",
+        "api": "openai_chat",
         "apiKey": "mock-only",
     }
 
@@ -1479,6 +1482,94 @@ def test_existing_connection_edits_save_without_requiring_model_choice(node: str
     assert "alpha" in out["status"] and out["selected"] == ""
 
 
+def test_official_vendor_presets_and_custom_api_options(node: str) -> None:
+    cfg = _config()
+    cfg["values"]["providers"]["openai-official"] = {
+        "baseUrl": "https://api.openai.com/v1",
+        "api": "openai_responses",
+        "apiKey": "",
+        "reasoningEffort": "high",
+    }
+    cfg["values"]["providers"]["google-official"] = {
+        "baseUrl": "https://generativelanguage.googleapis.com/v1beta",
+        "api": "google_gemini",
+        "apiKey": "",
+        "reasoningEffort": "high",
+    }
+    cfg["values"]["providers"]["anthropic-official"] = {
+        "baseUrl": "https://api.anthropic.com/v1",
+        "api": "anthropic_messages",
+        "apiKey": "",
+        "reasoningEffort": "high",
+    }
+    cfg["meta"]["providers"].update(
+        {"openai-official": True, "google-official": True, "anthropic-official": True}
+    )
+    out = _run(
+        node,
+        f"""
+        {_mock_fetch(cfg, models=["gemini-2.5-flash"])}
+        await __controller.ready; await tick(10);
+        const markup = workspace._inserted.join('');
+        openExistingConnection('openai-official');
+        const selOpenAI = $('#pv-api').value;
+        openExistingConnection('google-official');
+        const selGoogle = $('#pv-api').value;
+        openExistingConnection('anthropic-official');
+        const selAnthropic = $('#pv-api').value;
+        openExistingConnection('beta');
+        const selCustomResp = $('#pv-api').value;
+        openNewConnection();
+        $('#pv-id').value = 'my-google';
+        $('#pv-api').value = 'google_gemini';
+        $('#pv-api').dispatch('change');
+        const googleUrl = $('#pv-base-url').value;
+        $('#pv-api').value = 'anthropic_messages';
+        $('#pv-api').dispatch('change');
+        const anthropicUrl = $('#pv-base-url').value;
+        $('#pv-api').value = 'openai';
+        $('#pv-api').dispatch('change');
+        const openaiUrl = $('#pv-base-url').value;
+        $('#pv-api').value = 'openai_chat';
+        $('#pv-api').dispatch('change');
+        const clearedCustomUrl = $('#pv-base-url').value;
+        $('#pv-api').value = 'google_gemini';
+        $('#pv-api').dispatch('change');
+        $('#pv-key').value = 'mock-google-key';
+        await verifyQuick();
+        chooseModel('gemini-2.5-flash');
+        const saved = await submitEditor(null);
+        return {{
+            hasGroups: markup.includes('label="Chính hãng"') && markup.includes('label="Custom API"'),
+            selOpenAI, selGoogle, selAnthropic, selCustomResp,
+            googleUrl, anthropicUrl, openaiUrl, clearedCustomUrl,
+            verifyPosts, saved,
+            postedProvider: configPosts[0]?.providers?.['my-google'],
+        }};
+    """,
+        via="provider",
+    )
+    assert out["hasGroups"] is True
+    assert out["selOpenAI"] == "openai"
+    assert out["selGoogle"] == "google_gemini"
+    assert out["selAnthropic"] == "anthropic_messages"
+    assert out["selCustomResp"] == "openai_responses"
+    assert out["googleUrl"] == "https://generativelanguage.googleapis.com/v1beta"
+    assert out["anthropicUrl"] == "https://api.anthropic.com/v1"
+    assert out["openaiUrl"] == "https://api.openai.com/v1"
+    assert out["clearedCustomUrl"] == ""
+    assert out["verifyPosts"] == [
+        {
+            "baseUrl": "https://generativelanguage.googleapis.com/v1beta",
+            "api": "google_gemini",
+            "apiKey": "mock-google-key",
+        }
+    ]
+    assert out["saved"] is True
+    assert out["postedProvider"]["api"] == "google_gemini"
+    assert out["postedProvider"]["baseUrl"] == "https://generativelanguage.googleapis.com/v1beta"
+
+
 def test_advanced_summary_updates_live_and_auto_opens_on_validation_error(node: str) -> None:
     out = _run(
         node,
@@ -1706,7 +1797,7 @@ if(after.configPosts.length<2)throw Error('no explicit set-default observed '+JS
         assert selected["prices"] == ["0.5", "0.05", "1.25"]
         assert selected["cardCount"] == 1 and selected["configPosts"] == selected["testPosts"] == []
         assert selected["verifyPosts"] == [
-            {"baseUrl": "http://127.0.0.1:1/v1", "apiKey": "mock-browser-key"}
+            {"baseUrl": "http://127.0.0.1:1/v1", "api": "openai_chat", "apiKey": "mock-browser-key"}
         ]
         assert (
             not selected["overflow"]
@@ -1730,7 +1821,7 @@ if(after.configPosts.length<2)throw Error('no explicit set-default observed '+JS
             )
             assert "error" not in saved, saved
             assert saved["after"]["verifyPosts"] == [
-                {"baseUrl": "http://127.0.0.1:1/v1", "apiKey": "mock-browser-key"}
+                {"baseUrl": "http://127.0.0.1:1/v1", "api": "openai_chat", "apiKey": "mock-browser-key"}
             ]
             assert len(saved["after"]["configPosts"]) == 2 and saved["after"]["testPosts"] == []
             assert saved["savePost"]["defaultModel"] == "global-only"

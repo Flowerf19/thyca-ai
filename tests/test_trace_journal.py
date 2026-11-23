@@ -152,6 +152,8 @@ def test_page_is_a_single_screen_shell_document() -> None:
 
 def test_usage_markup_and_trace_renderer_contract() -> None:
     dashboard = DASH_JS.read_text(encoding="utf-8")
+    index_html = (WEBUI / "chat" / "index.html").read_text(encoding="utf-8")
+    combined = dashboard + "\n" + index_html
     renderer = TRACE_JS.read_text(encoding="utf-8")
     for needle in (
         'id="stat-grid"', 'data-preset="1"', 'data-preset="7"',
@@ -162,7 +164,7 @@ def test_usage_markup_and_trace_renderer_contract() -> None:
         '/api/traces/stats?', '/api/traces?', '/api/traces/dm/${encodeURIComponent(ref.bot_id)}/${turn}',
         '/api/traces/groups/${encodeURIComponent(ref.group_id)}/${turn}',
     ):
-        assert needle in dashboard, needle
+        assert needle in combined, needle
     assert "FIRST_PAGE = 15" in dashboard and "MORE_PAGE = 50" in dashboard
     assert "window.ThycaTraceDetail.render(detailData)" in dashboard
     assert "window.ThycaTraceDetail = Object.freeze({" in renderer

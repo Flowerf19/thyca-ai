@@ -147,14 +147,22 @@ def test_normalize_usage_unknown_shape_is_none() -> None:
 def test_normalize_usage_unknown_provider_uses_generic_counters() -> None:
     assert normalize_usage(
         {"prompt_tokens": 10, "completion_tokens": 3, "total_tokens": 13},
-        "anthropic",
+        "cohere",
     ) == {
         "prompt_tokens": 10,
         "cached_tokens": 0,
         "completion_tokens": 3,
         "total_tokens": 13,
     }
-    assert normalize_usage({"promptTokenCount": 20, "candidatesTokenCount": 5, "cachedContentTokenCount": 8, "totalTokenCount": 25}, "google") is None
+    assert normalize_usage(
+        {
+            "promptTokenCount": 20,
+            "candidatesTokenCount": 5,
+            "cachedContentTokenCount": 8,
+            "totalTokenCount": 25,
+        },
+        "cohere",
+    ) is None
 
 
 @pytest.mark.asyncio

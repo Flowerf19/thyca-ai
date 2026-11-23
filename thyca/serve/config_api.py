@@ -16,6 +16,8 @@ from pathlib import Path
 from thyca import __version__
 from thyca.bots.registry import BotRegistry
 from thyca.configs import (
+    DEFAULT_PROVIDER_API,
+    PROVIDER_APIS,
     ConfigError,
     _parse_dict,
     atomic_write_text,
@@ -351,6 +353,13 @@ def onboarding_verify(handler, config_file: Path | None) -> None:
         ):
             handler._json(400, {"error": "invalid providerId"})
             return
+        raw_api = payload.get("api")
+        if raw_api is not None and (
+            not isinstance(raw_api, str) or raw_api.strip() not in PROVIDER_APIS
+        ):
+            handler._json(400, {"error": "invalid api"})
+            return
+        resolved_api = raw_api.strip() if isinstance(raw_api, str) else ""
         api_key = payload.get("apiKey")
         if not isinstance(api_key, str) or not api_key.strip():
             cfg = _load_config(config_file)
@@ -364,15 +373,21 @@ def onboarding_verify(handler, config_file: Path | None) -> None:
                         handler._json(404, {"error": "provider not found"})
                         return
                     api_key = entry.api_key()
+                    if not resolved_api:
+                        resolved_api = entry.api
                 else:
                     api_key = cfg.provider.api_key()
+                    if not resolved_api:
+                        resolved_api = cfg.provider.api
             except ConfigError:
                 handler._json(422, {"error": "chưa có API key"})
                 return
+        if not resolved_api:
+            resolved_api = DEFAULT_PROVIDER_API
         from thyca.app.onboarding import ProviderProbeError, validate_provider  # noqa: PLC0415 -- reason: serve/ lazy app import boundary
 
         try:
-            models = validate_provider(base_url.strip(), api_key)
+            models = validate_provider(base_url.strip(), api_key, api=resolved_api)
         except ProviderProbeError as exc:
             handler._json(422, {"error": str(exc)})
             return

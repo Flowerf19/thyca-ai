@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from thyca.configs import ProviderCfg
 
+from .anthropic_messages import AnthropicMessages
+from .google_gemini import GoogleGemini
 from .llm_base import Connect
 from .openai_chat import OpenAIChat
 from .openai_responses import OpenAIResponses
@@ -12,6 +14,11 @@ _KINDS = {
     "openai_compat": OpenAIChat,
     "openai_responses": OpenAIResponses,
     "responses": OpenAIResponses,
+    "anthropic": AnthropicMessages,
+    "anthropic_messages": AnthropicMessages,
+    "google": GoogleGemini,
+    "google_gemini": GoogleGemini,
+    "gemini": GoogleGemini,
 }
 
 
@@ -25,8 +32,4 @@ class ConnectFactory:
         if key not in _KINDS:
             raise ValueError(f"unknown connect kind: {kind!r}")
         cls = _KINDS[key]
-        if cls is OpenAIChat:
-            return OpenAIChat(provider or ProviderCfg())
-        if cls is OpenAIResponses:
-            return OpenAIResponses(provider or ProviderCfg())
-        raise AssertionError(f"unreachable connect kind: {kind!r}")
+        return cls(provider or ProviderCfg())

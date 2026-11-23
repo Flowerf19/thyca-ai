@@ -23,24 +23,8 @@ function selectCanonical(files) {
     .sort((a, b) => (CANONICAL_ORDER[a.name] ?? 9) - (CANONICAL_ORDER[b.name] ?? 9) || a.name.localeCompare(b.name));
 }
 
-root.insertAdjacentHTML('beforeend', `
-<header class="page-nav">
-  <div class="page-title">
-    <div class="eyebrow">Hồ sơ</div>
-    <h1 id="profile-title">Bạn và đội</h1>
-    <p class="page-sub">Mỗi người bạn giữ một trang riêng — sửa là ghi đè toàn bộ file.</p>
-  </div>
-</header>
-<div class="page-scroll">
-  <div class="page-inner section-stack">
-    <p class="page-status" id="profile-status" role="status" aria-live="polite" hidden></p>
-    <div id="profile-root"></div>
-    <div class="page-actions profile-footer-actions">
-      <button class="quiet-button" id="profile-shared" type="button" hidden>Hồ sơ chung</button>
-      <button class="quiet-button" id="profile-reload" type="button">${icon('retry')}<span>Tải lại</span></button>
-    </div>
-  </div>
-</div>`);
+const profileTemplate = document.querySelector('template#tpl-profile');
+root.insertAdjacentHTML('beforeend', profileTemplate ? profileTemplate.innerHTML : '');
 
 const el = {
   root: $('#profile-root'),

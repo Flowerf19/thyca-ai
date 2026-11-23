@@ -22,68 +22,6 @@ const memState = {
   editing: null,
 };
 
-const PAGE_HTML = `
-<header class="page-nav">
-  <div class="page-title">
-    <div class="eyebrow">Nhật ký</div>
-    <h1 id="memory-title">Bộ nhớ</h1>
-    <p class="page-sub">Bộ nhớ các bot ghi lại</p>
-  </div>
-</header>
-<div class="page-scroll">
-  <div class="page-inner section-stack">
-    <p class="page-status" id="memory-status" hidden></p>
-    <article class="paper-card" id="memory-scope-card" hidden></article>
-    <div class="mem-filter-row page-actions" id="memory-filter-row">
-      <select class="inline-field mem-kind-field" id="memory-kind" aria-label="Lọc loại kí ức">
-        <option value="">Lọc loại</option>
-        <option value="none">Ghi nhớ</option>
-        <option value="habit">Thói quen</option>
-        <option value="checkpoint">Task</option>
-      </select>
-      <select class="inline-field mem-use-field" id="memory-use" aria-label="Lọc mức dùng">
-        <option value="">Lọc mức dùng</option>
-        <option value="used">Dùng nhiều</option>
-        <option value="untouched">Không dùng bao giờ</option>
-        <option value="expiring">Sắp hết hạn</option>
-        <option value="suggest">Gợi ý xóa</option>
-      </select>
-      <input class="inline-field" id="memory-search" type="search" autocomplete="off"
-        placeholder="Tìm trong nhật ký…" aria-label="Tìm trong nhật ký">
-      <button class="quiet-button" id="memory-reload" type="button">${icon('retry')}<span>Tải lại</span></button>
-    </div>
-    <article class="paper-card" aria-label="Thống kê bộ nhớ">
-      <div class="eyebrow">Tổng quan</div>
-      <div class="mem-stats" id="memory-stats"></div>
-    </article>
-    <article class="paper-card" aria-label="Các lá nhớ">
-      <div class="mem-list-top">
-        <div class="mem-list-heading"><span class="eyebrow">Lá nhớ</span><span class="mem-count" id="memory-count"></span></div>
-        <span class="status-line" id="memory-loading">Đang đọc bộ nhớ…</span>
-      </div>
-      <div id="memory-leaves" aria-live="polite"></div>
-    </article>
-  </div>
-</div>`;
-
-const DIALOG_HTML = `
-<dialog class="screen-dialog" id="memory-edit-dialog" aria-labelledby="memory-edit-title">
-  <div class="dialog-heading"><div>
-    <h2 id="memory-edit-title">Sửa trang nhật ký</h2>
-    <p>Đổi tiêu đề và nội dung tóm tắt của lá nhớ này.</p>
-  </div><button class="icon-button dialog-close" aria-label="Đóng" type="button">${icon('close')}</button></div>
-  <form class="dialog-body" id="memory-edit-form">
-    <label class="field"><span>Tiêu đề</span>
-      <input id="mem-edit-topic" maxlength="120" required autocomplete="off" placeholder="Tên trang nhật ký"></label>
-    <label class="field"><span>Nội dung</span>
-      <textarea id="mem-edit-summary" required maxlength="400" placeholder="Nội dung ghi lại từ phiên trò chuyện"></textarea></label>
-    <div class="dialog-actions">
-      <button class="quiet-button" id="mem-edit-cancel" type="button">Hủy</button>
-      <button class="primary-action" type="submit">Lưu trang</button>
-    </div>
-  </form>
-</dialog>`;
-
 function splitHeading(leaf) {
   const raw = String(leaf?.heading || '').replace(/^##\s*/, '').trim();
   let match = raw.match(/^(\d{2}:\d{2})\s*[—–-]\s*(.+)$/);
@@ -463,8 +401,10 @@ function loadConversation(id, botId) { selectBot(botId || ''); }
 
 function buildPage() {
   const workspace = $('.workspace');
-  workspace.insertAdjacentHTML('beforeend', PAGE_HTML);
-  root.insertAdjacentHTML('beforeend', DIALOG_HTML);
+  const pageTpl = document.querySelector('template#tpl-memories');
+  const dialogTpl = document.querySelector('template#tpl-memories-dialog');
+  workspace.insertAdjacentHTML('beforeend', pageTpl ? pageTpl.innerHTML : '');
+  root.insertAdjacentHTML('beforeend', dialogTpl ? dialogTpl.innerHTML : '');
   wirePage();
 }
 

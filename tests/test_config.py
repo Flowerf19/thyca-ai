@@ -726,6 +726,11 @@ def test_provider_api_field_roundtrip(tmp_path: Path) -> None:
     raw["providers"] = {
         "default": {"baseUrl": "https://a.example/v1", "api": "openai_responses"},
         "second": {"baseUrl": "https://b.example/v1"},
+        "claude": {"baseUrl": "https://api.anthropic.com/v1", "api": "anthropic_messages"},
+        "gemini": {
+            "baseUrl": "https://generativelanguage.googleapis.com/v1beta",
+            "api": "google_gemini",
+        },
     }
     raw["defaultProvider"] = "default"
     raw["defaultModel"] = "m"
@@ -733,9 +738,13 @@ def test_provider_api_field_roundtrip(tmp_path: Path) -> None:
     cfg = load(p)
     assert cfg.providers["default"].api == "openai_responses"
     assert cfg.providers["second"].api == "openai_chat"
+    assert cfg.providers["claude"].api == "anthropic_messages"
+    assert cfg.providers["gemini"].api == "google_gemini"
     saved = cfg.to_dict()
     assert saved["providers"]["default"]["api"] == "openai_responses"
     assert saved["providers"]["second"]["api"] == "openai_chat"
+    assert saved["providers"]["claude"]["api"] == "anthropic_messages"
+    assert saved["providers"]["gemini"]["api"] == "google_gemini"
 
 
 def test_provider_api_rejects_unknown_kind(tmp_path: Path) -> None:
@@ -747,7 +756,10 @@ def test_provider_api_rejects_unknown_kind(tmp_path: Path) -> None:
     raw["defaultProvider"] = "default"
     raw["defaultModel"] = "gpt-4o-mini"
     p.write_text(json.dumps(raw), encoding="utf-8")
-    with pytest.raises(ConfigError, match=r"api must be one of openai_chat/openai_responses"):
+    with pytest.raises(
+        ConfigError,
+        match=r"api must be one of openai_chat/openai_responses/anthropic_messages/google_gemini",
+    ):
         load(p)
 
 

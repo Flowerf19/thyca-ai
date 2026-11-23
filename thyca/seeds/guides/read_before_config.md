@@ -94,17 +94,19 @@ muốn dùng env cho nhiều provider thì mỗi provider đặt một tên riê
 Không bao giờ in key ra màn hình, log, hay chat. Trang Provider không bao giờ
 trả key về trình duyệt (ô key luôn trống sau khi tải).
 
-## 5. Kiểu API của provider (Chat completions / Responses)
+## 5. Kiểu API của provider (Chính hãng & Custom API)
 
-Mỗi provider có 1 field `api` chọn cách Thyca nói chuyện với nó:
+Mỗi provider có 1 field `api` chọn chuẩn giao thức Thyca nói chuyện với nó:
 
-- `openai_chat` (mặc định) — endpoint `/chat/completions`, chuẩn phổ thông,
-  dùng được với hầu hết provider (OpenAI, OpenRouter, local, commandcode…).
-- `openai_responses` — endpoint `/responses`: cần khi provider chỉ trả thinking
-  qua API này (theo tài liệu provider, ví dụ meta.ai). Không có nó thì panel "đang suy nghĩ" của model
-  meta chỉ có đồng hồ, không có chữ (provider vẫn tính tiền reasoning).
+- **Chính hãng** (trên WebUI tự điền sẵn `baseUrl` chuẩn của hãng):
+  - **OpenAI** (`openai_responses`, mặc định `https://api.openai.com/v1`) — endpoint `/responses`.
+  - **Google** (`google_gemini`, mặc định `https://generativelanguage.googleapis.com/v1beta`) — Gemini REST API (`:streamGenerateContent?alt=sse`, header `x-goog-api-key`).
+  - **Anthropic** (`anthropic_messages`, mặc định `https://api.anthropic.com/v1`) — Anthropic Messages API (`/messages`, header `x-api-key` + `anthropic-version`).
+- **Custom API** (cho proxy, OpenRouter, local, hoặc máy chủ tương thích OpenAI):
+  - `openai_chat` (mặc định) — endpoint `/chat/completions`, chuẩn phổ thông.
+  - `openai_responses` — endpoint `/responses`: cần khi provider chỉ trả thinking qua API này.
 
-Đổi ở WebUI (dropdown "Kiểu API" trong phần Nhà cung cấp) hoặc sửa tay
+Đổi ở WebUI (dropdown "Kiểu API" trong trang Provider) hoặc sửa tay
 `providers["<id>"].api`. Đổi model sang provider khác thì API tự đi theo
 provider đó. Chú ý: mức effort `low` có thể không trả summary thinking —
 dùng `high` trở lên để thấy chữ.

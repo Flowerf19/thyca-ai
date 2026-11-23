@@ -96,9 +96,9 @@ def test_stats_json_and_static(tmp_path: Path) -> None:
         with urlopen(_url(httpd, "/ui/memories/js/memories.js"), timeout=2) as response:
             assert "javascript" in response.headers.get_content_type()
             memory_js = response.read()
-        assert b'id="memory-stats"' in memory_js
-        assert b'id="memory-leaves"' in memory_js
-        assert b'id="memory-search"' in memory_js
+        assert 'id="memory-stats"' in html
+        assert 'id="memory-leaves"' in html
+        assert 'id="memory-search"' in html
         assert b'data-act="reinforce"' in memory_js
         assert b'data-act="edit"' in memory_js
         assert b'data-act="forget"' in memory_js
@@ -106,10 +106,10 @@ def test_stats_json_and_static(tmp_path: Path) -> None:
         assert b"'/api/memory/update'" in memory_js
         assert b"'/api/memory/reinforce'" in memory_js
         assert b"'/api/memory/forget'" in memory_js
-        assert b'id="memory-bot"' not in memory_js
-        assert b'id="memory-kind"' in memory_js
-        assert b'id="memory-use"' in memory_js
-        assert b'id="memory-scope-card"' in memory_js
+        assert 'id="memory-bot"' not in html and b'id="memory-bot"' not in memory_js
+        assert 'id="memory-kind"' in html
+        assert 'id="memory-use"' in html
+        assert 'id="memory-scope-card"' in html
         assert b'mem-scope-clear' in memory_js
         assert b"'?bot=' + encodeURIComponent" in memory_js
         assert b'LEAF_PAGE = 60' in memory_js
@@ -334,7 +334,7 @@ def test_profile_screen_renders_markdown() -> None:
     app = (WEBUI / "ui" / "chat" / "index.html").read_text(encoding="utf-8")
     assert 'src="../profile/js/profile.js"' in app
     assert "../share/shell.js" in app
-    assert 'id="profile-root"' in script
+    assert 'id="profile-root"' in app
     assert "'Bạn và '" in script
     assert "sharedBotId" not in script
     assert "let selectedBot = '';" in script

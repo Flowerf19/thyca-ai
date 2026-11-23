@@ -122,94 +122,6 @@ function turnRowHtml(turn) {
       <span class="tl-turn-sub"><span>${kind}</span><span>${escapeHTML(fmtDateTime(turn.started_at))}</span><span>${escapeHTML(turn.model || '—')}</span><span>${fmtInt(turn.requests)} gọi model</span><span>${fmtInt(turn.tool_calls)} gọi tool</span><span>${fmtInt(turn.total_tokens)} token</span><span>${fmtCost(turn.cost_usd)}</span><span>${fmtDur(turn.latency_ms)}</span></span>
     </span>${status ? `<span class="tl-chip s-error">${status}</span>` : statusChip(turn.status)}</button></li>`;
 }
-const PAGE_HTML = `
-<header class="page-nav">
-  <div class="page-title"><p class="eyebrow" id="usage-scope-eyebrow">Tổng quan</p><h1 id="usage-view-title">Sử dụng token</h1><p class="page-sub" id="usage-scope-note"></p></div>
-</header>
-<div class="page-scroll" id="usage-scroll"><div class="page-inner section-stack">
-  <div id="usage-overview">
-    <article class="paper-card bot-scope-card" id="usage-scope-card" hidden></article>
-    <div class="usage-filter-row" id="usage-filter-row">
-      <div class="usage-view-tabs" id="usage-view-tabs" role="group" aria-label="Nội dung Usage">
-        <button class="chip" type="button" data-usage-view="usage" aria-pressed="true">Sử dụng</button>
-        <button class="chip" type="button" data-usage-view="cost" aria-pressed="false">Chi phí</button>
-        <button class="chip" type="button" data-usage-view="trace" aria-pressed="false">Trace</button>
-      </div>
-      <div class="usage-header-controls" id="usage-header-controls">
-        <p class="range-note" id="range-note"></p>
-        <div class="page-actions">
-        <span class="range-presets" role="group" aria-label="Chọn nhanh kỳ">
-          <button class="chip" type="button" data-preset="1">1 ngày</button>
-          <button class="chip" type="button" data-preset="7" aria-pressed="true">7 ngày</button>
-          <button class="chip" type="button" data-preset="30">30 ngày</button>
-          <button class="chip" type="button" data-preset="all">Tất cả</button>
-        </span>
-        <button class="chip range-custom-toggle" id="range-custom-toggle" type="button" aria-expanded="false" aria-pressed="false" aria-controls="range-custom-bar" title="Chọn khoảng ngày tùy chỉnh">Tùy chọn</button>
-        </div>
-        <div class="range-custom" id="range-custom-bar" hidden>
-          <label class="range-field"><span>Từ</span><input type="date" id="range-from"></label>
-          <span class="range-sep" aria-hidden="true">–</span>
-          <label class="range-field"><span>Đến</span><input type="date" id="range-to"></label>
-          <button class="quiet-button" id="range-apply" type="button">Áp dụng</button>
-        </div>
-      </div>
-    </div>
-    <div class="page-status" id="page-status" role="status" hidden><span id="stats-status-text"></span><button class="quiet-button" id="stats-retry" type="button" hidden>Thử lại số liệu</button></div>
-    <div class="stat-grid" id="stat-grid" aria-live="polite"></div>
-    <section class="usage-view-panel" id="usage-panel-usage" aria-label="Sử dụng token">
-      <article class="paper-card">
-        <div class="card-head"><div><h2 class="card-title">Nhịp token từng ngày</h2></div>
-          <div class="seg-toggle" role="group" aria-label="Chỉ số cột">
-            <button class="chip" type="button" data-day-metric="tokens" aria-pressed="true">Token</button>
-            <button class="chip" type="button" data-day-metric="requests" aria-pressed="false">Gọi model</button>
-          </div>
-        </div>
-        <div class="token-legend" aria-label="Chú giải biểu đồ"><span title="Không bao gồm Cache read."><i class="legend-input"></i>Input <strong id="usage-input-total">—</strong></span><span title="Tính riêng, không nằm trong Input."><i class="legend-cache"></i>Cache <strong id="usage-cache-total">—</strong></span><span title="Token hoàn tất từ model."><i class="legend-output"></i>Output <strong id="usage-output-total">—</strong></span></div>
-        <div id="chart-day"></div><p class="card-note" id="chart-day-note"></p>
-      </article>
-      <details class="paper-card analysis-panel" id="analysis-details">
-        <summary>Phân tích</summary>
-        <div class="analysis-panels">
-          <section id="card-bot"><h2 class="card-title">Theo bot</h2><ul class="bot-rows" id="rows-bot"></ul></section>
-          <section><h2 class="card-title">Theo model</h2><ul class="model-rows" id="rows-model"></ul></section>
-          <section><h2 class="card-title">Theo giờ UTC</h2><div id="chart-hour"></div><p class="card-note">Giờ theo mốc <code>started_at</code> của phiên.</p></section>
-        </div>
-      </details>
-    </section>
-    <section class="usage-view-panel" id="usage-panel-cost" aria-label="Chi phí" hidden>
-      <article class="paper-card">
-        <div class="card-head"><div><h2 class="card-title">Chi phí đã ghi nhận theo ngày</h2><p class="card-copy" id="cost-coverage"></p></div></div>
-        <div id="chart-cost"></div><p class="card-note" id="chart-cost-note"></p>
-      </article>
-      <div class="analysis-panels cost-analysis">
-        <section class="paper-card" id="card-bot-cost"><h2 class="card-title">Theo bot</h2><ul class="bot-rows" id="rows-bot-cost"></ul></section>
-        <section class="paper-card"><h2 class="card-title">Theo model</h2><ul class="model-rows" id="rows-model-cost"></ul></section>
-      </div>
-    </section>
-    <section class="usage-view-panel" id="usage-panel-trace" aria-label="Trace" hidden>
-      <article class="paper-card usage-turn-list">
-        <div class="list-head"><h2 class="card-title">Lịch sử lượt</h2>
-          <div class="list-filters">
-            <label class="mini-field"><span>Tìm lượt</span><input id="filter-q" type="search" autocomplete="off" placeholder="Tên hoặc mã phiên"></label>
-            <label class="mini-field"><span>Model</span><select id="filter-model"><option value="">Tất cả model</option></select></label>
-            <label class="mini-field"><span>Trạng thái</span><select id="filter-status"></select></label>
-            <button class="icon-button" id="trace-refresh" type="button" title="Tải lại lượt" aria-label="Tải lại lượt">${icon('retry')}</button>
-          </div>
-        </div>
-        <p class="page-status s-error" id="trace-status" hidden><span id="trace-status-text"></span><button class="quiet-button" id="trace-retry" type="button">Thử lại danh sách</button></p>
-        <div id="trace-wrap"><ul class="tl-flat-turns" id="trace-conversations" aria-live="polite"></ul></div>
-        <div class="empty-note" id="trace-empty" hidden><strong>Không có lượt nào khớp.</strong><span id="trace-empty-hint">Đổi khoảng ngày hoặc nới bộ lọc để xem thêm.</span></div>
-        <div class="table-foot"><span id="trace-count"></span><button class="quiet-button" id="trace-more" type="button" hidden>Tải thêm</button></div>
-      </article>
-    </section>
-  </div>
-  <section id="turn-detail-view" aria-label="Chi tiết lượt" hidden>
-    <div class="detail-toolbar"><button class="quiet-button tl-back" id="detail-back" type="button">${icon('arrow')}<span id="detail-back-label">Trace</span></button><button class="quiet-button" id="detail-refresh" type="button">${icon('retry')}<span>Tải lại lượt</span></button></div>
-    <p class="page-status s-error" id="detail-status" role="status" hidden><span id="detail-status-text"></span><button class="quiet-button" id="detail-retry" type="button">Thử lại lượt</button></p>
-    <div id="detail-body"></div>
-  </section>
-</div></div>`;
-
 function updateRangeNote() {
   const f = $('#range-from').value, t = $('#range-to').value;
   const nice = v => v ? new Date(v + 'T00:00:00').toLocaleDateString('vi-VN', { day: 'numeric', month: 'numeric', year: 'numeric' }) : '…';
@@ -855,7 +767,8 @@ function ensureOverviewScopeButton() {
   button.setAttribute('aria-pressed', String(!botScope));
 }
 function buildPage() {
-  $('.workspace').insertAdjacentHTML('beforeend', PAGE_HTML);
+  const dashTpl = document.querySelector('template#tpl-dashboard');
+  $('.workspace').insertAdjacentHTML('beforeend', dashTpl ? dashTpl.innerHTML : '');
   ensureOverviewScopeButton();
   $('#range-apply').onclick = applyRange;
   $('#range-custom-toggle').onclick = () => { customRangeOpen = !customRangeOpen; syncRangeCustomUI(); };

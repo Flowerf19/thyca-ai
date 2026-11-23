@@ -19,7 +19,9 @@ import httpx
 
 from thyca import __version__
 from thyca.configs import Config, ConfigError, ProviderCfg
+from thyca.configs.defaults import DEFAULT_PROVIDER_API
 from thyca.core.protocol import Message
+from thyca.llms.anthropic_messages import ANTHROPIC_VERSION
 from thyca.llms.llm_base import ChatReply, Connect, LLMError
 from thyca.llms.llm_factory import ConnectFactory
 
@@ -88,8 +90,9 @@ def _request_json(
     body: bytes | None,
     timeout: float,
     model: str | None = None,
+    headers: dict[str, str] | None = None,
 ) -> bytes:
-    """One bearer-JSON request for the probe/tests: scheme check, URL join,
+    """One authenticated JSON request for the probe/tests: scheme check, URL join,
     transport, and the shared network-error mapping. ``body=None`` sends GET.
     The config tests pass ``model`` for the 404 branch and the blank-model
     guard; the scheme check stays first so both-bad inputs report the URL."""
@@ -99,10 +102,15 @@ def _request_json(
         if model is not None and not model.strip():
             raise ProviderProbeError("cần model để test")
         url = base_url.rstrip("/") + path
-        headers = {"Authorization": f"Bearer {api_key}", "User-Agent": f"thyca/{__version__}"}
+        req_headers = (
+            dict(headers)
+            if headers is not None
+            else {"Authorization": f"Bearer {api_key}"}
+        )
+        req_headers.setdefault("User-Agent", f"thyca/{__version__}")
         if body is not None:
-            headers["Content-Type"] = "application/json"
-        request = Request(url, data=body, headers=headers)
+            req_headers["Content-Type"] = "application/json"
+        request = Request(url, data=body, headers=req_headers)
     except ProviderProbeError:
         raise
     except Exception as exc:
@@ -114,11 +122,7 @@ def _request_json(
         raise _map_network_error(exc, timeout, model=model) from exc
 
 
-def validate_provider(
-    base_url: str, api_key: str, *, timeout: float = _PROBE_TIMEOUT_S
-) -> list[str]:
-    """GET ``{base_url}/models`` with a bearer token; return sorted model ids."""
-    body = _request_json(base_url, "/models", api_key, body=None, timeout=timeout)
+def _parse_openai_models(body: bytes) -> list[str]:
     try:
         payload = json.loads(body.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -131,6 +135,65 @@ def validate_provider(
         if isinstance(item, dict) and isinstance(item.get("id"), str) and item["id"]
     }
     return sorted(ids)
+
+
+def _parse_google_models(body: bytes) -> list[str]:
+    try:
+        payload = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ProviderProbeError("provider trả JSON không hợp lệ") from exc
+    if not isinstance(payload, dict) or not isinstance(payload.get("models"), list):
+        raise ProviderProbeError("provider trả schema /models không đúng")
+    ids: set[str] = set()
+    for item in payload["models"]:
+        if not isinstance(item, dict):
+            continue
+        name = item.get("name")
+        if not isinstance(name, str) or not name.strip():
+            continue
+        methods = item.get("supportedGenerationMethods")
+        if isinstance(methods, list) and "generateContent" not in methods:
+            continue
+        clean = name.strip().removeprefix("models/")
+        if clean:
+            ids.add(clean)
+    return sorted(ids)
+
+
+def validate_provider(
+    base_url: str,
+    api_key: str,
+    *,
+    api: str = DEFAULT_PROVIDER_API,
+    timeout: float = _PROBE_TIMEOUT_S,
+) -> list[str]:
+    """GET ``{base_url}/models`` using the provider's wire auth; return sorted model ids."""
+    kind = (api or DEFAULT_PROVIDER_API).strip().lower()
+    if kind in ("anthropic", "anthropic_messages"):
+        body = _request_json(
+            base_url,
+            "/models",
+            api_key,
+            body=None,
+            timeout=timeout,
+            headers={
+                "x-api-key": api_key,
+                "anthropic-version": ANTHROPIC_VERSION,
+            },
+        )
+        return _parse_openai_models(body)
+    if kind in ("google", "google_gemini", "gemini"):
+        body = _request_json(
+            base_url,
+            "/models?pageSize=100",
+            api_key,
+            body=None,
+            timeout=timeout,
+            headers={"x-goog-api-key": api_key},
+        )
+        return _parse_google_models(body)
+    body = _request_json(base_url, "/models", api_key, body=None, timeout=timeout)
+    return _parse_openai_models(body)
 
 
 async def _probe_turn(connect: Connect, timeout: float) -> ChatReply:
@@ -222,7 +285,7 @@ def _test_via_connect(
     if not model.strip():
         raise ProviderProbeError("cần model để test")
     try:
-        provider = ProviderCfg(baseUrl=base_url, apiKey=api_key, model=model)
+        provider = ProviderCfg(baseUrl=base_url, apiKey=api_key, model=model, api=kind)
     except ConfigError as exc:
         raise ProviderProbeError("không kết nối được provider") from exc
     connect = ConnectFactory.create(kind, provider=provider)
@@ -279,12 +342,46 @@ def test_responses_chat(
     )
 
 
+def test_anthropic_messages(
+    base_url: str, api_key: str, model: str, *, timeout: float = _TEST_TIMEOUT_S
+) -> dict:
+    """POST one tiny Anthropic ``/messages`` turn to prove a saved config works."""
+    return _test_via_connect(
+        "anthropic_messages",
+        base_url,
+        api_key,
+        model,
+        timeout,
+        schema_error="provider trả schema /messages không đúng",
+        non_dict_error="provider trả JSON không hợp lệ",
+    )
+
+
+def test_google_gemini(
+    base_url: str, api_key: str, model: str, *, timeout: float = _TEST_TIMEOUT_S
+) -> dict:
+    """POST one tiny Gemini ``:streamGenerateContent`` turn to prove a saved config works."""
+    return _test_via_connect(
+        "google_gemini",
+        base_url,
+        api_key,
+        model,
+        timeout,
+        schema_error="provider trả schema Gemini không đúng",
+        non_dict_error="provider trả JSON không hợp lệ",
+    )
+
+
 def test_provider_api(
     api: str, base_url: str, api_key: str, model: str, *, timeout: float = _TEST_TIMEOUT_S
 ) -> dict:
     """Dispatch the config test to the provider's wire API."""
     if api == "openai_responses":
         return test_responses_chat(base_url, api_key, model, timeout=timeout)
+    if api == "anthropic_messages":
+        return test_anthropic_messages(base_url, api_key, model, timeout=timeout)
+    if api == "google_gemini":
+        return test_google_gemini(base_url, api_key, model, timeout=timeout)
     return test_chat(base_url, api_key, model, timeout=timeout)
 
 

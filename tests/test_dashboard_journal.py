@@ -131,16 +131,18 @@ def test_page_is_a_single_screen_shell_document() -> None:
     for gone in ("overview-nav", "cost-view", "#su-dung",
                  "conversation-pager", "journal-pager"):
         assert gone not in src, gone
+    combined = src + "\n" + entry
     for view in ("usage", "cost", "trace"):
-        assert f'data-usage-view="{view}"' in src
-        assert f'id="usage-panel-{view}"' in src
+        assert f'data-usage-view="{view}"' in combined
+        assert f'id="usage-panel-{view}"' in combined
 
 
 def test_page_markup_covers_every_region() -> None:
-    """PAGE_HTML (eval'd into .workspace) carries the full contract: range
+    """Dashboard template + factory carry the full contract: range
     picker + presets, five stat cards, day/hour charts, bot/model rows and
     the paged trace table with its deep-link convention."""
-    src = DASH_JS.read_text(encoding="utf-8")
+    js_src = DASH_JS.read_text(encoding="utf-8")
+    src = js_src + "\n" + (WEBUI / "chat" / "index.html").read_text(encoding="utf-8")
     for needle in (
         'id="stat-grid"', 'id="range-note"', 'id="range-from"',
         'id="range-to"', 'id="range-apply"',
@@ -164,8 +166,8 @@ def test_page_markup_covers_every_region() -> None:
         r'data-preset="7"[^>]*aria-pressed="true"', src)
     assert not re.search(
         r'data-preset="(?:1|30)"[^>]*aria-pressed="true"', src)
-    assert not re.search(r"^\s*(import|export)\s", src, re.MULTILINE)
-    assert "'s-error'" in src
+    assert not re.search(r"^\s*(import|export)\s", js_src, re.MULTILINE)
+    assert "'s-error'" in js_src
 
 
 def test_shell_navigation_lists_dashboard_without_trace_workspace() -> None:
@@ -569,7 +571,7 @@ def test_usage_input_total_excludes_cache_read(node: str) -> None:
     """The Usage Input card shows prompt_tokens minus cached_tokens (the
     same Input-excluding-cache rule the hero hint already uses), with copy
     that no longer claims the cache is included."""
-    src = DASH_JS.read_text(encoding="utf-8")
+    src = DASH_JS.read_text(encoding="utf-8") + "\n" + (WEBUI / "chat" / "index.html").read_text(encoding="utf-8")
     assert "Không bao gồm Cache read." in src
     assert "Đã bao gồm Cache read." not in src
     assert "Tính riêng, không nằm trong Input." in src

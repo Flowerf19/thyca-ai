@@ -349,22 +349,25 @@ def test_dashboard_page_structure() -> None:
 
     for marker in ('id="range-from"', 'id="range-to"', 'id="range-apply"',
                    'data-preset="1"', 'data-preset="7"', 'data-preset="30"'):
-        assert marker in js, marker
+        assert marker in entry, marker
 
     assert "let dayMetric = 'tokens'" in js
-    assert 'data-day-metric="requests"' in js
-    assert 'data-day-metric="tokens"' in js
-    assert 'id="chart-cost"' in js
-    assert all(js.count(f'data-usage-view="{view}"') == 1 for view in ("usage", "cost", "trace"))
+    assert 'data-day-metric="requests"' in entry
+    assert 'data-day-metric="tokens"' in entry
+    assert 'id="chart-cost"' in entry
+    dash_tpl = entry.split('<template id="tpl-dashboard">', 1)[1].split("</template>", 1)[0]
+    assert all(dash_tpl.count(f'data-usage-view="{view}"') == 1 for view in ("usage", "cost", "trace"))
     assert "dc-col" in js and "dc-bar" in js
     assert ".day-chart" in css and ".dc-bar" in css
 
-    for marker in ('id="rows-bot"', 'id="rows-model"', "share-bar", "model-cost"):
+    for marker in ('id="rows-bot"', 'id="rows-model"'):
+        assert marker in dash_tpl, marker
+    for marker in ("share-bar", "model-cost"):
         assert marker in js, marker
     assert re_block(css, ".bot-row", "display:grid", "align-items:center")
     assert ".share-bar" in css and ".model-cost" in css
 
-    assert 'id="filter-model"' in js and 'id="filter-status"' in js
+    assert 'id="filter-model"' in dash_tpl and 'id="filter-status"' in dash_tpl
     assert "q.set('offset', offset)" in js
     assert "const offset = reset ? 0 : (offsetOverride ?? traceState.rows.length)" in js
     assert "q.set('limit', reset ? FIRST_PAGE : MORE_PAGE)" in js

@@ -3,7 +3,7 @@
 Same classic-script bundle harness as test_team_frontend: ``_run``/``node``
 are reused from that module so the bundles stay identical.
 """
-from test_team_frontend import _run, node  # noqa: F401  (fixture)
+from test_team_frontend import _run
 
 
 def test_chat_composer_has_no_per_turn_model_or_thinking_selects(node) -> None:

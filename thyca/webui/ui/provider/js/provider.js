@@ -1,12 +1,8 @@
-// Retained provider controller; declarations stay private to this closure.
 ThycaRouter.register('provider', { title: 'Provider', stylesheet: '/ui/provider/providercss/provider.css', mount(ctx) {
   const root = ctx.root;
   const $ = (selector, base = root) => selector === '.workspace' ? root : base.querySelector(selector);
   const $$ = (selector, base = root) => [...base.querySelectorAll(selector)];
   let selectedBot = '';
-// Provider & model editor — discovery uses the unsaved connection draft.
-// API: GET /api/config, POST /api/config, POST /api/onboarding/verify,
-//      POST /api/providers/test.
 
 const PROVIDER_ID_RE = /^[A-Za-z0-9_-]+$/;
 const FALLBACK_LIMITS = { loopMax: [1, 200], hotTailKB: [1, 64], contextTokens: [1000, 2000000], maxTokens: [1, 2000000] };
@@ -139,8 +135,6 @@ function effortChecksKey() {
 function effortLevelsForChecks(model) {
   const base = [...effortChoices()];
   const saved = Array.isArray(model?.reasoningEfforts) ? model.reasoningEfforts.filter(Boolean) : [];
-  // Extra levels only ever come from previously stored config data now
-  // that the form no longer adds custom levels itself.
   const extras = [...new Set([...saved, ...(model?.reasoningEffort ? [model.reasoningEffort] : [])])].filter(level => !base.includes(level));
   return [...base, ...extras];
 }
@@ -154,8 +148,6 @@ function paintEffortChips(box) {
 function renderEffortChecks(model) {
   const box = $('#m-efforts'); if (!box) return;
   const saved = Array.isArray(model?.reasoningEfforts) ? model.reasoningEfforts.filter(Boolean) : [];
-  // A model with no stored set starts with every global level ticked
-  // (unticked = inherit). A stored set ticks exactly its own levels.
   const initial = saved.length ? saved : [...effortChoices()];
   box.replaceChildren(...effortLevelsForChecks(model).map(level => {
     const label = document.createElement('label');
@@ -223,7 +215,6 @@ function applyConfig(payload) {
 }
 async function refreshConfig() { const payload = await getJson('/api/config'); applyConfig(payload); return payload; }
 
-// Sync external config edits (e.g. settings dialog contextTokens) when form is clean.
 async function syncExternalConfig() {
   if (externalSyncInFlight || state.loading || state.saving || state.reloading || !state.values || editorIsDirty()) return;
   externalSyncInFlight = true;
@@ -310,7 +301,6 @@ function renderConnectionTabs() {
     name.className = 'conn-tab-name';
     name.textContent = id;
     btn.appendChild(name);
-    // Direct binding (not delegation): minimal test harness does not bubble clicks.
     btn.onclick = () => { openExistingConnection(id); };
     return btn;
   }));
@@ -441,8 +431,6 @@ function renderSavedModels() {
       use.type = 'button'; use.className = 'quiet-button';
       use.dataset.action = 'default'; use.dataset.model = id;
       use.textContent = 'Đặt mặc định'; use.disabled = busy;
-      // Direct binding (not delegation): the shared test harness does
-      // not bubble clicks, and one handler per row stays trivial.
       use.onclick = () => { void setDefaultModel(id); };
       actions.appendChild(use);
     }
@@ -469,9 +457,6 @@ async function setDefaultModel(id) {
   if (id === state.values.defaultModel) return true;
   if (editorIsDirty()) { setFormStatus('Lưu hoặc hủy thay đổi form trước khi đặt model mặc định.', 'error'); return false; }
   clearFieldErrors();
-  // The recheck runs against the fresh snapshot commitValues just loaded:
-  // a model deleted since this page loaded fails here instead of silently
-  // becoming an unregistered default.
   return commitValues(fresh => {
     if (!Object.hasOwn(fresh.values?.models || {}, id)) throw new FieldError(`Model “${id}” không còn được lưu. Tải lại rồi chọn lại.`, '#m-picker');
     const values = cloneValues(fresh.values);
@@ -482,19 +467,12 @@ async function setDefaultModel(id) {
 async function deleteSavedModel(id) {
   if (!id || !modelIsSaved(id)) return false;
   if (id === state.values?.defaultModel) { setFormStatus('Đang là model mặc định. Chọn model khác trước.', 'error'); return false; }
-  // A successful save resets draft baselines (and the deleted row resets
-  // its fields), so unsaved provider/model edits would be silently
-  // absorbed or marked saved. Like set-default, deletion waits for a
-  // clean form instead of discarding the draft.
   if (editorIsDirty()) { setFormStatus('Lưu hoặc hủy thay đổi form trước khi xóa model.', 'error'); return false; }
   if (!window.confirm(`Xóa model “${id}”?`)) return false;
   return commitValues(fresh => {
     const values = cloneValues(fresh.values);
     if (!Object.hasOwn(values.models || {}, id)) throw new FieldError('Model đã bị xóa.', '#m-picker');
     if (id === values.defaultModel) throw new FieldError('Đang là model mặc định. Chọn model khác trước.', '#m-picker');
-    // The server re-validates: a model still referenced by a bot, or an
-    // unreadable bot inventory, fails the POST with 409/503 — surfaced
-    // below as the inline form error.
     delete values.models[id]; if (values.pricing) delete values.pricing[id]; return values;
   }, { note: `Đã xóa model “${id}”.`, onPosted: () => { if (selectedModelId() === id) setModelFields(''); } });
 }
@@ -545,7 +523,6 @@ function setModelFields(id) {
   renderEffortChecks(model);
   const contextFallback = schemaField('limits.contextTokens')?.default ?? 272000;
   $('#m-context').value = Number.isInteger(model?.contextTokens) ? model.contextTokens : contextFallback;
-  // Sparse like contextTokens: empty means unset (falls back to the 16384 default).
   $('#m-max').value = Number.isInteger(model?.maxTokens) ? model.maxTokens : '';
   const legacyUrl = model?.baseUrl || '';
   $('#legacy-url-warning').hidden = !legacyUrl;
@@ -658,8 +635,6 @@ function draftForSave() {
   const prices = parsePrices();
   const contextTokens = parseIntOrNull($('#m-context'), 'Ngữ cảnh', limitRange('contextTokens'));
   const maxTokens = parseIntOrNull($('#m-max'), 'Output tối đa', limitRange('maxTokens'));
-  // The model always belongs to the connection being edited: no separate
-  // model→provider picker exists, so cross-connection picks are impossible.
   const provider = id;
   const efforts = checkedEfforts();
   return { id, baseUrl, api, apiKey, modelId, provider, prices, contextTokens, maxTokens, efforts, connectionOnly: false };
@@ -671,15 +646,11 @@ function mergeEditorDraft(fresh, draft) {
   if (!editing && Object.hasOwn(values.providers, draft.id)) throw new FieldError(`Kết nối “${draft.id}” đã có. Chọn kết nối đó để sửa.`, '#pv-id');
   if (editing && draft.id !== editing) throw new FieldError('Không thể đổi tên kết nối trong cùng một thao tác.', '#pv-id');
   const prevProvider = Object.hasOwn(values.providers, draft.id) ? values.providers[draft.id] : {};
-  // The form no longer edits the connection default: keep the stored
-  // provider effort, or the system default for a brand-new connection.
   const keptEffort = prevProvider.reasoningEffort || effortDefault();
   values.providers = { ...values.providers, [draft.id]: { apiKeyEnv: 'THYCA_TOKEN', ...prevProvider, baseUrl: draft.baseUrl, api: draft.api, reasoningEffort: keptEffort, apiKey: draft.apiKey } };
   if (!draft.connectionOnly) {
     const previousModel = Object.hasOwn(values.models, draft.modelId) ? values.models[draft.modelId] : null;
     const previousOwner = previousModel ? modelProviderId(values, draft.modelId) : '';
-    // Defensive: the picker blocks cross-connection models upfront, so this
-    // only fires on stale/race state — never silently transfer ownership.
     if (previousModel && previousOwner !== draft.provider) throw new FieldError(`Model này đã thuộc kết nối “${previousOwner}”. Chọn kết nối đó để sửa.`, '#m-picker');
     const entry = { ...(previousModel || {}), provider: draft.provider };
     if (draft.prices) {
@@ -689,22 +660,12 @@ function mergeEditorDraft(fresh, draft) {
       delete entry.input; delete entry.cache; delete entry.output;
       if (values.pricing) delete values.pricing[draft.modelId];
     }
-    // loopMax/hotTailKB are intentionally untouched here: the form no longer
-    // edits them, so a previously stored value rides along via previousModel.
-    // reasoningEffort is actively deleted: the form no longer manages a
-    // per-model default, so a stale one must not silently win over the
-    // provider/global fallback.
     for (const [key, value] of [['contextTokens', draft.contextTokens], ['maxTokens', draft.maxTokens], ['reasoningEfforts', draft.efforts.length ? [...draft.efforts] : null]]) {
       if (value === null || value === '') delete entry[key]; else entry[key] = value;
     }
     delete entry.reasoningEffort;
     values.models = { ...values.models, [draft.modelId]: entry };
   }
-  // Saving never changes the default: promoting a saved model to the
-  // global default is a separate explicit set-default action on its row.
-  // First connection from an empty config (or a stale default): fall back
-  // to the connection being saved so the commitValues guard passes. A
-  // still-valid default is left untouched.
   if (!Object.hasOwn(values.providers, values.defaultProvider)) values.defaultProvider = draft.id;
   return values;
 }
@@ -716,10 +677,6 @@ async function commitValues(buildValues, { note = '', onPosted = null } = {}) {
     const fresh = await getJson('/api/config');
     const next = buildValues(fresh);
     if (!Object.hasOwn(next.providers || {}, next.defaultProvider)) throw new FieldError('Kết nối mặc định không còn tồn tại.', '#connection-tabs');
-    // Conditional write when the server reports a revision: a config that
-    // changed since this fresh read fails with 409 instead of silently
-    // replacing newer data. The draft (inputs, baselines, key field) is
-    // left untouched below so nothing is lost; the user reviews and retries.
     const body = fresh.revision ? { ...next, baseRevision: fresh.revision } : next;
     let response;
     try {
@@ -727,10 +684,6 @@ async function commitValues(buildValues, { note = '', onPosted = null } = {}) {
     } catch (error) {
       if (error?.status === 409) {
         setSaveStatus('Chưa lưu', 'error');
-        // Typed conflicts: a model still referenced by a bot names the
-        // affected bots so the user moves them first (nothing was saved,
-        // so no reload is needed); anything else is a stale revision, so
-        // reload and keep the draft for review and retry.
         if (error?.data?.code === 'model_in_use') {
           setFormStatus(error.message || 'Không thể xóa model đang được bot sử dụng.', 'error');
         } else {
@@ -803,8 +756,6 @@ async function deleteProvider() {
   }, { note: `Đã xóa kết nối “${id}”.`, onPosted: () => { state.editingProvider = ''; fillConnection(''); } });
 }
 async function deleteModel() {
-  // The editor-level button deletes whatever the editor currently selects;
-  // saved-model rows call deleteSavedModel(id) directly.
   return deleteSavedModel(selectedModelId());
 }
 async function reloadConfig() {

@@ -2,9 +2,9 @@
 from __future__ import annotations
 
 import shutil
+from pathlib import Path
 
 import pytest
-
 from test_dashboard_journal import _eval_dash
 
 
@@ -76,7 +76,6 @@ def test_explicit_bot_contribution_and_full_turn_context_are_distinguished(node:
 
 
 def test_dashboard_structure_and_scope_lifecycle_guards() -> None:
-    from pathlib import Path
 
     root = Path(__file__).resolve().parents[1]
     source = (root / "thyca/webui/ui/dashboard/js/dashboard.js").read_text(encoding="utf-8")

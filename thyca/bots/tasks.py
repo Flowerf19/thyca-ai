@@ -50,8 +50,6 @@ class OpenTask:
     room: str = ""
     waiting_on: str | None = None
     key: str = ""
-    # Explicit memory-task link (task-<8hex>) when the runtime row was
-    # created with one. Never inferred from the title.
     memory_task_id: str | None = None
 
     def index_line(self) -> str:
@@ -94,8 +92,6 @@ def derive_open_tasks(
     treated as work owed to its recipient."""
     open_tasks: dict[str, OpenTask] = {}
     order: list[str] = []
-    # Any identifier an event may use for a task (tool-call id, the span
-    # key task_open returned, an envelope span) -> canonical dict key.
     aliases: dict[str, str] = {}
 
     def open_task(key: str, task: OpenTask, *, alias: tuple[str, ...] = ()) -> None:
@@ -136,9 +132,6 @@ def derive_open_tasks(
             room=room or current.room,
         )
 
-    # Tool-call ids of task_open calls: their ack results are not results
-    # of the work itself, so the result-event matching below skips them
-    # (an ack says the task opened, never that the work finished).
     task_open_calls: set[str] = set()
     for message in messages:
         for call in message.tool_calls or []:
@@ -155,7 +148,6 @@ def derive_open_tasks(
         kind = meta.get("kind")
         span = meta.get("span_id")
         parent = meta.get("parent_span_id")
-        # Attributed bus/room rows open, update, and close by span linkage.
         if isinstance(kind, str):
             if kind in _OPEN_KINDS and isinstance(span, str) and span:
                 open_task(
@@ -171,18 +163,11 @@ def derive_open_tasks(
             elif kind in _CLOSE_KINDS:
                 close_ref(parent)
             elif kind in _STATUS_KINDS:
-                # Latest event wins: a status/step row linked to an open
-                # task replaces its status, it does not open a new one.
                 update_status(
                     parent, _clip(message.content or "") or kind,
                     room=str(meta.get("room") or ""),
                 )
         if message.role == "tool" and message.tool_call_id not in task_open_calls:
-            # Result/error/status events carried as tool results close or
-            # update the task they link to (task_open acks are excluded
-            # above via task_open_calls; delegate results are handled by
-            # the call matching below and simply no-op here when they
-            # carry no event kind).
             event = _json_object(message.content)
             event_kind = event.get("kind") if isinstance(event.get("kind"), str) else kind
             ref = (
@@ -205,10 +190,7 @@ def derive_open_tasks(
                 room = args.get("room") if isinstance(args.get("room"), str) else ""
                 ack = results_seen.get(call.id)
                 if ack is not None and (ack.meta or {}).get("is_error"):
-                    continue  # the open itself failed: no task was opened
-                # Link by the key task_open returned (its span id, in the
-                # ack result) when present; the call id is the fallback
-                # key for transcripts whose ack predates the key field.
+                    continue
                 ack_payload = _json_object(ack.content if ack else None)
                 linked = (
                     ack_payload.get("span_id") or ack_payload.get("key")
@@ -240,7 +222,7 @@ def derive_open_tasks(
                 )
                 continue
             if (result.meta or {}).get("is_error"):
-                continue  # failed delivery closes the task
+                continue
             payload = _json_object(result.content)
             if payload.get("queued"):
                 span_alias = payload.get("span_id")
@@ -250,15 +232,12 @@ def derive_open_tasks(
                              waiting_on=recipient or None, key=f"call:{call.id}"),
                     alias=(call.id, span_alias if isinstance(span_alias, str) else ""),
                 )
-            # delivered / plain reply / anything else: the work answered.
 
     for envelope in pending:
         key = f"span:{envelope.span_id}" if envelope.span_id else ""
         if bot_id is not None and envelope.sender == bot_id and envelope.recipient != bot_id:
-            # Unanswered outgoing mail: whatever task it belongs to (or a
-            # bare entry when the transcript has none) waits on them.
             matched = False
-            for existing_key, task in list(open_tasks.items()):
+            for _existing_key, task in list(open_tasks.items()):
                 if task.waiting_on == envelope.recipient:
                     matched = True
                     break

@@ -11,7 +11,6 @@ from dataclasses import dataclass
 from typing import Literal
 
 _BOT_ID = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
-# Hard cut: groups carry only ``group-<hex32>``; timestamps never validate.
 _GROUP_ID = re.compile(r"group-[0-9a-f]{32}\Z")
 
 

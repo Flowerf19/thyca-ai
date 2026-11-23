@@ -32,7 +32,7 @@ def _promote_in_order_span(
     n_docs = len(tokenized_hays)
     denom = math.log(n_docs + 1.0)
     unique_q = set(tokens)
-    doc_freq = {tok: 0 for tok in unique_q}
+    doc_freq = dict.fromkeys(unique_q, 0)
     for hay in tokenized_hays:
         hay_set = set(hay)
         for tok in unique_q & hay_set:

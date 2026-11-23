@@ -1,4 +1,3 @@
-/* Chat screen only: workspace, transcript, composer, mention popup. */
 .workspace{border:1px solid #e0d3bc;border-radius:18px;background:#fbf5e9e6;box-shadow:var(--shadow);min-width:0;min-height:0;position:relative;display:flex;flex-direction:column;overflow:hidden}
 .chat-title-head{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap;border:0;border-bottom:0 solid transparent;background:#fffaf240;z-index:1;flex:none}
 .eyebrow{font-size:var(--fs-2xs);letter-spacing:2px;color:#a18f71;text-transform:uppercase;margin-bottom:7px}
@@ -82,9 +81,6 @@
 .mention-popup{position:absolute;bottom:100%;left:clamp(8px,1.2vw,20px);min-width:min(220px,calc(100% - 16px));max-width:calc(100% - 16px);max-height:min(240px,40dvh);overflow-y:auto;background:#fffaf0;box-shadow:var(--shadow);border:1px solid var(--line);border-radius:9px;padding:5px}
 .mention-option{display:block;width:100%;text-align:left;padding:9px 12px;font-size:var(--fs-sm);border-radius:5px}
 .mention-option:hover,.mention-option:focus{background:#e9e5d6}
-/* Structured user cards (ask_user/report_error/consent): title + optional
-   subtitle/progress + clickable choice chips. Chips are real buttons so
-   they focus and disable like any control. */
 .user-card{margin-top:10px;border:1px solid #e0d3bc;border-radius:12px;background:#fffbf1;padding:12px 14px}
 .user-card h3{margin:0 0 4px;color:#554732}
 .user-card .card-sub{margin:0 0 4px;font-size:var(--fs-sm);color:#7d6f57}
@@ -141,9 +137,6 @@
 .quiet-button{padding:6px 10px}
 }
 @keyframes cursor{50%{opacity:0}}
-/* Bot<->bot exchange grouping: per-partner entries in a bot DM and the
-   A-B thread modal. Fresh class names on purpose (legacy collapse
-   markers stay banned by test). */
 .exchange-group{display:flex;align-items:center;gap:10px;width:100%;text-align:left;border:1px dashed var(--bot-border,#c9b891);border-radius:12px;background:var(--bot-paper,#fffdf7);padding:10px 14px;font-size:var(--fs-sm);color:var(--bot-ink,#5c5142);cursor:pointer}
 .exchange-group:hover,.exchange-group:focus-visible{border-color:var(--bot-mid,#5c8a52);background:var(--bot-pale,#eaf3e2)}
 .exchange-group .seal-avatar{width:30px;height:30px;flex-shrink:0}

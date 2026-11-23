@@ -8,6 +8,7 @@ import multiprocessing
 import os
 import sqlite3
 import stat
+import threading
 import time
 import uuid
 from collections.abc import Callable
@@ -15,16 +16,63 @@ from pathlib import Path
 
 import pytest
 
+from thyca.conversations import store as package
+from thyca.conversations.runtime import ConversationCorrupt, ConversationError, ConversationNotFound
+from thyca.conversations.runtime.store import ConversationStore
 from thyca.conversations.store import (
+    BUSY_TIMEOUT_MS,
+    DB_FILE_NAME,
+    DEFAULT_PAGE_LIMIT,
+    MAX_CONTENT_LEN,
+    MAX_JSON_DEPTH,
+    MAX_METADATA_LEN,
+    MAX_PAGE_LIMIT,
+    SCHEMA_VERSION,
     AdminStore,
     AgentStore,
+    BootstrapResult,
+    Conversation,
+    ConversationListing,
+    ConversationPage,
     ConversationStoreError,
     DMBootstrapIntent,
+    InitializationResult,
     PageCursor,
+    PruneResult,
+    RetryReadiness,
     RootInitializationIntent,
+    RuntimeReadIntent,
+    RuntimeWriteIntent,
+    append_message,
+    append_server_message,
+    append_turn_error,
+    assemble_history,
+    create_group,
+    detail_for,
+    ensure_runtime_store,
+    is_runtime_ready,
+    prepare_retry,
+    project_for_trace,
+    record_turn_error,
+    require_no_legacy_conversations,
+    resolve_ref,
+    runtime_reader_for,
+    set_conversation_metadata,
+    summary_for,
+    trace_detail_for,
+    trace_turns_for,
+    trace_turns_projected,
+    validate_message,
+    validate_metadata,
 )
+from thyca.conversations.store import admin as admin_module
+from thyca.conversations.store import agent as agent_module
+from thyca.conversations.store import contracts as mod
+from thyca.conversations.store import database as database_module
+from thyca.conversations.store import runtime as runtime_module
+from thyca.conversations.store.contracts import _local_error
 from thyca.core.conversation import ConversationRef
-from thyca.core.protocol import Message
+from thyca.core.protocol import META_CAP_BYTES, Message
 
 
 def _admin(root: Path) -> AdminStore:
@@ -54,53 +102,6 @@ def _setup_dm(root: Path, bot: str = 'coder') -> ConversationRef:
 
 
 def test_public_store_package_exports_expected_api() -> None:
-    from thyca.conversations import store as package
-    from thyca.conversations.store import (
-        AgentStore,
-        AdminStore,
-        BootstrapResult,
-        BUSY_TIMEOUT_MS,
-        Conversation,
-        ConversationListing,
-        ConversationPage,
-        ConversationStoreError,
-        DB_FILE_NAME,
-        DEFAULT_PAGE_LIMIT,
-        DMBootstrapIntent,
-        PruneResult,
-        InitializationResult,
-        MAX_CONTENT_LEN,
-        MAX_JSON_DEPTH,
-        MAX_METADATA_LEN,
-        MAX_PAGE_LIMIT,
-        PageCursor,
-        RootInitializationIntent,
-        RuntimeReadIntent,
-        RuntimeWriteIntent,
-        SCHEMA_VERSION,
-        RetryReadiness,
-        ensure_runtime_store,
-        is_runtime_ready,
-        require_no_legacy_conversations,
-        resolve_ref,
-        runtime_reader_for,
-        assemble_history,
-        detail_for,
-        summary_for,
-        trace_detail_for,
-        trace_turns_for,
-        append_message,
-        append_server_message,
-        append_turn_error,
-        record_turn_error,
-        project_for_trace,
-        trace_turns_projected,
-        create_group,
-        prepare_retry,
-        set_conversation_metadata,
-        validate_message,
-        validate_metadata,
-    )
 
     expected = {
         'AgentStore': AgentStore,
@@ -153,8 +154,6 @@ def test_public_store_package_exports_expected_api() -> None:
 
 
 def _deep_meta() -> dict:
-    from thyca.conversations.store import contracts as mod
-    from thyca.core.protocol import META_CAP_BYTES
 
     meta: dict = {}
     cursor = meta
@@ -167,8 +166,6 @@ def _deep_meta() -> dict:
 
 
 def _deep_tuple_meta() -> dict:
-    from thyca.conversations.store import contracts as mod
-    from thyca.core.protocol import META_CAP_BYTES
 
     nested: object = 'x'
     for _ in range(mod.MAX_JSON_DEPTH + 1):
@@ -180,7 +177,7 @@ def _deep_tuple_meta() -> dict:
 
 def _append_many(root: str, kind: str, cid: str, actor: str, start: int, count: int) -> str:
     store = AgentStore(Path(root))
-    ref = ConversationRef(kind, cid)  # type: ignore[arg-type]
+    ref = ConversationRef(kind, cid)  # type: ignore[arg-type] -- reason: intentional invalid-type or test-double argument
     for i in range(start, start + count):
         store.append(ref, actor, Message(role='user', content=f'msg-{i}'))
     return 'ok'
@@ -201,8 +198,6 @@ def _crasher(root: str) -> None:
         " VALUES('dm','coder',999,999,'user','partial','{}','2000-01-01T00:00:00Z')")
     os._exit(1)
 
-
-# ---------- agent/admin separation ----------
 
 def test_agent_facade_exposes_no_admin_api(tmp_path: Path) -> None:
     for name in ('create_group', 'set_metadata', 'bootstrap_initial_dm',
@@ -228,8 +223,6 @@ def test_triggers_block_direct_update_delete(tmp_path: Path) -> None:
         conn.close()
 
 
-# ---------- actor membership ----------
-
 def test_cross_dm_read_write_blocked_with_generic_error(tmp_path: Path) -> None:
     _setup_dm(tmp_path, 'alice')
     _setup_dm(tmp_path, 'bob')
@@ -240,7 +233,6 @@ def test_cross_dm_read_write_blocked_with_generic_error(tmp_path: Path) -> None:
                lambda: AgentStore(tmp_path).read(bob, 'alice')):
         with pytest.raises(ConversationStoreError, match='unavailable'):
             op()
-    # Same generic message as a truly missing door: existence is not leaked.
     try:
         AgentStore(tmp_path).read(ConversationRef.dm('ghost'), 'ghost')
     except ConversationStoreError as exc:
@@ -257,7 +249,6 @@ def test_group_membership_and_former_member_blocked(tmp_path: Path) -> None:
         agents.append(group.ref, 'mallory', Message(role='user', content='x'))
     with pytest.raises(ConversationStoreError, match='unavailable'):
         agents.read(group.ref, 'mallory')
-    # Removing bob revokes both read and write.
     admin.set_metadata(group.ref, participants=['alice'])
     with pytest.raises(ConversationStoreError, match='unavailable'):
         agents.append(group.ref, 'bob', Message(role='user', content='late'))
@@ -319,8 +310,6 @@ def test_repeated_dm_bootstrap_intent_is_idempotent(tmp_path: Path) -> None:
     assert AgentStore(tmp_path).read(ref, 'alice').messages == content_before
 
 
-# ---------- concurrent init ----------
-
 def test_concurrent_init_16_processes_cold_root(tmp_path: Path) -> None:
     root = tmp_path / 'cold-root'
     root_instance_id = str(uuid.uuid4())
@@ -338,8 +327,6 @@ def test_concurrent_init_16_processes_cold_root(tmp_path: Path) -> None:
         conn.close()
 
 
-# ---------- file permissions / symlinks ----------
-
 def test_root_and_db_permissions_and_symlink_refusal(tmp_path: Path) -> None:
     root = tmp_path / 'vault'
     ref = _setup_dm(root)
@@ -350,7 +337,6 @@ def test_root_and_db_permissions_and_symlink_refusal(tmp_path: Path) -> None:
     linkdir.symlink_to(root)
     with pytest.raises(ConversationStoreError):
         AgentStore(linkdir).read(ref, 'coder')
-    # Symlinked DB file itself is refused.
     other = tmp_path / 'vault2'
     other.mkdir()
     (other / 'conversations.db').symlink_to(root / 'conversations.db')
@@ -361,12 +347,12 @@ def test_root_and_db_permissions_and_symlink_refusal(tmp_path: Path) -> None:
 def test_trusted_ancestor_symlink_allows_store_init_and_access(tmp_path: Path) -> None:
     real_user = tmp_path / 'var' / 'home' / 'user'
     real_user.mkdir(parents=True)
-    # Relative ancestor symlink (mirrors /home -> var/home on Fedora Atomic / Bazzite).
     (tmp_path / 'home').symlink_to(Path('var/home'))
-    # Absolute ancestor symlink and relative '..' symlink target.
     (tmp_path / 'abs_home').symlink_to(tmp_path / 'var' / 'home')
     nested = tmp_path / 'nested'
     nested.mkdir()
+    for ancestor in (tmp_path / 'var', tmp_path / 'var' / 'home', real_user, nested):
+        ancestor.chmod(0o755)
     (nested / 'rel_home').symlink_to(Path('../var/home'))
 
     store_via_rel = tmp_path / 'home' / 'user' / '.thyca'
@@ -381,7 +367,6 @@ def test_trusted_ancestor_symlink_allows_store_init_and_access(tmp_path: Path) -
         msgs = AgentStore(alias_root).read(ref, 'coder').messages
         assert [m.content for m in msgs] == ['via rel']
 
-    # The store root leaf itself must still be refused when it is a symlink.
     leaf_link = tmp_path / 'home' / 'user' / 'leaf_link'
     leaf_link.symlink_to(real_user / '.thyca')
     with pytest.raises(ConversationStoreError):
@@ -391,7 +376,6 @@ def test_trusted_ancestor_symlink_allows_store_init_and_access(tmp_path: Path) -
 def test_ancestor_symlink_rejects_untrusted_owner_loop_and_writable_target(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Symlink loop fails closed with ConversationStoreError.
     loop_a = tmp_path / 'loop_a'
     loop_b = tmp_path / 'loop_b'
     loop_a.symlink_to(loop_b)
@@ -399,7 +383,6 @@ def test_ancestor_symlink_rejects_untrusted_owner_loop_and_writable_target(
     with pytest.raises(ConversationStoreError):
         _initialize(loop_a / 'vault')
 
-    # Ancestor symlink pointing to a group/world-writable non-sticky directory fails closed.
     unsafe_dir = tmp_path / 'unsafe'
     unsafe_dir.mkdir(mode=0o777)
     unsafe_dir.chmod(0o777)
@@ -410,7 +393,6 @@ def test_ancestor_symlink_rejects_untrusted_owner_loop_and_writable_target(
     finally:
         unsafe_dir.chmod(0o700)
 
-    # Ancestor symlink owned by an untrusted UID fails closed.
     real_parent = tmp_path / 'real_parent'
     real_parent.mkdir()
     foreign_link = tmp_path / 'foreign_link'
@@ -455,7 +437,6 @@ def test_hardlinked_database_alias_is_refused_without_exposing_messages(tmp_path
 def test_sidecar_unlinked_mid_check_is_transient_not_corrupt(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from thyca.conversations.runtime.store import ConversationStore
 
     ref = _setup_dm(tmp_path, 'coder')
     AgentStore(tmp_path).append(ref, 'coder', Message(role='user', content='keep me'))
@@ -464,9 +445,6 @@ def test_sidecar_unlinked_mid_check_is_transient_not_corrupt(
         conn.execute('PRAGMA wal_checkpoint(TRUNCATE)')
     finally:
         conn.close()
-    # SQLite unlinks -wal/-shm on last close; empty placeholders force the
-    # guard to open -wal so the race seam below can fire. Reads never use
-    # these bytes: the checkpoint above moved all frames into the DB.
     for sidecar in ('conversations.db-wal', 'conversations.db-shm'):
         placeholder = tmp_path / sidecar
         if not placeholder.exists():
@@ -496,20 +474,12 @@ def test_sidecar_unlinked_mid_check_is_transient_not_corrupt(
     assert conversation.bots == ['coder']
     assert conversation.dm_bot == 'coder'
     assert fired == [True]
-    # Data survived: a fresh read with the real opener sees the message.
     assert [m.content for m in AgentStore(tmp_path).read(ref, 'coder').messages] == ['keep me']
 
 
 def test_hardlinked_sidecar_is_refused(tmp_path: Path) -> None:
-    # Fail-closed invariant: a hardlinked -wal (nlink>1) is refused even
-    # though the alias name stays outside the namespace scan. Asserted at
-    # the AgentStore layer, where the guard enforces it; ConversationRuntime mapping
-    # of the same scope is covered by the read_bots/read_dm test below.
     ref = _setup_dm(tmp_path, 'coder')
     AgentStore(tmp_path).append(ref, 'coder', Message(role='user', content='private fake'))
-    # SQLite unlinks -wal/-shm on last close; empty placeholders force both
-    # sidecars present so the read below cannot fail on wal/shm
-    # presence-mismatch retry exhaustion and must reach the nlink>1 refusal.
     for sidecar in ('conversations.db-wal', 'conversations.db-shm'):
         placeholder = tmp_path / sidecar
         if not placeholder.exists():
@@ -526,10 +496,6 @@ def test_hardlinked_sidecar_is_refused(tmp_path: Path) -> None:
 def test_read_bots_and_dm_surface_store_errors(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from thyca.conversations.runtime import ConversationCorrupt, ConversationNotFound
-    from thyca.conversations.runtime.store import ConversationStore
-    from thyca.conversations.store import runtime as runtime_module
-    from thyca.conversations.store.contracts import _local_error
 
     _setup_dm(tmp_path, 'coder')
     store = ConversationStore(tmp_path / 'sessions')
@@ -561,17 +527,14 @@ def test_read_bots_and_dm_surface_store_errors(
     assert store.read_dm(group_binding) is None
 
 
-# ---------- bad data ----------
-
 def test_oversized_and_bad_typed_content_rejected(tmp_path: Path) -> None:
-    from thyca.conversations.store import contracts as mod
 
     ref = _setup_dm(tmp_path)
     agents = AgentStore(tmp_path)
     with pytest.raises(ValueError):
         agents.append(ref, 'coder', Message(role='user', content='x' * (mod.MAX_CONTENT_LEN + 1)))
     with pytest.raises(ValueError):
-        agents.append(ref, 'coder', Message(role='user', content=None))  # type: ignore[arg-type]
+        agents.append(ref, 'coder', Message(role='user', content=None))  # type: ignore[arg-type] -- reason: intentional invalid-type or test-double argument
     with pytest.raises(ValueError):
         agents.append(ref, 'coder', Message(role='user', content='a\x00b'))
     with pytest.raises(ValueError):
@@ -592,9 +555,6 @@ def test_bad_metadata_shapes_and_sizes_rejected(tmp_path: Path) -> None:
     with pytest.raises(ConversationStoreError):
         admin.set_metadata(ConversationRef.dm('ghost'),
                            participants=['ghost'])
-    # A door carrying the removed title keys is invalid metadata now.
-    from thyca.conversations.store.contracts import validate_metadata
-
     with pytest.raises(ValueError):
         validate_metadata(ref, {'title': None, 'title_source': None,
                                 'participants': ['coder']})
@@ -604,7 +564,6 @@ def test_bad_metadata_shapes_and_sizes_rejected(tmp_path: Path) -> None:
 def test_deep_message_metadata_is_rejected_without_creating_root(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, meta_factory: Callable[[], dict],
 ) -> None:
-    from thyca.conversations.store import agent as agent_module
 
     root = tmp_path / 'missing-root'
     message = Message(role='user', content='safe text', meta=meta_factory())
@@ -630,8 +589,6 @@ def test_deep_message_metadata_is_rejected_without_creating_root(
 def test_open_conversation_factory_seams_intercept_valid_operations(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from thyca.conversations.store import admin as admin_module
-    from thyca.conversations.store import agent as agent_module
 
     ref = _setup_dm(tmp_path)
     agent_calls = []
@@ -684,9 +641,6 @@ def test_deep_message_metadata_cannot_be_written_then_read_as_corrupt(
 def test_corrupt_rows_raise_wrapped_errors(tmp_path: Path) -> None:
     ref = _setup_dm(tmp_path)
     AgentStore(tmp_path).append(ref, 'coder', Message(role='user', content='ok'))
-    # Direct UPDATE is blocked by the append-only trigger; simulate on-disk
-    # corruption the way an out-of-band writer could leave it (triggers live
-    # in the same file, so drop-then-rewrite models post-crash residue).
     conn = sqlite3.connect(str(tmp_path / 'conversations.db'))
     try:
         conn.execute('DROP TRIGGER no_update_messages')
@@ -739,8 +693,6 @@ def test_crash_mid_transaction_leaves_no_partial_row(tmp_path: Path) -> None:
     assert [m.content for m in AgentStore(tmp_path).read(ref, 'coder').messages] == ['first', 'second']
 
 
-# ---------- pagination ----------
-
 def test_read_pagination_uses_bound_logical_cursor(tmp_path: Path) -> None:
     ref = _setup_dm(tmp_path)
     agents = AgentStore(tmp_path)
@@ -766,13 +718,10 @@ def test_read_pagination_uses_bound_logical_cursor(tmp_path: Path) -> None:
     assert not empty.messages and empty.cursor == PageCursor(ref, 0, 10)
 
 
-# ---------- retention / compaction ----------
-
 @pytest.mark.parametrize('cutoff', ['z', '9999-02-30T00:00:00Z'])
 def test_invalid_purge_cutoff_is_rejected_before_creating_root(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cutoff: str,
 ) -> None:
-    from thyca.conversations.store import admin as admin_module
 
     root = tmp_path / 'missing-root'
     open_calls = []
@@ -812,7 +761,6 @@ def test_invalid_purge_cutoff_does_not_delete_messages(tmp_path: Path, cutoff: s
 
 
 def test_purge_before_cutoff_and_vacuum(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from thyca.conversations.store import agent as agent_module
 
     admin = _admin(tmp_path)
     ref = _setup_dm(tmp_path)
@@ -824,7 +772,6 @@ def test_purge_before_cutoff_and_vacuum(tmp_path: Path, monkeypatch: pytest.Monk
     removed = admin.purge_before('2020-01-01T00:00:00Z')
     assert removed == 1
     assert [m.content for m in agents.read(ref, 'coder').messages] == ['new']
-    # Triggers survive the admin purge.
     conn = sqlite3.connect(str(tmp_path / 'conversations.db'))
     try:
         with pytest.raises(sqlite3.IntegrityError):
@@ -845,15 +792,12 @@ def test_compact_summarizer_runs_outside_transaction(tmp_path: Path) -> None:
     proof: dict = {}
 
     def summarize(old: tuple) -> str:
-        # If compact held the write lock now, this racing append would block
-        # until summarize returns. It must finish first instead.
         done: dict = {}
 
         def racing() -> None:
             AgentStore(tmp_path).append(ref, 'coder', Message(role='user', content='racing'))
             done['ok'] = True
 
-        import threading
         thread = threading.Thread(target=racing)
         thread.start()
         thread.join(5)
@@ -865,7 +809,6 @@ def test_compact_summarizer_runs_outside_transaction(tmp_path: Path) -> None:
     assert summary.role == 'system' and 'summary of 4 messages' in (summary.content or '')
     got = agents.read(ref, 'coder')
     assert [m.content for m in got.messages] == [summary.content, 'msg-4', 'msg-5', 'racing']
-    # seq stays contiguous and unique; new appends keep working.
     conn = sqlite3.connect(str(tmp_path / 'conversations.db'))
     try:
         seqs = sorted(r[0] for r in conn.execute('SELECT seq FROM messages'))
@@ -881,12 +824,9 @@ def test_compact_summarizer_runs_outside_transaction(tmp_path: Path) -> None:
     assert called == []
 
 
-# ---------- transaction discipline ----------
-
 def test_writer_lock_timeout_is_sanitized_and_does_not_change_data(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from thyca.conversations.store import database as database_module
 
     ref = _setup_dm(tmp_path)
     agents = AgentStore(tmp_path)
@@ -919,7 +859,6 @@ def test_writer_lock_timeout_is_sanitized_and_does_not_change_data(
 def test_pre_commit_transaction_failures_are_sanitized_without_commit(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: str, phase: str,
 ) -> None:
-    from thyca.conversations.store import database as database_module
 
     ref = _setup_dm(tmp_path)
     agents = AgentStore(tmp_path)
@@ -1010,7 +949,6 @@ def test_pre_commit_transaction_failures_are_sanitized_without_commit(
 def test_commit_unknown_is_sanitized_and_does_not_retry_committed_append(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from thyca.conversations.store import database as database_module
 
     ref = _setup_dm(tmp_path)
     agents = AgentStore(tmp_path)
@@ -1024,7 +962,7 @@ def test_commit_unknown_is_sanitized_and_does_not_retry_committed_append(
 
         def execute(self, statement: str, *args):
             if statement.strip().upper() == 'COMMIT':
-                cursor = self._connection.execute(statement, *args)
+                self._connection.execute(statement, *args)
                 commits.append('committed')
                 raise sqlite3.OperationalError('injected post-commit error')
             return self._connection.execute(statement, *args)
@@ -1059,8 +997,7 @@ def test_no_callback_inside_transactions(tmp_path: Path) -> None:
                 continue
             for param in inspect.signature(fn).parameters.values():
                 if (cls, name, param.name) == (AdminStore, 'compact_through_seq', 'summarize'):
-                    continue  # single documented exception: runs outside any
-                # transaction (proven by the racing-append test above).
+                    continue
                 assert 'Callable' not in str(param.annotation) and 'callable' not in param.name.lower(), \
                     (cls.__name__, name, param.name)
 
@@ -1097,8 +1034,6 @@ def test_concurrent_group_appends_multiprocess_no_loss(tmp_path: Path) -> None:
 
 
 def test_legacy_conversations_root_fails_closed(tmp_path: Path) -> None:
-    from thyca.conversations.store.runtime import require_no_legacy_conversations
-
     require_no_legacy_conversations(tmp_path)
     conversations_dir = tmp_path / 'sessions'
     conversations_dir.mkdir()
@@ -1115,18 +1050,13 @@ def test_legacy_conversations_root_fails_closed(tmp_path: Path) -> None:
 def test_runtime_init_fails_closed_on_leftover_file_artifact(
     tmp_path: Path, artifact: str,
 ) -> None:
-    from thyca.conversations.store.runtime import ensure_runtime_store
-
     (tmp_path / artifact).write_bytes(b'leftover')
     with pytest.raises(ConversationStoreError):
         ensure_runtime_store(tmp_path)
-    # Nothing was initialized over the leftover state.
     assert not (tmp_path / 'conversations.db').exists()
 
 
 def test_runtime_init_fails_closed_on_leftover_marker_dir(tmp_path: Path) -> None:
-    from thyca.conversations.store.runtime import ensure_runtime_store
-
     (tmp_path / 'dm-markers').mkdir()
     with pytest.raises(ConversationStoreError):
         ensure_runtime_store(tmp_path)
@@ -1134,41 +1064,29 @@ def test_runtime_init_fails_closed_on_leftover_marker_dir(tmp_path: Path) -> Non
 
 
 def test_runtime_init_fresh_root_preserves_sentinels(tmp_path: Path) -> None:
-    from thyca.conversations.store.runtime import ensure_runtime_store
-
     sentinel = tmp_path / 'keep.txt'
     sentinel.write_text('keep me', encoding='utf-8')
     first = ensure_runtime_store(tmp_path)
     assert sentinel.read_text(encoding='utf-8') == 'keep me'
-    # Existing ready root audits and returns the same instance id.
     assert ensure_runtime_store(tmp_path) == first
 
 
 def test_group_append_actor_must_be_the_acting_bot(tmp_path: Path) -> None:
-    from thyca.conversations.store import (
-        RuntimeWriteIntent,
-        append_message,
-        append_server_message,
-    )
 
     _initialize(tmp_path)
     ref = _admin(tmp_path).create_group(['thyca', 'coder']).ref
     intent = RuntimeWriteIntent('actor-test')
-    # Second participant appends as itself, not as the first member.
     append_message(
         tmp_path, ref, 'coder',
         Message(role='assistant', content='from coder', meta={'bot_id': 'coder'}),
         intent=intent,
     )
-    # A non-member bot cannot write into the group at all.
     with pytest.raises(ConversationStoreError):
         append_message(
             tmp_path, ref, 'mallory',
             Message(role='assistant', content='intrusion', meta={'bot_id': 'mallory'}),
             intent=intent,
         )
-    # User rows carry no bot actor: the server-side path appends them
-    # without claiming any bot's membership.
     append_server_message(
         tmp_path, ref, Message(role='user', content='hello'), intent=intent,
     )
@@ -1196,20 +1114,16 @@ def test_admin_list_skips_corrupt_door_but_direct_read_fails(tmp_path: Path) -> 
 
 
 def test_runtime_paths_reject_timestamp_public_doors(tmp_path: Path) -> None:
-    from thyca.conversations.store.runtime import ensure_runtime_store, resolve_ref
-    from thyca.conversations.runtime.store import ConversationStore
-
     ensure_runtime_store(tmp_path)
     store = ConversationStore(tmp_path / 'sessions')
     legacy_id = '2026-01-01T00-00-00_ab12'
-    with pytest.raises(Exception):
+    with pytest.raises(ValueError, match='invalid conversation id'):
         resolve_ref(tmp_path, legacy_id)
-    with pytest.raises(Exception):
+    with pytest.raises(ConversationError, match='cannot create conversation'):
         store.create(legacy_id)
-    with pytest.raises(Exception):
+    with pytest.raises(ConversationNotFound):
         store.load(legacy_id)
-    # Public binding paths reject canonical timestamp ids outright.
-    with pytest.raises(Exception):
+    with pytest.raises(ConversationNotFound):
         store.path_for(legacy_id)
 
 
@@ -1224,11 +1138,9 @@ def test_prune_bot_from_groups_is_atomic_and_leaves_dm(tmp_path: Path) -> None:
     assert result.dissolved == ()
     listed, _more = admin.list(limit=50)
     by_id = {row.ref.id: tuple(row.participants) for row in listed}
-    # Groups keep the other members; the DM door is untouched.
     assert by_id[first.ref.id] == ('helper',)
     assert by_id[second.ref.id] == ('helper', 'third')
     assert by_id['coder'] == ('coder',)
-    # A bot in no group is a no-op.
     spare = admin.prune_bot_from_groups('ghost')
     assert spare.pruned == () and spare.dissolved == ()
 
@@ -1239,7 +1151,6 @@ def test_prune_dissolves_group_left_empty(tmp_path: Path) -> None:
     _bootstrap(tmp_path, 'coder')
     solo = admin.create_group(['coder', 'helper'])
     pair = admin.create_group(['coder', 'helper', 'third'])
-    # Shrink solo to one member so the next prune would empty it.
     admin.set_metadata(
         solo.ref, participants=['helper'],
     )
@@ -1251,8 +1162,6 @@ def test_prune_dissolves_group_left_empty(tmp_path: Path) -> None:
     assert result.pruned == (pair.ref.id,)
     listed, _more = admin.list(limit=50)
     by_id = {row.ref.id: tuple(row.participants) for row in listed}
-    # The empty group is gone; the survivor keeps its roster and messages,
-    # and the DM door is untouched.
     assert solo.ref.id not in by_id
     assert by_id[pair.ref.id] == ('coder', 'third')
     assert by_id['coder'] == ('coder',)
@@ -1261,7 +1170,6 @@ def test_prune_dissolves_group_left_empty(tmp_path: Path) -> None:
         agents.read(solo.ref, 'coder')
     conn = sqlite3.connect(str(tmp_path / 'conversations.db'))
     try:
-        # No door and no orphan messages remain for the dissolved group.
         assert conn.execute(
             'SELECT COUNT(*) FROM conversations WHERE kind=? AND id=?',
             ('group', solo.ref.id),
@@ -1270,7 +1178,6 @@ def test_prune_dissolves_group_left_empty(tmp_path: Path) -> None:
             'SELECT COUNT(*) FROM messages WHERE kind=? AND id=?',
             ('group', solo.ref.id),
         ).fetchone()[0] == 0
-        # The append-only trigger is back in place after the dissolve.
         with pytest.raises(sqlite3.IntegrityError):
             conn.execute("DELETE FROM messages WHERE kind=? AND id=?", ('group', pair.ref.id))
         conn.rollback()

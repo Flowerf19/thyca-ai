@@ -7,15 +7,50 @@ Fail-first: every test fails on the unfixed behavior and passes after repair.
 from __future__ import annotations
 
 import asyncio
+import asyncio as _aio
+import inspect as _inspect
 import json
 import os
+import os as _os
 import pathlib
 import subprocess
 import sys
+import tempfile
 import threading
+import unittest.mock as _mock
+import uuid
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pytest
+from seeded_config import seeded_config
+
+import thyca.conversations.store.write_adapter as _wa
+import thyca.skills.sharing as _sharing
+from thyca.app.chat_app import ChatApp
+from thyca.bots.admin_tools import AdminDeps as _AD
+from thyca.bots.admin_tools import register_admin_tools
+from thyca.bots.admin_tools.skill_share import register_skill_share_tools
+from thyca.bots.card import BotCard
+from thyca.bots.context import BotTurnContext, BotTurnScope
+from thyca.bots.registry import BotRegistry
+from thyca.configs import load, save
+from thyca.conversations.runtime.manager import ConversationManager
+from thyca.conversations.store import AdminStore, RootInitializationIntent, RuntimeWriteIntent
+from thyca.conversations.store.contracts import ConversationStoreError
+from thyca.conversations.store.write_adapter import set_conversation_metadata
+from thyca.core.protocol import Message, ToolCall
+from thyca.llms.llm_base import ChatReply
+from thyca.memories.active import ActiveMemory
+from thyca.memories.identity import bind_bot_id, reset_bot_id
+from thyca.skills.sharing import SharingService, read_skill_checked, write_skill_checked
+from thyca.skills.store import SkillStore
+from thyca.tools.builtin import register_file_tools
+from thyca.tools.gateway import ToolGateway
+from thyca.tools.path_guard import PathDenied, PathGuard
+from thyca.tools.registry import ToolRegistry
+from thyca.tools.task_store import TaskStore
 
 
 def _skill_body(name: str, desc: str) -> str:
@@ -30,35 +65,21 @@ def _write_team(root: Path, name: str, desc: str = "team") -> Path:
 
 
 def _registry(tmp_path: Path):
-    from thyca.bots.registry import BotRegistry
     reg = BotRegistry(tmp_path)
     reg.ensure_thyca()
     return reg
 
 
 def _gateway_with_file_tools(tmp_path: Path):
-    from thyca.tools.builtin import register_file_tools
-    from thyca.tools.gateway import ToolGateway
-    from thyca.tools.path_guard import PathGuard
-    from thyca.tools.registry import ToolRegistry
-    from thyca.tools.task_store import TaskStore
     registry = ToolRegistry()
     register_file_tools(registry, PathGuard(tmp_path), None)
     return ToolGateway(registry, TaskStore())
 
 
-# T1: missing identity denied, state unchanged.
 def test_t1_missing_identity_denied_state_unchanged(tmp_path: Path) -> None:
-    import asyncio as _aio
-    from thyca.memories.identity import bind_bot_id, reset_bot_id
-    from thyca.skills.sharing import SharingService
-    from thyca.tools.gateway import ToolGateway
-    from thyca.tools.registry import ToolRegistry
-    from thyca.tools.task_store import TaskStore
-    from thyca.core.protocol import ToolCall
+
     _registry(tmp_path)
     _write_team(tmp_path, "weather")
-    from thyca.bots.admin_tools.skill_share import register_skill_share_tools
     registry = ToolRegistry()
     register_skill_share_tools(registry, SharingService(tmp_path))
     gateway = ToolGateway(registry, TaskStore())
@@ -83,11 +104,8 @@ def test_t1_missing_identity_denied_state_unchanged(tmp_path: Path) -> None:
     assert SharingService(tmp_path).list_shared() == ["weather"]
 
 
-# T2: reserved tmp denied lexically and via alias.
 def test_t2_reserved_tmp_denied_lexical_and_alias(tmp_path: Path) -> None:
-    import tempfile
-    from thyca.memories.identity import bind_bot_id, reset_bot_id
-    from thyca.tools.path_guard import PathDenied, PathGuard
+
     guard = PathGuard(tmp_path)
     for name in ("skill-sharing.json", "skill-sharing.lock", "skill-sharing.json.tmp"):
         with pytest.raises(PathDenied):
@@ -115,17 +133,12 @@ def test_t2_reserved_tmp_denied_lexical_and_alias(tmp_path: Path) -> None:
         guard.deny_write(str(link_tmp))
 
 
-# T2 exploit: ordinary write's implicit temp must not follow a symlink.
 def test_t2_ordinary_tmp_symlink_cannot_overwrite_grants(tmp_path: Path) -> None:
-    import asyncio as _aio
-    from thyca.core.protocol import ToolCall
-    from thyca.memories.identity import bind_bot_id, reset_bot_id
-    from thyca.skills.sharing import SharingService
+
     _registry(tmp_path)
     _write_team(tmp_path, "weather")
     SharingService(tmp_path).share("weather")
     assert SharingService(tmp_path).list_shared() == ["weather"]
-    # Attacker plants note.tmp -> skill-sharing.json, then a child writes note.
     note_tmp = tmp_path / "note.tmp"
     try:
         note_tmp.symlink_to(tmp_path / "skill-sharing.json")
@@ -147,15 +160,11 @@ def test_t2_ordinary_tmp_symlink_cannot_overwrite_grants(tmp_path: Path) -> None
     assert res.is_error, f"temp-alias write must fail, got {res.content!r}"
     assert SharingService(tmp_path).list_shared() == ["weather"]
     assert not (tmp_path / "note").exists()
-    # The preexisting temp is never deleted or followed.
     assert note_tmp.is_symlink(), "preexisting user temp must be preserved"
 
 
-# T2 ordinary edit uses the same safe temp.
 def test_t2_ordinary_edit_tmp_symlink_blocked(tmp_path: Path) -> None:
-    import asyncio as _aio
-    from thyca.core.protocol import ToolCall
-    from thyca.memories.identity import bind_bot_id, reset_bot_id
+
     (tmp_path / "note").write_text("hello world", encoding="utf-8")
     note_tmp = tmp_path / "note.tmp"
     try:
@@ -180,11 +189,8 @@ def test_t2_ordinary_edit_tmp_symlink_blocked(tmp_path: Path) -> None:
     assert note_tmp.is_symlink(), "preexisting user temp must be preserved"
 
 
-# T2: preexisting ordinary temp is never deleted or overwritten.
 def test_t2_preexisting_tmp_never_deleted(tmp_path: Path) -> None:
-    import asyncio as _aio
-    from thyca.core.protocol import ToolCall
-    from thyca.memories.identity import bind_bot_id, reset_bot_id
+
     (tmp_path / "note.tmp").write_text("user temp bytes", encoding="utf-8")
     gateway = _gateway_with_file_tools(tmp_path)
 
@@ -203,13 +209,8 @@ def test_t2_preexisting_tmp_never_deleted(tmp_path: Path) -> None:
     assert not (tmp_path / "note").exists()
 
 
-# T2 publication interleaving: hook after the real tmp is prepared,
-# immediately before replace; child write/edit attempts must all fail.
 def test_t2_publication_interleaving_tmp_not_substituted(tmp_path: Path, monkeypatch) -> None:
-    import asyncio as _aio
-    from thyca.core.protocol import ToolCall
-    from thyca.memories.identity import bind_bot_id, reset_bot_id
-    from thyca.skills.sharing import SharingService
+
     _registry(tmp_path)
     _write_team(tmp_path, "weather")
     _write_team(tmp_path, "evil", "evil")
@@ -233,15 +234,13 @@ def test_t2_publication_interleaving_tmp_not_substituted(tmp_path: Path, monkeyp
     def _writer():
         try:
             result["ok"] = svc.share("weather")
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             result["error"] = exc
 
     th = threading.Thread(target=_writer)
     th.start()
     try:
         assert entered.wait(timeout=15), "writer never reached pre-replace hook"
-        # The real tmp is already prepared and fsynced; all three child
-        # substitution attempts must fail.
         async def _child_write(path, content):
             tok = bind_bot_id("coder")
             try:
@@ -277,12 +276,8 @@ def test_t2_publication_interleaving_tmp_not_substituted(tmp_path: Path, monkeyp
     assert SharingService(tmp_path).list_shared() == ["weather"]
 
 
-# T3: outer alias into protected skill denied for Thyca; inner alias denied.
 def test_t3_outer_alias_denied_for_thyca(tmp_path: Path) -> None:
-    import tempfile
-    from thyca.memories.identity import bind_bot_id, reset_bot_id
-    from thyca.skills.sharing import SharingService
-    from thyca.tools.path_guard import PathDenied, PathGuard
+
     (tmp_path / "skills-team" / "weather").mkdir(parents=True)
     (tmp_path / "skills-team" / "weather" / "SKILL.md").write_text(_skill_body("weather", "shared"), encoding="utf-8")
     SharingService(tmp_path).share("weather")
@@ -318,8 +313,6 @@ def test_t3_outer_alias_denied_for_thyca(tmp_path: Path) -> None:
 
 
 def test_t3_inner_symlink_still_denied_and_sentinel_kept(tmp_path: Path) -> None:
-    from thyca.memories.identity import bind_bot_id, reset_bot_id
-    from thyca.tools.path_guard import PathDenied, PathGuard
     _registry(tmp_path)
     _write_team(tmp_path, "weather", "real")
     sentinel = tmp_path / "sentinel.md"
@@ -330,7 +323,6 @@ def test_t3_inner_symlink_still_denied_and_sentinel_kept(tmp_path: Path) -> None
         pytest.skip("symlinks unsupported")
     (tmp_path / "outside").mkdir(exist_ok=True)
     (tmp_path / "outside" / "SKILL.md").write_text(_skill_body("evil", "evil"), encoding="utf-8")
-    from thyca.skills.sharing import SharingService
     try:
         SharingService(tmp_path).share("evildir")
     except ValueError:
@@ -345,9 +337,7 @@ def test_t3_inner_symlink_still_denied_and_sentinel_kept(tmp_path: Path) -> None
     assert sentinel.read_text() == "keep"
 
 
-# T4: FIFO final open must fail promptly with a precise error (bounded).
 def test_t4_fifo_checked_read_fails_promptly(tmp_path: Path) -> None:
-    import os
     fifo = tmp_path / "skills-team" / "weather" / "SKILL.md"
     fifo.parent.mkdir(parents=True, exist_ok=True)
     try:
@@ -371,7 +361,6 @@ def test_t4_fifo_checked_read_fails_promptly(tmp_path: Path) -> None:
         f"fifo must be rejected as non-regular, got stderr: {proc.stderr!r}")
 
 
-# T4: validation bypass must not help — the pinned open still fails closed.
 def test_t4_parent_swap_still_fails_with_bypassed_validation(tmp_path: Path, monkeypatch) -> None:
     _write_team(tmp_path, "weather", "real body")
     link_path = tmp_path / "skills-team" / "weather" / "SKILL.md"
@@ -387,7 +376,6 @@ def test_t4_parent_swap_still_fails_with_bypassed_validation(tmp_path: Path, mon
         real_dir.rename(weather_dir)
         pytest.skip("symlinks unsupported")
     try:
-        import thyca.skills.sharing as _sharing
         monkeypatch.setattr(_sharing, "_has_symlink_component", lambda *a, **k: False)
         with pytest.raises(ValueError):
             _sharing.read_skill_checked(tmp_path, link_path)
@@ -409,37 +397,28 @@ def test_t4_symlink_swap_before_open_denied(tmp_path: Path) -> None:
         link_path.symlink_to(outside)
     except OSError:
         pytest.skip("symlinks unsupported")
-    from thyca.skills.sharing import read_skill_checked
     with pytest.raises(ValueError):
         read_skill_checked(tmp_path, link_path)
 
 
-# T4: missing SKILL.md builds its diagnostic without reopening the pathname.
 def test_t4_missing_diagnostic_without_reopen(tmp_path: Path, monkeypatch) -> None:
-    from thyca.skills.sharing import SharingService
-    from thyca.skills.store import SkillStore
     _registry(tmp_path)
     _write_team(tmp_path, "weather", "public team")
     SharingService(tmp_path).share("weather")
     (tmp_path / "skills-team" / "weather" / "SKILL.md").unlink()
     calls: list = []
-    orig_meta = SkillStore._meta
 
     def _boom(self, skill_dir):
         calls.append(skill_dir.name)
         raise AssertionError("missing path must not be reopened")
 
     monkeypatch.setattr(SkillStore, "_meta", _boom)
-    from thyca.bots.registry import BotRegistry
     index = BotRegistry(tmp_path).skill_index_text("coder")
     assert calls == [], f"_meta reopened for missing file: {calls}"
     assert "weather (SKILL.md invalid: missing SKILL.md)" in index
 
 
-# T4: dangling symlink at the missing path stays excluded, never injected.
 def test_t4_dangling_symlink_missing_excluded(tmp_path: Path) -> None:
-    from thyca.bots.card import BotCard
-    from thyca.skills.sharing import SharingService
     reg = _registry(tmp_path)
     reg.create(BotCard(bot_id="coder", name="coder", role="C", description="D", persona="P"))
     reg.create(BotCard(bot_id="helper", name="helper", role="H", description="E", persona="Q"))
@@ -461,10 +440,7 @@ def test_t4_dangling_symlink_missing_excluded(tmp_path: Path) -> None:
     assert "weather" not in index, f"dangling link must be excluded, got: {index!r}"
 
 
-# T4: undecodable private skill keeps its diagnostic and its precedence.
 def test_t4_undecodable_private_keeps_diagnostic_and_precedence(tmp_path: Path) -> None:
-    from thyca.bots.card import BotCard
-    from thyca.skills.sharing import SharingService
     reg = _registry(tmp_path)
     reg.create(BotCard(bot_id="coder", name="coder", role="C", description="D", persona="P"))
     reg.create(BotCard(bot_id="helper", name="helper", role="H", description="E", persona="Q"))
@@ -484,21 +460,10 @@ def test_t4_undecodable_private_keeps_diagnostic_and_precedence(tmp_path: Path) 
     assert "shared-desc" not in index2
 
 
-# T4 boundary: swap exactly between validation and descriptor open.
-# Skill names match, so only the checked open (not a name mismatch) stops
-# the injection. Both era hooks are armed: the checked-tree hook fires in
-# the validation-to-open window (excluded fail-closed); the legacy hook
-# fires in the legacy check-to-read window and injects on old code (red).
 def test_t4_validation_open_swap_matching_name_excluded(tmp_path: Path, monkeypatch) -> None:
-    from thyca.bots.card import BotCard
-    from thyca.skills.sharing import SharingService
-    import thyca.skills.sharing as _sharing
-    from thyca.skills.store import SkillStore
     reg = _registry(tmp_path)
     reg.create(BotCard(bot_id="coder", name="coder", role="C", description="D", persona="P"))
     reg.create(BotCard(bot_id="helper", name="helper", role="H", description="E", persona="Q"))
-    # Private skill whose frontmatter name MATCHES the team folder: no
-    # name-mismatch rejection can save an unchecked read here.
     priv = tmp_path / "bots" / "helper" / "skills" / "secret"
     priv.mkdir(parents=True, exist_ok=True)
     (priv / "SKILL.md").write_text(_skill_body("weather", "MARKER-EVIL-7Z"), encoding="utf-8")
@@ -515,16 +480,12 @@ def test_t4_validation_open_swap_matching_name_excluded(tmp_path: Path, monkeypa
         team_md.symlink_to(priv / "SKILL.md")
 
     def _hooked_read(root, lexical):
-        # Fires after _metas_for validation (lstat) and before the real
-        # descriptor open: the exact validation-to-open window.
         if not swapped["done"] and Path(lexical) == team_md:
             swapped["done"] = "checked"
             _do_swap()
         return real_read(root, lexical)
 
     def _hooked_meta(self, skill_dir):
-        # Legacy check-to-read window (old code reads via _meta after its
-        # own listing validation): swapping here injects on old code.
         if (not swapped["done"] and skill_dir.name == "weather"
                 and skill_dir.parent.name == "skills-team"):
             swapped["done"] = "legacy"
@@ -537,21 +498,14 @@ def test_t4_validation_open_swap_matching_name_excluded(tmp_path: Path, monkeypa
     assert swapped["done"], "a hook must fire in a validation-to-open window"
     assert "MARKER-EVIL-7Z" not in index, "swapped link must not inject"
     assert "weather" not in index, f"swapped door must be excluded fail-closed, got: {index!r}"
-    # Old-HEAD oracle: the plain reopening reader follows the swapped link
-    # and, with matching names, indexes the private marker. Uses the real
-    # _meta (unhooked) to document the prevented leak mechanism.
     monkeypatch.undo()
     oracle = SkillStore(tmp_path)._meta(team_md.parent)
     assert oracle.ok and "MARKER-EVIL-7Z" in oracle.description, (
         "unchecked read must demonstrate the prevented injection")
 
 
-# T4 boundary: swap the pathname after the descriptor is already open.
-# The pinned descriptor still yields the pre-open allowed bytes (or the
-# open itself fails safe); swapped evil bytes must never surface.
 def test_t4_after_open_swap_reads_pinned_content(tmp_path: Path, monkeypatch) -> None:
-    import os as _os
-    import thyca.skills.sharing as _sharing
+
     d = tmp_path / "skills-team" / "weather"
     d.mkdir(parents=True, exist_ok=True)
     md = d / "SKILL.md"
@@ -571,7 +525,6 @@ def test_t4_after_open_swap_reads_pinned_content(tmp_path: Path, monkeypatch) ->
     def _fstat(fd):
         if state["leaf_open"] and not state["swapped"]:
             state["swapped"] = True
-            # Rename-swap AFTER open, BEFORE validation/read: new inode.
             _os.replace(str(evil), str(md))
         return real_fstat(fd)
 
@@ -582,25 +535,17 @@ def test_t4_after_open_swap_reads_pinned_content(tmp_path: Path, monkeypatch) ->
     except ValueError:
         text = None
     assert state["swapped"], "swap must land after open, before read"
-    # Fail safe: the replaced (unlinked) descriptor must either yield the
-    # pinned pre-open bytes or raise; the swapped evil bytes must never
-    # surface through the pinned descriptor.
     assert text is None or text == allowed, (
         f"must return pinned bytes or fail safe, got: {text!r}")
     if text is not None:
         assert "EVIL-SWAPPED-9Q" not in text
-    # Control: swapping an unrelated sibling after open leaves the pinned
-    # read of the real target intact.
     md.write_text(allowed, encoding="utf-8")
     sib = d / "other.md"
     sib.write_text("sibling", encoding="utf-8")
     assert _sharing.read_skill_checked(tmp_path, md) == allowed
 
 
-# T4: BOM bytes survive native read/edit; the index still validates.
 def test_t4_bom_native_preserved_but_index_valid(tmp_path: Path) -> None:
-    from thyca.bots.card import BotCard
-    from thyca.skills.sharing import SharingService, read_skill_checked
     reg = _registry(tmp_path)
     reg.create(BotCard(bot_id="coder", name="coder", role="C", description="D", persona="P"))
     d = tmp_path / "skills-team" / "weather"
@@ -613,9 +558,7 @@ def test_t4_bom_native_preserved_but_index_valid(tmp_path: Path) -> None:
     assert "withbom" in index, f"BOM-headed skill must still validate, got: {index!r}"
 
 
-# T4/T3 skill write: encode-first, own-temp cleanup, preexisting temp kept.
 def test_skill_write_encode_first_and_cleanup(tmp_path: Path) -> None:
-    from thyca.skills.sharing import write_skill_checked
     own = tmp_path / "bots" / "coder" / "skills" / "mine"
     own.mkdir(parents=True, exist_ok=True)
     (own / "SKILL.md").write_text(_skill_body("mine", "v1"), encoding="utf-8")
@@ -625,7 +568,6 @@ def test_skill_write_encode_first_and_cleanup(tmp_path: Path) -> None:
     assert "v1" in (own / "SKILL.md").read_text(encoding="utf-8")
     write_skill_checked(tmp_path, own / "SKILL.md", _skill_body("mine", "v2"))
     assert "v2" in (own / "SKILL.md").read_text(encoding="utf-8")
-    # Preexisting user temp blocks and is preserved.
     (own / "SKILL.md.tmp").write_text("user temp", encoding="utf-8")
     with pytest.raises(ValueError):
         write_skill_checked(tmp_path, own / "SKILL.md", _skill_body("mine", "v3"))
@@ -634,8 +576,6 @@ def test_skill_write_encode_first_and_cleanup(tmp_path: Path) -> None:
 
 
 def test_skill_write_fault_injection_cleans_own_tmp(tmp_path: Path, monkeypatch) -> None:
-    import os as _os
-    from thyca.skills import sharing as _sharing
     own = tmp_path / "bots" / "coder" / "skills" / "mine"
     own.mkdir(parents=True, exist_ok=True)
     (own / "SKILL.md").write_text(_skill_body("mine", "v1"), encoding="utf-8")
@@ -658,11 +598,8 @@ def test_skill_write_fault_injection_cleans_own_tmp(tmp_path: Path, monkeypatch)
     assert "v2" in (own / "SKILL.md").read_text(encoding="utf-8")
 
 
-# T5: skip flag avoids the global scan; standalone default still scans.
 def test_t5_skip_flag_avoids_global_scan(tmp_path: Path) -> None:
-    from datetime import datetime
-    from zoneinfo import ZoneInfo
-    from thyca.memories.active import ActiveMemory
+
     mem = ActiveMemory(tmp_path)
     mem.ensure_files(datetime.now(ZoneInfo("UTC")))
     state = mem.open_session(datetime.now(ZoneInfo("UTC")))
@@ -673,7 +610,7 @@ def test_t5_skip_flag_avoids_global_scan(tmp_path: Path) -> None:
         calls.append(1)
         return orig()
 
-    mem._skills.index_text = _counted  # type: ignore[method-assign]
+    mem._skills.index_text = _counted  # type: ignore[method-assign] -- reason: test spy method replacement
     try:
         snap = mem.refresh(state, datetime.now(ZoneInfo("UTC")), conversation_id=None, reader="thyca", skip_skills=True)
         assert snap.skills == ""
@@ -685,14 +622,11 @@ def test_t5_skip_flag_avoids_global_scan(tmp_path: Path) -> None:
         assert calls == [1]
         assert isinstance(snap3.skills, str)
     finally:
-        mem._skills.index_text = orig  # type: ignore[method-assign]
+        mem._skills.index_text = orig  # type: ignore[method-assign] -- reason: test spy method replacement
 
 
 def _echo_app(tmp_path: Path, reply_text: str = "ECHO-REPLY"):
-    from seeded_config import seeded_config
-    from thyca.configs import load, save
-    from thyca.app.chat_app import ChatApp
-    from thyca.llms.llm_base import ChatReply
+
 
     class _Echo:
         async def chat(self, messages, tools=None):
@@ -703,10 +637,7 @@ def _echo_app(tmp_path: Path, reply_text: str = "ECHO-REPLY"):
     return ChatApp(tmp_path, load(tmp_path / "config.json"), connect=_Echo())
 
 
-# T5: the live runtime turn skips the global scan (behavioral, via spy).
 def test_t5_runtime_turn_skips_global_scan(tmp_path: Path, monkeypatch) -> None:
-    from thyca.bots.card import BotCard
-    from thyca.skills.store import SkillStore
     app = _echo_app(tmp_path)
     try:
         app._bots.create(BotCard(bot_id="coder", name="coder", role="C", description="D", persona="P"))
@@ -737,10 +668,7 @@ def test_t5_runtime_turn_skips_global_scan(tmp_path: Path, monkeypatch) -> None:
         app.shutdown()
 
 
-# T5: the live context meter skips the global scan (behavioral, via spy).
 def test_t5_meter_skips_global_scan(tmp_path: Path, monkeypatch) -> None:
-    from thyca.bots.card import BotCard
-    from thyca.skills.store import SkillStore
     app = _echo_app(tmp_path)
     try:
         app._bots.create(BotCard(bot_id="coder", name="coder", role="C", description="D", persona="P"))
@@ -771,22 +699,14 @@ def test_t5_meter_skips_global_scan(tmp_path: Path, monkeypatch) -> None:
         app.shutdown()
 
 
-# T6: nonmember sender and unknown destinations fail closed.
 def test_t6_delegate_rejects_nonmember_sender(tmp_path: Path) -> None:
-    from seeded_config import seeded_config
-    from thyca.configs import load, save
-    from thyca.app.chat_app import ChatApp
-    from thyca.bots.card import BotCard
+
     save(seeded_config(), tmp_path / "config.json")
     app = ChatApp(tmp_path, load(tmp_path / "config.json"))
     try:
         app._bots.create(BotCard(bot_id="coder", name="coder", role="C", description="D", persona="P"))
         app._bots.create(BotCard(bot_id="helper", name="helper", role="H", description="E", persona="Q"))
         room = app.create(bots=["coder", "helper"])["conversation_id"]
-        from thyca.bots.admin_tools import register_admin_tools
-        from thyca.tools.registry import ToolRegistry
-        from thyca.memories.identity import bind_bot_id, reset_bot_id
-        from thyca.bots.admin_tools import AdminDeps as _AD
         deps = _AD(app._bots, app._runtime, app.job_facade, room_bots=app.room_bots, room_dm_owner=app._room_dm_owner)
         tool_reg = ToolRegistry()
         register_admin_tools(tool_reg, deps)
@@ -820,23 +740,8 @@ def test_t6_delegate_rejects_nonmember_sender(tmp_path: Path) -> None:
         app.shutdown()
 
 
-# T6 positive: an earlier real DM turn persists a unique private marker in
-# Thyca's canonical WorkspaceTimeline; a later real DM turn delegates a
-# chosen payload to a separate member group. The marker must reach the
-# sender's later model input (positive control: canonical history feeds the
-# prompt, so this fails if the marker was never persisted), must stay out
-# of the recipient's model input (no automatic DM forwarding), and must
-# stay out of the group transcript while the chosen request/reply publish.
-# Driven entirely through app.turn on the DM with a recording fake
-# provider: no direct _claimed call, no stubs bypassing model input.
 def test_t6_dm_turn_delegate_to_group_publishes_only_chosen(tmp_path: Path) -> None:
-    from thyca.bots.card import BotCard
-    from thyca.conversations.runtime.manager import ConversationManager
-    from thyca.core.protocol import Message, ToolCall
-    from thyca.llms.llm_base import ChatReply
-    from seeded_config import seeded_config
-    from thyca.configs import load, save
-    from thyca.app.chat_app import ChatApp
+
 
     CHOSEN = "chosen delegation payload DM2G-5K"
     DM_MARKER = "DM-PRIVATE-MARKER DM2G-8M"
@@ -853,9 +758,6 @@ def test_t6_dm_turn_delegate_to_group_publishes_only_chosen(tmp_path: Path) -> N
                 str(m.content or "") for m in messages if m.role == "tool")
             seen = text + "\n---TOOL---\n" + tool_text
             self.prompts.append(seen)
-            # The delegation tool result ends the sender flow exactly once:
-            # check it BEFORE the trigger (which persists in history) so the
-            # sender does not re-delegate in a loop.
             if any(getattr(m, "role", None) == "tool" for m in messages):
                 return ChatReply(content="OUTER-DONE", model="m",
                                  usage={"prompt_tokens": 1, "completion_tokens": 1,
@@ -884,39 +786,29 @@ def test_t6_dm_turn_delegate_to_group_publishes_only_chosen(tmp_path: Path) -> N
     try:
         app._bots.create(BotCard(bot_id="coder", name="coder", role="C", description="D", persona="P"))
         app._bots.create(BotCard(bot_id="helper", name="helper", role="H", description="E", persona="Q"))
-        # Resolve the DM first: bot_dm prunes blank conversations, so the group
-        # must be created afterwards (and seeded non-blank).
         dm = app.bot_dm("thyca")["conversation_id"]
         room = app.create(bots=["coder", "thyca"])["conversation_id"]
         llm.group_id = room
         mgr = ConversationManager(store=app._conversations.store)
         mgr.load(room)
         mgr.append(Message(role="user", content="group seed", ts="2026-10-26T09:00:00Z"))
-        # Earlier real DM turn: persist the unique private marker in
-        # Thyca's canonical WorkspaceTimeline (not the public projection).
         first = app.turn(dm, ESTABLISH)
         assert "MARKER-NOTED" in str(first.get("reply", "")), (
             f"establishing turn must run, got {first!r}")
-        # Later real DM turn: delegate the chosen payload to the group.
         detail = app.turn(dm, "please delegate chosen work to the group")
         assert detail.get("reply") == "OUTER-DONE", (
             f"sender turn must finish exactly once, got {detail!r}")
-        # Sender positive control: the marker persisted canonically must
-        # reach Thyca's later model input. Fails if the marker was absent.
         sender_prompts = [pr for pr in llm.prompts
                           if DM_MARKER in pr
                           and "please delegate chosen work to the group" in pr
                           and CHOSEN not in pr]
         assert sender_prompts, (
             "marker must reach the sender's later model input via history")
-        # Recipient runs: exactly the prompt carrying the chosen payload
-        # (and no DM marker) must exist; the flow cannot pass without it.
         recipient_prompts = [pr for pr in llm.prompts
                              if CHOSEN in pr and REPLY not in pr]
         assert recipient_prompts, "recipient turn must run with the chosen payload"
         assert all(DM_MARKER not in pr for pr in recipient_prompts), (
             "recipient model input must not contain the DM marker")
-        # Group membership is valid and unchanged.
         assert sorted(app.room_bots(room)) == ["coder", "thyca"]
         mgr.load(room)
         grows = list(mgr.current.messages)
@@ -930,7 +822,6 @@ def test_t6_dm_turn_delegate_to_group_publishes_only_chosen(tmp_path: Path) -> N
             f"exactly one delegate reply must publish, got {len(results)}")
         assert all(DM_MARKER not in (m.content or "") for m in grows), (
             "private DM marker must never reach the group")
-        # The DM transcript keeps its private marker.
         mgr.load(dm)
         drows = list(mgr.current.messages)
         assert any(DM_MARKER in (m.content or "") for m in drows), (
@@ -939,17 +830,12 @@ def test_t6_dm_turn_delegate_to_group_publishes_only_chosen(tmp_path: Path) -> N
         app.shutdown()
 
 
-# T7: request rows need sender+recipient same-transaction; result stays recipient.
 def test_t7_request_needs_sender_and_recipient_same_txn(tmp_path: Path) -> None:
-    import uuid
-    from thyca.conversations.store import AdminStore, RootInitializationIntent, RuntimeWriteIntent
-    from thyca.conversations.store.contracts import ConversationStoreError
-    from thyca.core.protocol import Message
+
     root_id = str(uuid.uuid5(uuid.NAMESPACE_URL, str(tmp_path.absolute())))
     AdminStore(tmp_path).initialize(RootInitializationIntent(root_id))
     group = AdminStore(tmp_path).create_group(["alice", "bob"]).ref
-    from thyca.conversations.store import write_adapter as _wa
-    import inspect as _inspect
+
     sig = _inspect.signature(_wa.append_message)
     assert "require_participant" in sig.parameters, "append path must expose same-txn extra participant check"
     with pytest.raises(ConversationStoreError):
@@ -957,7 +843,6 @@ def test_t7_request_needs_sender_and_recipient_same_txn(tmp_path: Path) -> None:
                            intent=RuntimeWriteIntent("t"), require_participant="bob")
     AdminStore(tmp_path).delete(group)
     group2 = AdminStore(tmp_path).create_group(["alice", "bob"]).ref
-    from thyca.conversations.store.write_adapter import set_conversation_metadata
     set_conversation_metadata(tmp_path, group2, intent=RuntimeWriteIntent("t"), actor="alice",
                               participants=["alice"])
     with pytest.raises(ConversationStoreError):
@@ -973,21 +858,14 @@ def test_t7_request_needs_sender_and_recipient_same_txn(tmp_path: Path) -> None:
 
 
 def _deliver_claimed(app, envelope, sender: str, room: str):
-    # Leased entry point: holds the recipient workspace lease, then records
-    # and runs the recipient turn. Direct claimed calls bypass the lease and
-    # cannot run a real turn.
-    import asyncio as _aio
-    from thyca.bots.context import BotTurnContext, BotTurnScope
+
     scope = BotTurnScope(store=app._conversations.store, act=app._act, tools=app._tools,
                          memory=app._memory, state=app._state, zone=app._zone)
     ctx = BotTurnContext(sender_id=sender, room_id=room, scope=scope, turn_cfg=app._current_cfg())
     return _aio.run(app._deliver_envelope(envelope, ctx))
 
 
-# T7 positive: real member publication records sender-stamped request + result.
 def test_t7_real_publication_records_request_and_result(tmp_path: Path) -> None:
-    from thyca.bots.card import BotCard
-    from thyca.conversations.runtime.manager import ConversationManager
     app = _echo_app(tmp_path, reply_text="ECHO-7-DONE")
     try:
         app._bots.create(BotCard(bot_id="coder", name="coder", role="C", description="D", persona="P"))
@@ -1011,11 +889,7 @@ def test_t7_real_publication_records_request_and_result(tmp_path: Path) -> None:
         app.shutdown()
 
 
-# T7 race: sender removed after enqueue but before request insert fails the row, reply still returns.
 def test_t7_sender_removal_race_skips_request_but_returns_reply(tmp_path: Path) -> None:
-    from thyca.bots.card import BotCard
-    from thyca.conversations.runtime.manager import ConversationManager
-    import thyca.conversations.store.write_adapter as _wa
     app = _echo_app(tmp_path, reply_text="ECHO-RACE-DONE")
     try:
         app._bots.create(BotCard(bot_id="coder", name="coder", role="C", description="D", persona="P"))
@@ -1035,7 +909,6 @@ def test_t7_sender_removal_race_skips_request_but_returns_reply(tmp_path: Path) 
         bus.register("helper")
         envelope = bus.send(sender="coder", recipient="helper", kind="message",
                             conversation_id=room, payload="doomed request")
-        import unittest.mock as _mock
         with _mock.patch.object(_wa, "append_message", _removing_append):
             reply = _deliver_claimed(app, envelope, "coder", room)
         assert reply == "ECHO-RACE-DONE", f"produced reply must still return, got {reply!r}"
@@ -1050,11 +923,7 @@ def test_t7_sender_removal_race_skips_request_but_returns_reply(tmp_path: Path) 
         app.shutdown()
 
 
-# T7 race: recipient removed after enqueue but before request insert fails the row.
 def test_t7_recipient_removal_race_skips_request(tmp_path: Path) -> None:
-    from thyca.bots.card import BotCard
-    from thyca.conversations.runtime.manager import ConversationManager
-    import thyca.conversations.store.write_adapter as _wa
     app = _echo_app(tmp_path, reply_text="ECHO-RACE2-DONE")
     try:
         app._bots.create(BotCard(bot_id="coder", name="coder", role="C", description="D", persona="P"))
@@ -1074,7 +943,6 @@ def test_t7_recipient_removal_race_skips_request(tmp_path: Path) -> None:
         bus.register("helper")
         envelope = bus.send(sender="coder", recipient="helper", kind="message",
                             conversation_id=room, payload="doomed request 2")
-        import unittest.mock as _mock
         with _mock.patch.object(_wa, "append_message", _removing_append):
             reply = _deliver_claimed(app, envelope, "coder", room)
         assert reply == "ECHO-RACE2-DONE", f"produced reply must still return, got {reply!r}"

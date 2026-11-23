@@ -19,7 +19,6 @@ class ChatUi:
             color = bool(getattr(self._out, "isatty", lambda: False)())
         self._color = color
 
-    # Show the selected conversation door (dm <bot> or group <id>) and model.
     def banner(self, label: str, model: str) -> None:
         line = f"thyca  {label}  model {model}"
         print(self._paint(_DIM, line), file=self._out)

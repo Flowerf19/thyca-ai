@@ -1,22 +1,27 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import threading
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-from thyca.serve import trace_api
-from thyca.app.chat_app import ChatApp
-from thyca.configs import load, save
 from seeded_config import seeded_config
-from thyca.llms.llm_base import ChatReply
-from thyca.core.protocol import Message, ToolCall
-from thyca.serve import default_webui, make_server
-from thyca.conversations.runtime import ConversationManager
+
+from thyca.app.chat_app import ChatApp
+from thyca.bots.card import BotCard
+from thyca.bots.timeline import TraceExecutionError, WorkspaceTimeline
+from thyca.configs import load, save
+from thyca.conversations.runtime import ConversationManager, ConversationRuntime
+from thyca.conversations.runtime import ConversationManager as _SM
 from thyca.conversations.runtime.store import ConversationStore
 from thyca.core.conversation import ConversationRef
+from thyca.core.protocol import Message, ToolCall
+from thyca.llms.llm_base import ChatReply
 from thyca.memories.facade import MemoryFacade
+from thyca.serve import default_webui, make_server, trace_api
+from thyca.serve.trace import TurnSummary, _sum_group, turns_from_conversation
 
 WEBUI = default_webui()
 TS = "2026-08-26T09:12:03Z"
@@ -94,7 +99,6 @@ def test_concurrent_trace_list_and_detail_do_not_race_cache(tmp_path: Path) -> N
     detail both read through the SQLite store; concurrent readers must
     complete without errors (the old file-cache race cannot recur).
     """
-    from thyca.core.conversation import ConversationRef
 
     chat = _chat(tmp_path)
     try:
@@ -152,12 +156,11 @@ def test_trace_scan_rereads_store_doors(tmp_path: Path) -> None:
 
         httpd, thread = _start(tmp_path, chat)
         try:
-            ConversationStore.scan = counting_scan  # type: ignore[method-assign]
+            ConversationStore.scan = counting_scan  # type: ignore[method-assign] -- reason: test spy method replacement
             try:
                 first = _json(httpd, "/api/traces/stats")
                 assert first["totals"]["requests"] == 1
                 scans.clear()
-                # No file cache: store doors are re-read, totals identical.
                 second = _json(httpd, "/api/traces/stats")
                 assert second == first
                 assert scans == []
@@ -171,10 +174,10 @@ def test_trace_scan_rereads_store_doors(tmp_path: Path) -> None:
                 )
                 scans.clear()
                 refreshed = _json(httpd, "/api/traces/stats")
-                assert refreshed["totals"]["requests"] == 1  # still one open turn
+                assert refreshed["totals"]["requests"] == 1
                 assert scans == []
             finally:
-                ConversationStore.scan = original_scan  # type: ignore[method-assign]
+                ConversationStore.scan = original_scan  # type: ignore[method-assign] -- reason: test spy method replacement
         finally:
             _stop(httpd, thread)
     finally:
@@ -196,7 +199,7 @@ def test_trace_detail_after_list_rereads_store_door(tmp_path: Path) -> None:
 
         httpd, thread = _start(tmp_path, chat)
         try:
-            ConversationStore.scan = counting_scan  # type: ignore[method-assign]
+            ConversationStore.scan = counting_scan  # type: ignore[method-assign] -- reason: test spy method replacement
             try:
                 listed = _json(httpd, "/api/traces")
                 assert listed["total"] == 1
@@ -206,7 +209,7 @@ def test_trace_detail_after_list_rereads_store_door(tmp_path: Path) -> None:
                 assert detail["kind"] == "group"
                 assert scans == []
             finally:
-                ConversationStore.scan = original_scan  # type: ignore[method-assign]
+                ConversationStore.scan = original_scan  # type: ignore[method-assign] -- reason: test spy method replacement
         finally:
             _stop(httpd, thread)
     finally:
@@ -220,7 +223,6 @@ def test_trace_store_corrupt_door_is_skipped(tmp_path: Path) -> None:
     until an authorized lifecycle action, and scans keep serving the
     healthy doors (here: none left, so totals drop to zero).
     """
-    import sqlite3
 
     chat = _chat(tmp_path)
     try:
@@ -321,8 +323,6 @@ def test_stats_filter_detail_and_corrupt_skip(tmp_path: Path) -> None:
 
 
 def test_trace_detail_expands_only_same_window_canonical_span(tmp_path: Path) -> None:
-    from thyca.bots.card import BotCard
-    from thyca.bots.timeline import WorkspaceTimeline
 
     chat = _chat(tmp_path)
     try:
@@ -415,7 +415,6 @@ def test_trace_detail_expands_only_same_window_canonical_span(tmp_path: Path) ->
 def test_trace_detail_missing_canonical_artifact_is_explicit_and_read_only(
     tmp_path: Path,
 ) -> None:
-    from thyca.bots.timeline import TraceExecutionError
 
     chat = _chat(tmp_path)
     try:
@@ -458,26 +457,14 @@ def test_trace_detail_marks_skill_loads_and_keeps_arguments(tmp_path: Path) -> N
         skill_file.parent.mkdir(parents=True)
         skill_file.write_text("---\nname: codereview\n---\n")
         manager.append(Message(role="user", content="go", ts=TS))
-        # Hard-cut (2026-11-01): the public conversation store is
-        # append-only plain transcript — tool/tool-call rows never persist
-        # there (they live in the canonical timeline, expanded via
-        # trace_execution_messages as in
-        # test_trace_detail_expands_only_same_window_canonical_span).
-        # Appending them here is a no-op for store-backed rooms, so Trace
-        # detail carries no tool_calls from the room itself.
         manager.append(
             Message(role="assistant", content="done", ts=TS2, meta={"kind": "llm", "round": 1}),
             actor="thyca",
         )
         payload = trace_api.trace_detail_payload_ref(chat, ConversationRef.group(conversation.conversation_id), 0)
-        # Trace detail always carries the tool shape (include_args);
-        # store rooms hold no tool rows, so every entry is empty.
         assert all(m.get("tool_calls", []) == [] for m in payload["messages"])
     finally:
         chat.close() if hasattr(chat, "close") else None
-
-
-# --- F34: limit=all is bounded, total stays full ---
 
 
 class _NoopLLM:
@@ -492,10 +479,9 @@ def _trace_chat(tmp_path: Path) -> ChatApp:
 
 def test_f34_limit_all_capped_total_full_and_offset_pages_on(tmp_path: Path) -> None:
     chat = _trace_chat(tmp_path)
-    from thyca.conversations.runtime import ConversationManager as _SM
 
     mgr = _SM(tmp_path / "sessions")
-    for i in range(100):
+    for _i in range(100):
         sid = mgr.create().conversation_id
         for t in range(25):
             mgr.load(sid)
@@ -517,15 +503,7 @@ def test_f34_limit_all_capped_total_full_and_offset_pages_on(tmp_path: Path) -> 
     assert len(zero["traces"]) == 2000
 
 
-# Moved from test_b4_unification.py / test_b4_p2.py (B4 batch).
-import json
-import threading
-from pathlib import Path
-from urllib.error import HTTPError
-from urllib.request import Request, urlopen
-
 def test_x26_sum_group_rollup() -> None:
-    from thyca.serve.trace import TurnSummary, _sum_group
 
     def turn(requests, cost):
         return TurnSummary(
@@ -552,9 +530,6 @@ def test_x26_sum_group_rollup() -> None:
 
 
 def _start_config_server(tmp_path: Path):
-    from thyca.configs import save
-    from thyca.memories.facade import MemoryFacade
-    from thyca.serve import default_webui, make_server
 
     save(seeded_config(), tmp_path / "config.json")
     facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
@@ -598,9 +573,6 @@ def test_m7_post_traces_is_404_like_get(tmp_path: Path) -> None:
 
 
 def test_m7_turn_status_meta_first_then_stripped() -> None:
-    from thyca.core.protocol import Message
-    from thyca.serve.trace import turns_from_conversation
-    from thyca.conversations.runtime import ConversationRuntime
 
     def conversation_with(last: Message) -> ConversationRuntime:
         return ConversationRuntime(

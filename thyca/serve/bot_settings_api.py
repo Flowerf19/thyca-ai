@@ -12,8 +12,8 @@ from typing import TYPE_CHECKING
 
 from thyca.bots.registry import RegistryError
 from thyca.bots.settings import SettingsError
-from thyca.serve.errors import _with_json
 from thyca.serve.conversations_api import _missing_chat
+from thyca.serve.errors import _with_json
 
 if TYPE_CHECKING:
     from thyca.app.chat_app import ChatApp
@@ -24,7 +24,7 @@ def bot_settings_get(handler, app: ChatApp | None, bot_id: str) -> None:
     if _missing_chat(handler, app):
         return
     try:
-        from thyca.app.bot_settings import BotSettingsError
+        from thyca.app.bot_settings import BotSettingsError  # noqa: PLC0415 -- reason: serve/ lazy app import boundary
 
         try:
             payload = app.bot_settings(bot_id)
@@ -50,7 +50,7 @@ def bot_settings_post(handler, app: ChatApp | None, bot_id: str) -> None:
         return
 
     def run(payload: dict) -> None:
-        from thyca.app.bot_settings import BotSettingsError
+        from thyca.app.bot_settings import BotSettingsError  # noqa: PLC0415 -- reason: serve/ lazy app import boundary
 
         try:
             body = app.update_bot_settings(bot_id, payload)

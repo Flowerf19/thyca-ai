@@ -5,9 +5,12 @@ from pathlib import Path
 import pytest
 
 from thyca.core.protocol import ToolCall
+from thyca.memories.identity import bind_bot_id, reset_bot_id
 from thyca.tools.builtin import register_file_tools
-from thyca.tools.path_guard import PathDenied, PathGuard
+from thyca.tools.builtin.edit import apply_edits
+from thyca.tools.builtin.write import write_spec
 from thyca.tools.gateway import ToolGateway
+from thyca.tools.path_guard import PathDenied, PathGuard, absolutize
 from thyca.tools.registry import ToolRegistry
 from thyca.tools.task_store import TaskStore
 
@@ -138,12 +141,7 @@ def test_path_guard_tilde(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
     assert guard.deny_write("~/.thyca/SOUL.md") == (tmp_path / ".thyca" / "SOUL.md").resolve()
 
 
-# Moved from test_b4_unification.py / test_b4_p2.py (B4 batch).
-import pytest
-from pathlib import Path
-
 def test_x14_absolutize_unifies_identities(tmp_path: Path) -> None:
-    from thyca.tools.path_guard import PathGuard, absolutize
 
     assert absolutize("/a/../b") == Path("/b")
     assert absolutize("/a/") == Path("/a")
@@ -154,16 +152,12 @@ def test_x14_absolutize_unifies_identities(tmp_path: Path) -> None:
 
 
 def test_m3_empty_old_text_rejected() -> None:
-    from thyca.tools.builtin.edit import apply_edits
 
     with pytest.raises(ValueError, match="oldText must be non-empty"):
         apply_edits("", [{"oldText": "", "newText": "x"}])
     with pytest.raises(ValueError, match="oldText must be non-empty"):
         apply_edits("abc", [{"oldText": "", "newText": "x"}])
 
-
-# Moved from tests/test_b2_contracts.py (B2 batch).
-from thyca.tools.builtin.write import write_spec
 
 def test_f36_write_description_matches_allow_behavior(tmp_path: Path) -> None:
     """Fails pre-fix: description claimed config was denied (it is allowed)."""
@@ -192,19 +186,16 @@ def test_file_specs_share_guard_key(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_read_denies_conversations_for_child_bot(tmp_path: Path) -> None:
-    from thyca.memories.identity import bind_bot_id, reset_bot_id
 
     target = tmp_path / "sessions" / "room.jsonl"
     target.parent.mkdir()
     target.write_text('{"role":"user"}\n', encoding="utf-8")
-    # Unbound (user) and Thyca keep full read access.
     assert not (await _call(_gateway(tmp_path), "read", path=str(target))).is_error
     token = bind_bot_id("thyca")
     try:
         assert not (await _call(_gateway(tmp_path), "read", path=str(target))).is_error
     finally:
         reset_bot_id(token)
-    # A child bot is denied the whole conversations tree (phase 2A).
     token = bind_bot_id("coder")
     try:
         denied = await _call(_gateway(tmp_path), "read", path=str(target))

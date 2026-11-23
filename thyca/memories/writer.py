@@ -8,6 +8,7 @@ from collections.abc import Callable
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
+from typing import ClassVar
 
 from thyca.configs import atomic_write_text
 from thyca.memories.archive_store import ArchiveError
@@ -24,7 +25,7 @@ from thyca.memories.heading import (
 
 
 class MemoryWriter:
-    _locks: dict[str, threading.RLock] = {}
+    _locks: ClassVar[dict[str, threading.RLock]] = {}
     _guard = threading.Lock()
     _mutation_lock = threading.RLock()
 
@@ -52,11 +53,10 @@ class MemoryWriter:
         raise ArchiveError(f"invalid memory_id {memory_id!r}")
 
     def append(self, path: Path, text: str) -> None:
-        with self.lock_for(path):
-            with path.open("a", encoding="utf-8") as stream:
-                stream.write(text)
-                stream.flush()
-                os.fsync(stream.fileno())
+        with self.lock_for(path), path.open("a", encoding="utf-8") as stream:
+            stream.write(text)
+            stream.flush()
+            os.fsync(stream.fileno())
 
     def map_heading(self, path: Path, entry_id: str, mutate: Callable[[HeadingMeta], HeadingMeta]) -> HeadingMeta:
         with self.lock_for(path):
@@ -79,7 +79,7 @@ class MemoryWriter:
                     found = replace(found, entry_id=resolved)
                 out.append(render_heading(found))
                 out.extend(lines[start + 1 : end])
-                break  # duplicate ids: first match wins, the rest stay verbatim
+                break
             out.extend(lines[pos:])
             if found is None:
                 raise ArchiveError(f"memory not found: {entry_id}")
@@ -199,14 +199,13 @@ class MemoryWriter:
             if body_lines is not None:
                 merged = list(body_lines)
                 if keep_details:
-                    # Replace the old summary (first body line), keep the rest.
                     merged.extend(lines[start + 1 : end][1:])
                 out.extend(
                     line if line.endswith("\n") else f"{line}\n" for line in merged
                 )
             else:
                 out.extend(lines[start + 1 : end])
-            break  # duplicate ids: first match wins, the rest stay verbatim
+            break
         out.extend(lines[pos:])
         if not found:
             raise ArchiveError(f"memory not found: {entry_id}")
@@ -291,7 +290,7 @@ class MemoryWriter:
             pos = end
             if resolved == entry_id and not found:
                 found = True
-                continue  # duplicate ids: first match wins, the rest stay
+                continue
             out.extend(lines[start:end])
         out.extend(lines[pos:])
         if not found:
@@ -320,6 +319,4 @@ def _read_lines(path: Path) -> list[str]:
 
 
 def _atomic_write(path: Path, text: str) -> None:
-    # The one atomic write lives in config.store (X7); this stays as the
-    # monkeypatch seam the lifecycle tests pin.
     atomic_write_text(path, text)

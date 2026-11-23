@@ -2,18 +2,21 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from pathlib import Path as _Path
 
 import pytest
 
 from thyca.core.protocol import ToolCall
+from thyca.memories.archive_store import ArchiveError
 from thyca.memories.archived import SCHEMA_VERSION
-from thyca.memories.facade import MemoryFacade
+from thyca.memories.chunk import Chunker
+from thyca.memories.facade import MemoryFacade, format_task_catalog
 from thyca.memories.heading import (
-    parse_heading,
-    render_heading,
     HeadingMeta,
     new_task_id,
+    parse_heading,
+    render_heading,
     validate_task_meta,
 )
 from thyca.memories.identity import bind_bot_id, reset_bot_id
@@ -26,15 +29,12 @@ from thyca.tools.memory_tools import (
 from thyca.tools.registry import ToolRegistry
 from thyca.tools.task_store import TaskStore
 
-UTC = timezone.utc
 TZ = "Asia/Ho_Chi_Minh"
 
 
 def at(day: int, hour: int = 12) -> datetime:
     return datetime(2026, 9, day, hour, 0, tzinfo=UTC)
 
-
-# -- heading roundtrip ------------------------------------------------------
 
 def test_heading_roundtrip_with_all_five_fields() -> None:
     meta = HeadingMeta(
@@ -69,8 +69,6 @@ def test_new_task_id_format_and_uniqueness() -> None:
         assert task_id.startswith("task-") and len(task_id) == 13
 
 
-# -- validation -------------------------------------------------------------
-
 def test_validate_task_meta_rejections() -> None:
     with pytest.raises(ValueError, match="task must match"):
         validate_task_meta("nope", None, None, None, None)
@@ -84,11 +82,10 @@ def test_validate_task_meta_rejections() -> None:
         validate_task_meta("task-1234abcd", None, None, None, "label")
     with pytest.raises(ValueError, match="must be one of"):
         validate_task_meta("task-1234abcd", None, "project", None, None)
-    with pytest.raises(ValueError, match="checkpoint.*requires task"):
+    with pytest.raises(ValueError, match=r"checkpoint.*requires task"):
         validate_task_meta(None, None, "checkpoint", None, None)
     with pytest.raises(ValueError, match="does not take a habit"):
         validate_task_meta("task-1234abcd", None, "checkpoint", None, "label")
-    # Valid sets pass.
     validate_task_meta("task-1234abcd", "2026-09-01#deadbeef", "habit", "open", "label")
     validate_task_meta("task-1234abcd", None, "checkpoint", "open", None)
     validate_task_meta("task-1234abcd", None, None, "done", None)
@@ -104,8 +101,6 @@ def test_remember_validation_errors(tmp_path) -> None:
     with pytest.raises(ValueError, match="cont requires task"):
         facade.remember("t", "s", now=at(1), cont="2026-09-01#deadbeef")
 
-
-# -- remember → reindex → search ---------------------------------------------
 
 def test_remember_search_filter_task_kind_status(tmp_path) -> None:
     facade = MemoryFacade(tmp_path, timezone_name=TZ)
@@ -172,8 +167,6 @@ def test_checkpoint_roundtrip_search_catalog_and_rebuild(tmp_path) -> None:
     assert rebuilt_hits[0].cont == first
 
 
-# -- memory_tasks ------------------------------------------------------------
-
 def test_tasks_groups_days_and_latest_status_wins(tmp_path) -> None:
     facade = MemoryFacade(tmp_path, timezone_name=TZ)
     tid = facade.new_task_id()
@@ -189,11 +182,9 @@ def test_tasks_groups_days_and_latest_status_wins(tmp_path) -> None:
     assert entry["entry_count"] == 2
     assert entry["first_day"] == "2026-09-01"
     assert entry["last_day"] == "2026-09-03"
-    # Reopen on day 4 beats done.
     facade.remember("again", "reopened", now=at(4), task=tid, status="open")
     facade._refresh_index(at(5))
     assert facade.tasks(now=at(5))["tasks"][0]["status"] == "open"
-    # A later entry without status does not clear the earlier done.
     other = facade.new_task_id()
     facade.remember("o1", "one", now=at(1), task=other, status="open")
     facade.remember("o2", "two", now=at(2), task=other, status="done")
@@ -211,7 +202,6 @@ def test_tasks_latest_memory_id_tracks_newest_entry(tmp_path) -> None:
     facade._refresh_index(at(5))
     entry = facade.tasks(now=at(5))["tasks"][0]
     assert entry["latest_memory_id"] == second
-    # Same-day entry (unindexed) still reports its own session id.
     third = facade.remember("today", "doing", now=at(5), task=tid)
     assert facade.tasks(now=at(5))["tasks"][0]["latest_memory_id"] == third
     assert first != second != third
@@ -278,10 +268,8 @@ def test_tasks_bots_union(tmp_path) -> None:
     assert entry["bots"] == ["coder", "team"]
 
 
-# -- migration v7 → v8 --------------------------------------------------------
-
 V7_NEW_COLUMNS = ("task", "cont", "kind", "status", "habit")
-V6_NEW_COLUMNS = ("bots",) + V7_NEW_COLUMNS
+V6_NEW_COLUMNS = ("bots", *V7_NEW_COLUMNS)
 
 
 V7_GRAPH_DDL = """
@@ -303,7 +291,6 @@ def _schema_without(*drop: str, with_graph: bool = True) -> str:
     a real old DB. Leaf id columns read back as their pre-v9 names
     (``session_id`` / ``session_title``) so fixtures rebuild the
     genuine old schema the migration has to rename."""
-    from pathlib import Path as _Path
 
     root = _Path(__file__).parent.parent / "thyca" / "memories"
     script = (
@@ -328,8 +315,6 @@ def _schema_without(*drop: str, with_graph: bool = True) -> str:
             continue
         out.append(line)
     if with_graph:
-        # Phase 1B removed the graph table from schema.sql; a realistic
-        # v7 database still has it.
         out.append(V7_GRAPH_DDL)
     joined = "".join(out)
     joined = joined.replace("memory_id", "session_id")
@@ -386,7 +371,6 @@ def test_migration_v7_to_v8_keeps_data_and_loads_new_fields(tmp_path) -> None:
         assert row[0] == "- old body text" and row[1] is None
     finally:
         db.close()
-    # Reindex picks up a task key added to the markdown afterwards.
     (tmp_path / "memory" / "2026-09-01.md").write_text(
         "# 2026-09-01\n"
         "## 08:00 — old topic <!-- thyca {\"id\":\"deadbeef\",\"imp\":3,\"task\":\"task-aaaaaaaa\"} -->\n"
@@ -466,8 +450,6 @@ def test_migration_v6_to_v8_gains_bots_and_task_columns(tmp_path) -> None:
             "SELECT value FROM meta WHERE key='schema_version'").fetchone()[0] == SCHEMA_VERSION
         cols = {row[1] for row in db.execute("PRAGMA table_info(chunks)")}
         assert {"bots", "task", "cont", "kind", "status", "habit"} <= cols
-        # Phase 1B: landing on v8 ends without the graph table (it never
-        # existed in this v6 database, and migration must not create it).
         tables = {row[0] for row in db.execute(
             "SELECT name FROM sqlite_master WHERE type='table'")}
         assert "related_edges" not in tables
@@ -476,7 +458,6 @@ def test_migration_v6_to_v8_gains_bots_and_task_columns(tmp_path) -> None:
             "WHERE chunk_id='2026-09-01#deadbeef#1'"
         ).fetchone()
         assert row[0] == "- old body text" and row[1] is None and row[2] is None
-        # The task index from init_schema works on the migrated table.
         indexes = {row[0] for row in db.execute(
             "SELECT name FROM sqlite_master WHERE type='index'")}
         assert "chunks_task" in indexes
@@ -544,14 +525,10 @@ def test_migration_v8_to_v9_renames_id_and_keeps_usage(tmp_path) -> None:
     assert facade.get(memory_id="2026-09-01#deadbeef", now=at(5)) is not None
 
 
-# -- same-day catalog (Finding 2) -------------------------------------------------
-
-
 def test_tasks_lists_task_opened_today(tmp_path) -> None:
     facade = MemoryFacade(tmp_path, timezone_name=TZ)
     tid = facade.new_task_id()
     facade.remember("today goal", "doing things today", now=at(3), task=tid)
-    # No day-close, no manual reindex: the catalog still shows it.
     catalog = facade.tasks(now=at(3))
     assert [t["task_id"] for t in catalog["tasks"]] == [tid]
     assert catalog["tasks"][0]["entry_count"] == 1
@@ -577,7 +554,6 @@ def test_tasks_today_hidden_from_other_child_bot(tmp_path) -> None:
         facade.remember("coder goal", "coder work today", now=at(3), task=tid)
     finally:
         reset_bot_id(token)
-    # The user (no reader) sees everything, including today's entry.
     assert [t["task_id"] for t in facade.tasks(now=at(3))["tasks"]] == [tid]
     other = bind_bot_id("designer")
     try:
@@ -590,8 +566,6 @@ def test_tasks_today_hidden_from_other_child_bot(tmp_path) -> None:
     finally:
         reset_bot_id(designer)
 
-
-# -- update / reinforce preserve ------------------------------------------------
 
 def test_update_and_reinforce_keep_task_fields(tmp_path) -> None:
     facade = MemoryFacade(tmp_path, timezone_name=TZ)
@@ -611,19 +585,18 @@ def test_update_and_reinforce_keep_task_fields(tmp_path) -> None:
     facade.update(sid, status="done", now=at(3))
     facade._refresh_index(at(5))
     assert facade.search("beta", now=at(5), status="done").hits
-    with pytest.raises(Exception, match="does not take a habit"):
+
+    with pytest.raises(ArchiveError, match="does not take a habit"):
         facade.update(sid, kind="checkpoint", now=at(3))
     facade.update(first, kind="checkpoint", now=at(3))
     facade._refresh_index(at(5))
     assert facade.search("alpha", now=at(5), kind="checkpoint").hits
     plain = facade.remember("plain", "no task here", now=at(1))
-    with pytest.raises(Exception, match="checkpoint.*requires task"):
+    with pytest.raises(ArchiveError, match=r"checkpoint.*requires task"):
         facade.update(plain, kind="checkpoint", now=at(3))
-    with pytest.raises(Exception, match="status requires task"):
+    with pytest.raises(ArchiveError, match="status requires task"):
         facade.update(plain, status="done", now=at(3))
 
-
-# -- tool contract ---------------------------------------------------------------
 
 @pytest.mark.asyncio
 async def test_tool_remember_new_task_and_continue(tmp_path) -> None:
@@ -645,15 +618,11 @@ async def test_tool_remember_new_task_and_continue(tmp_path) -> None:
         "topic": "goal", "summary": "more work",
         "task": created["task_id"], "cont": created["memory_id"]})
     assert second["task_id"] == created["task_id"]
-    # Catalog listing over closed days (entries seeded via the facade
-    # with explicit dates; the tool itself stamps real now).
     tid = facade.new_task_id()
     facade.remember("past goal", "past work", now=at(1), task=tid,
                       importance=5)
     facade._refresh_index(at(5))
     catalog = await call("memory_tasks", {})
-    # The same-day tool task is listed too (Finding 2: today's daily
-    # file merges into the catalog), newest first.
     assert [t["task_id"] for t in catalog["tasks"]] == [created["task_id"], tid]
     assert catalog["tasks"][1]["entry_count"] == 1
 
@@ -706,7 +675,6 @@ async def test_tool_checkpoint_contract(tmp_path) -> None:
     assert entry["entry_count"] == 1
     assert entry["latest_memory_id"] == second["memory_id"]
 
-    # Cross-window checkpoint preserves isolation and appends a 2nd linked entry.
     tok_b = bind_chat_conversation("room-b")
     try:
         cross_result = await submit("memory_remember", {
@@ -734,10 +702,7 @@ async def test_tool_checkpoint_contract(tmp_path) -> None:
     assert "does not take a habit" in with_habit.content
 
 
-# -- 3-ledger optimization: cancelled, upsert task, dedupe habit, other journal --
-
 def test_status_cancelled_validation_search_and_catalog(tmp_path) -> None:
-    from thyca.memories.facade import format_task_catalog
 
     facade = MemoryFacade(tmp_path, timezone_name=TZ)
     validate_task_meta("task-1234abcd", None, "checkpoint", "cancelled", None)
@@ -772,7 +737,7 @@ def test_upsert_task_card_updates_in_place_across_days(tmp_path) -> None:
         now=at(1),
     )
     second = facade.upsert_task_card(
-        "progress",  # generic title should preserve original card title
+        "progress",
         "Writer done",
         content="- done: schema + writer\n- processing: jobs\n- next: tests",
         task=tid,
@@ -813,7 +778,7 @@ def test_upsert_task_card_isolates_cross_window_dm(tmp_path) -> None:
     assert "DM_SECRET_STEP" not in day1_text
     assert "Public step" in day1_text
     assert "DM_SECRET_STEP" in day2_text
-    dm_meta = parse_heading(next(l for l in day2_text.splitlines() if l.startswith("## ")))
+    dm_meta = parse_heading(next(line for line in day2_text.splitlines() if line.startswith("## ")))
     assert dm_meta is not None
     assert dm_meta.chat == "coder"
     assert dm_meta.cont == group_sid
@@ -840,27 +805,22 @@ def test_record_habit_entry_dedupes_same_day_and_upgrades_explicit(tmp_path) -> 
 
 
 def test_append_other_journal_groups_scope_and_skips_duplicates(tmp_path) -> None:
-    from thyca.memories.chunk import Chunker
 
     facade = MemoryFacade(tmp_path, timezone_name=TZ)
     sid1 = facade.append_other_journal(
         "Môi trường", "Máy chạy Fedora Bazzite", chat="room-a", bots=["coder"], now=at(2, 10)
     )
-    # Normalized duplicate (no accents, different case/punctuation) is skipped.
     sid_dup = facade.append_other_journal(
         "Môi trường", "may chay fedora bazzite!", chat="room-a", bots=["coder"], now=at(2, 11)
     )
-    # Distinct fact in same scope appends as indented log line inside the same block.
     sid2 = facade.append_other_journal(
         "CI Fedora", "CI cần cài util-linux", content="Cho script test",
         chat="room-a", bots=["coder"], now=at(2, 12)
     )
-    # Synonymous paraphrase of an existing line in the same block is skipped via rapidfuzz.
     sid_fuzzy = facade.append_other_journal(
         "CI Fedora", "CI trên Fedora cần cài thêm util-linux",
         chat="room-a", bots=["coder"], now=at(2, 12)
     )
-    # Different chat scope creates a separate journal block.
     sid_other_room = facade.append_other_journal(
         "Phòng khác", "Fact riêng phòng B", chat="room-b", bots=["coder"], now=at(2, 13)
     )
@@ -882,7 +842,6 @@ def test_append_other_journal_groups_scope_and_skips_duplicates(tmp_path) -> Non
 
 
 def test_migration_v9_to_v10_keeps_usage_and_indexes_title_and_d_stroke(tmp_path) -> None:
-    from pathlib import Path as _Path
 
     (tmp_path / "memory").mkdir(parents=True)
     day_file = tmp_path / "memory" / "2026-09-01.md"
@@ -897,7 +856,6 @@ def test_migration_v9_to_v10_keeps_usage_and_indexes_title_and_d_stroke(tmp_path
     db = sqlite3.connect(db_path)
     root = _Path(__file__).parent.parent / "thyca" / "memories"
     tables_sql = (root / "schema.sql").read_text(encoding="utf-8")
-    # v9 FTS indexed text_raw only; strip the v10 title/norm columns from schema_fts.sql.
     v9_fts = (
         (root / "schema_fts.sql")
         .read_text(encoding="utf-8")
@@ -993,27 +951,20 @@ def test_append_other_journal_preserves_updates_and_dedupes_multiline_and_cross_
     facade = MemoryFacade(tmp_path, timezone_name=TZ)
     day1 = at(1)
     day2 = at(2)
-    # FP1: version update must not be dropped.
     facade.append_other_journal("Version", "Project thyca version is 0.88.0.dev2 on branch main", chat="c1", now=day1)
     facade.append_other_journal("Version", "Project thyca version is 0.88.0.dev3 on branch main", chat="c1", now=day1)
-    # FP2: reversed direction must not be dropped.
     facade.append_other_journal("DB", "User switched database from PostgreSQL to SQLite", chat="c2", now=day1)
     facade.append_other_journal("DB", "User switched database from SQLite to PostgreSQL", chat="c2", now=day1)
-    # FP3: negation vs affirmative must not be dropped.
     facade.append_other_journal("Docker", "User is not using docker for local dev", chat="c3", now=day1)
     facade.append_other_journal("Docker", "using docker for local dev", chat="c3", now=day1)
-    # FP3b: Vietnamese đừng vs dùng (both fold to "dung") must not be dropped.
     facade.append_other_journal("Tabs", "Trong nhóm dùng tab bốn khoảng để code", chat="c3b", now=day1)
     facade.append_other_journal("Tabs", "Trong nhóm đừng dùng tab bốn khoảng để code", chat="c3b", now=day1)
     facade.append_other_journal("Tabs2", "dung tab bon khoang", chat="c3c", now=day1)
     facade.append_other_journal("Tabs2", "đừng tab bốn khoảng", chat="c3c", now=day1)
-    # FP4: shared summary with short differing content lines must not be dropped.
     facade.append_other_journal("Style", "Team coding standards for Python", content="Use ruff", chat="c6", now=day1)
     facade.append_other_journal("Style", "Team coding standards for Python", content="Use uv", chat="c6", now=day1)
-    # FP5: single-line summary followed by same summary + added content line must not be dropped.
     facade.append_other_journal("Deploy", "Backend deployment notes", chat="c7", now=day1)
     facade.append_other_journal("Deploy", "Backend deployment notes", content="Use systemd", chat="c7", now=day1)
-    # FN1: multiline slightly reworded IS deduped.
     facade.append_other_journal(
         "Stack",
         "Backend architecture choices",
@@ -1028,7 +979,6 @@ def test_append_other_journal_preserves_updates_and_dedupes_multiline_and_cross_
         chat="c4",
         now=day1,
     )
-    # FN2: cross-day exact duplicate reinforces day1 even when day2 already has a journal target.
     sid_os_1 = facade.append_other_journal("OS", "User runs Fedora Bazzite Linux", chat="c5", now=day1)
     facade.append_other_journal("Tools", "Repo uses uv", chat="c5", now=day2)
     sid_os_2 = facade.append_other_journal("OS", "User runs Fedora Bazzite Linux", chat="c5", now=day2)

@@ -2,13 +2,15 @@
 from dataclasses import replace
 
 import pytest
+from seeded_config import seeded_config
 
 from thyca.app.chat_app import ChatApp
 from thyca.bots.card import BotCard, BotModel
+from thyca.bots.timeline import WorkspaceTimeline
 from thyca.configs import ModelCfg, save
-from seeded_config import seeded_config
-from thyca.core.protocol import Message
 from thyca.conversations.runtime.compaction import estimate_tokens
+from thyca.core.channel import WindowRef
+from thyca.core.protocol import Message
 
 
 class NoCalls:
@@ -57,28 +59,20 @@ def test_operations_use_only_original_window_events_and_recorded_cost(app):
         call("one", 0.01), call("two", 0.02),
         call("two", 0.02, status="loop_limit"),
     ])
-    # Public aggregate references the execution, but must NOT add another cost.
     path = app._conversations.store.load(room["conversation_id"]).path
     app._conversations.store.append(path, Message(role="user", content="question"))
     app._conversations.store.append(path, Message(role="assistant", content="reply", meta={
         "kind": "message", "bot_id": "coder", "span_id": "two",
         "cost_usd": 100, "requests": 100,
     }))
-    # Persist the public turn before opening another DM: existing conversation
-    # lifecycle deliberately prunes older empty public groups on creation.
     private = app.bot_dm("coder")
     seed(app, private, [call("private", 900, tokens=99999)])
     basis = [Message(role="system", content="[compaction: short summary]")]
     store.rewrite(sid, store.path_for(sid), basis)
-    # Stub the meter at its canonical home (the read-model service).
     app._ops._overhead_tokens = lambda *args, **kwargs: (100, 50)
     result = app.bot_operations(room["conversation_id"], "coder")
     assert result["conversation"]["requests"] == 2
     assert result["conversation"]["cost_usd"] == 0.03
-    # Participant metadata may change without creating another room. All
-    # original requests in that same room must retain their recorded cost.
-    from thyca.bots.timeline import WorkspaceTimeline
-    from thyca.core.channel import WindowRef
     changed_members = WindowRef(
         window_id=room["conversation_id"], channel_id="webui", kind="group",
         participants=("thyca", "coder", "researcher"),
@@ -100,7 +94,6 @@ def test_operations_use_only_original_window_events_and_recorded_cost(app):
         "input": 1, "output": 2, "cache": 0.5,
     }
     assert "private" not in str(result)
-    # A selected model changes context and unit rates, never recorded past cost.
     selected = app.bot_operations(room["conversation_id"], "coder", model="override-model", effort="low")
     assert selected["context"]["context_tokens"] == 8192
     assert selected["model"]["reasoning_effort"] == "low"

@@ -1,17 +1,8 @@
-// Retained Usage controller; declarations are isolated in this mount closure.
 ThycaRouter.register('dashboard', { title: 'Sử dụng', stylesheet: '/ui/dashboard/dashboardcss/dashboard.css', mount(ctx) {
   let routeKey = '';
   const root = ctx.root;
   const $ = (selector, base = root) => selector === '.workspace' ? root : base.querySelector(selector);
   const $$ = (selector, base = root) => [...base.querySelectorAll(selector)];
-// Usage, cost, and flat trace views with an in-workspace full-turn detail.
-//
-// API: GET /api/traces/stats?from&to                      -> totals + by_model/by_bot/by_day/by_hour/by_status + models
-//      GET /api/traces?from&to&limit&offset&q&model&status -> {traces, total} paged, newest first
-//      GET /api/bots                                    -> share/data.js via bootShell()
-// A sidebar bot scope filters to explicit bot_breakdown attribution; direct
-// bot_id is the server-verified fallback only when no breakdown exists.
-
 
 const FIRST_PAGE = 15;
 const MORE_PAGE = 50;
@@ -33,14 +24,10 @@ const traceState = { rows: [], total: 0, loading: false, error: '' };
 let statsSeq = 0, traceSeq = 0, detailSeq = 0;
 let qTimer = null;
 
-/* ---------- formatters (vi-VN numbers; cost_usd is USD so it keeps the $ sign) ---------- */
 const fmtInt = n => (typeof n === 'number' && Number.isFinite(n)) ? n.toLocaleString('vi-VN') : '—';
-// Compact counts for hint lines: only millions get the "m" suffix
-// (7.149.853 -> "7,1m"); smaller counts stay exact (242.460).
 const fmtCompact = n => (typeof n !== 'number' || !Number.isFinite(n)) ? '—'
   : n >= 1e6 ? (n / 1e6).toLocaleString('vi-VN', { maximumFractionDigits: 1 }) + 'm'
   : fmtInt(n);
-// Same rule as the old prototype's fmtCost: 6 decimals under $0.01, 4 under $1, else 2.
 function fmtCost(usd) {
   if (typeof usd !== 'number' || !Number.isFinite(usd)) return '—';
   return '$' + usd.toFixed(usd >= 1 ? 2 : usd >= 0.01 ? 4 : 6);
@@ -59,9 +46,9 @@ function fmtDateTime(iso) {
   return d.getDate() + ' thg ' + (d.getMonth() + 1) + ', '
     + String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
 }
-const fmtDay = key => key ? key.slice(8, 10) + '/' + key.slice(5, 7) : '—';   // 'YYYY-MM-DD' -> 'dd/mm'
-function fmtDayFull(key) {                                                    // tooltip: 'Th 3, 21/10'
-  const d = new Date(key + 'T00:00:00Z');                                     // by_day keys are UTC days
+const fmtDay = key => key ? key.slice(8, 10) + '/' + key.slice(5, 7) : '—';
+function fmtDayFull(key) {
+  const d = new Date(key + 'T00:00:00Z');
   return Number.isFinite(d.getTime())
     ? d.toLocaleDateString('vi-VN', { weekday: 'short', day: 'numeric', month: 'numeric', timeZone: 'UTC' })
     : key;
@@ -78,7 +65,6 @@ function relTime(iso) {
   if (d < 31) return d + ' ngày trước';
   return fmtDateTime(iso);
 }
-// Old prototype's share(): one decimal under 10%, integer above.
 function share(num, den) {
   if (typeof num !== 'number' || !Number.isFinite(num) || typeof den !== 'number' || !Number.isFinite(den)) return '—';
   if (!den) return num === 0 ? '0%' : '—';
@@ -87,7 +73,6 @@ function share(num, den) {
 }
 const isoDay = d => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
 
-/* ---------- status chips (TurnSummary.status: completed | failed | loop_limit | context_limit) ---------- */
 const STATUS_META = {
   completed: ['Hoàn tất', 's-ok'],
   failed: ['Thất bại', 's-error'],
@@ -99,10 +84,6 @@ function statusChip(status) {
   return `<span class="st-chip ${cls}">${escapeHTML(label)}</span>`;
 }
 
-/* Avatar slot: real seal when the bot is in the roster, a dashed chip with the
-   id's initials otherwise (the raw id still shows as the row name — spec:
-   bots missing from the roster render as plain id text). 'expression-preview'
-   keeps list avatars static — they stay out of the blink/sync loops. */
 function avatarCell(botId) {
   const b = botId && getBot(botId);
   if (b) return `<span class="row-avatar">${avatar(b, b.state, 'expression-preview')}</span>`;
@@ -122,7 +103,6 @@ function turnBotIds(turn) {
   else push(turn.bot_id);
   return ids;
 }
-// Render one trace turn row keyed by its typed conversation door.
 function turnRowHtml(turn) {
   const ids = botScope ? [botScope] : turnBotIds(turn);
   const id = ids[0] || '';
@@ -131,8 +111,6 @@ function turnRowHtml(turn) {
     : `<span class="tl-botid">${escapeHTML(id || '—')}</span>`;
   const name = ids.length ? botDisplayName(id) + (ids.length > 1 ? ` +${ids.length - 1}` : '') : '—';
   const kind = turn.kind === 'dm' ? 'Chat riêng' : turn.kind === 'group' ? 'Chat nhóm' : 'Phiên';
-  // No conversation titles any longer: a group turn's title is its group id
-  // itself, so it reads as the shared group label instead of a raw id.
   const rawTitle = turn.title || turn.group_id || turn.bot_id || '—';
   const title = turn.kind === 'group' && rawTitle === turn.group_id ? 'Hội thoại chung' : rawTitle;
   const conv = turn.kind === 'dm' ? dmKey(turn.bot_id) : groupKey(turn.group_id);
@@ -232,7 +210,6 @@ const PAGE_HTML = `
   </section>
 </div></div>`;
 
-/* ---------- range controls ---------- */
 function updateRangeNote() {
   const f = $('#range-from').value, t = $('#range-to').value;
   const nice = v => v ? new Date(v + 'T00:00:00').toLocaleDateString('vi-VN', { day: 'numeric', month: 'numeric', year: 'numeric' }) : '…';
@@ -283,7 +260,6 @@ function setPreset(days) {
   applyControlRoute();
 }
 
-/* ---------- status line ---------- */
 function setStatus(text, cls) {
   const el = $('#page-status');
   $('#stats-status-text').textContent = text || '';
@@ -292,7 +268,6 @@ function setStatus(text, cls) {
   el.hidden = !text;
 }
 
-/* ---------- routed filters and request keys ---------- */
 function rangeParams() {
   const q = new URLSearchParams();
   if (rangeFrom) q.set('from', rangeFrom);
@@ -320,7 +295,6 @@ function listRequestKey() {
   if (listFilters.status) q.set('status', listFilters.status);
   return q.toString();
 }
-// Parse the explicit trace detail hash (#dm/<bot>/<n> or #groups/<id>/<n>).
 function parseDetailRoute(route) {
   const raw = String(route.hash || '').replace(/^#/, '');
   const parts = raw.split('/');
@@ -540,7 +514,6 @@ function renderDetail() {
   body.innerHTML = detailLoading ? '<p class="status-line">Đang đọc lượt…</p>'
     : detailData ? (botScope ? `<p class="detail-context-note">Ngữ cảnh dưới đây là toàn bộ lượt và có thể chứa hoạt động của bot khác.</p>${botContributionHtml(detailData)}<div class="full-turn-context">${window.ThycaTraceDetail.render(detailData)}</div>` : window.ThycaTraceDetail.render(detailData)) : '';
 }
-// Load one trace turn from its explicit DM or group door.
 async function loadDetail(ref, turn, force = false) {
   const sid = ref.kind === 'dm' ? dmKey(ref.bot_id) : groupKey(ref.group_id);
   const key = sid + '/' + turn;
@@ -599,7 +572,6 @@ function applyRoute(route, { force = false } = {}) {
   if (force || listChanged || listKey !== listRequestKey()) void loadTraces(true, force);
 }
 
-/* ---------- render: hero stats ---------- */
 function heroCard(label, value, hint) {
   return `<section class="stat"><p class="stat-label">${label}</p><p class="stat-value">${value}</p>${hint ? `<p class="stat-hint">${hint}</p>` : ''}</section>`;
 }
@@ -643,7 +615,6 @@ function renderStats(s, { loading = false } = {}) {
   updateScopeChip();
 }
 
-/* ---------- render: daily tokens, calls, and recorded cost ---------- */
 function dayColumns(byDay) {
   const map = new Map(byDay.map(d => [d.day, d]));
   if (rangeFrom && rangeTo) {
@@ -706,7 +677,6 @@ function renderCostChart() {
   $('#chart-cost-note').textContent = 'Ngày theo UTC; “—” là chưa có giá, không phải $0.';
 }
 
-/* ---------- render: authoritative token and cost breakdowns ---------- */
 function meterWidth(value, max) {
   return typeof value === 'number' && Number.isFinite(value) && typeof max === 'number' && max > 0
     ? Math.max(0, Math.min(100, value / max * 100)) : 0;
@@ -760,7 +730,6 @@ function renderCostRows() {
     </li>`).join('') : ((statsData?.by_model || []).length ? '<li><div class="empty-note"><strong>Không có model xác định trong kỳ.</strong></div></li>' : '<li><div class="empty-note"><strong>Chưa có dữ liệu chi phí theo model.</strong></div></li>');
 }
 
-/* ---------- render: by_hour (always 24 columns, UTC hours) ---------- */
 function renderHourChart() {
   const map = new Map((statsData?.by_hour || []).map(h => [h.hour, h]));
   const cols = [];
@@ -780,7 +749,6 @@ function renderHourChart() {
   }).join('') + '</div>';
 }
 
-/* ---------- quick filters (table only) ---------- */
 function fillModelFilter(models) {
   const sel = $('#filter-model'), cur = listFilters.model;
   const values = [...new Set(models)];
@@ -803,7 +771,6 @@ function fillStatusFilter(byStatus) {
   sel.value = cur;
 }
 
-/* ---------- render: grouped turn history ---------- */
 function renderTraceTable() {
   const err = $('#trace-status');
   $('#trace-status-text').textContent = traceState.error ? 'Không tải được danh sách lượt: ' + traceState.error : '';
@@ -827,7 +794,6 @@ function renderTraceFoot() {
   more.disabled = traceState.loading;
   more.textContent = traceState.loading ? 'Đang tải…' : 'Tải thêm';
 }
-// Open the clicked trace row through its explicit door hash.
 function openTraceRow(e) {
   const button = e.target.closest('button[data-conv][data-turn]');
   if (!button) return;
@@ -841,7 +807,6 @@ function openTraceRow(e) {
   ctx.navigate('dashboard', { search: ctx.route.search, hash });
 }
 
-/* ---------- controls and lifecycle ---------- */
 function syncListFilters() {
   listFilters.q = $('#filter-q').value.trim();
   listFilters.model = $('#filter-model').value;

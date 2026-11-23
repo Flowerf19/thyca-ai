@@ -33,12 +33,8 @@ _SPA_PATHS = {
 def safe_file(webui: Path, url_path: str) -> Path | None:
     decoded_path = unquote(url_path)
     if "\x00" in decoded_path or ".." in Path(decoded_path).parts:
-        # Reject NUL and traversal explicitly, including percent-encoded forms.
         return None
-    if decoded_path in _SPA_PATHS:
-        rel = _SPA_ENTRY
-    else:
-        rel = unquote(url_path).lstrip("/")
+    rel = _SPA_ENTRY if decoded_path in _SPA_PATHS else unquote(url_path).lstrip("/")
     if not rel or rel.endswith("/"):
         rel = (rel + "index.html") if rel else "index.html"
     target = (webui / rel).resolve()

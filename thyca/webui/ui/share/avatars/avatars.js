@@ -1,4 +1,3 @@
-// Peeking Character Medallion Avatar engine: archetypes, cream paper well, 2.5D rig, states & orbit.
 'use strict';
 const states={
  idle:['Nghỉ','Sẵn sàng','Thở nhẹ · chớp mắt'],
@@ -39,7 +38,6 @@ const stateDetails={
 const stateTimers=new Map(),mentionTimers=new Map(),musicBoxes=new Map();
 const orbitDurations={thinking:9600,writing:6400,working:1500,group:4200};
 
-// 12 Peeking Character Medallion Archetypes
 const ARCHETYPES=[
  {
   id:'thyca',

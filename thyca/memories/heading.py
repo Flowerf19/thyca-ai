@@ -20,7 +20,6 @@ DEFAULT_IMPORTANCE = 3
 ENTRY_ID_RE = re.compile(r"^[0-9a-f]{8}$")
 TASK_ID_RE = re.compile(r"^task-[0-9a-f]{8}$")
 TASK_STATUSES = ("open", "done", "cancelled")
-#: Accepted memory kinds: habit observations and task checkpoints.
 TASK_KINDS = ("habit", "checkpoint")
 EXP_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 
@@ -40,20 +39,12 @@ class HeadingMeta:
     expires_at: str | None = None
     proj: str | None = None
     chat: str | None = None
-    # Team owners (BE-4): which bots own this entry. None = legacy entry
-    # (no field on disk) which reads as team-visible. ["team"] = shared
-    # team memory; ["<bot>"] = that bot's private memory.
     bots: tuple[str, ...] | None = None
-    # Task + habits (phase 1A): shared task id, previous memory in the
-    # same task, habit kind + label, task status. None = legacy entry
-    # (no field on disk), same backward-compat rule as proj/chat/bots.
     task: str | None = None
     cont: str | None = None
     kind: str | None = None
     status: str | None = None
     habit: str | None = None
-    # Phase 1E: user explicitly stated this habit (not inferred). Only
-    # written when True; absent reads as False like other missing keys.
     habit_explicit: bool = False
 
 
@@ -261,10 +252,6 @@ def resolve_entry_id(meta: HeadingMeta, path: str, occurrence: int) -> str:
     return legacy_entry_id(path, meta.title, occurrence)
 
 
-#: SQL twin of is_visible(): visible rows have no forgotten stamp and no
-#: expiry in the past. The one predicate every archive_store query shares —
-#: column names stay unqualified (no archive join has a second table with
-#: these columns), so all seven call sites embed it verbatim.
 VISIBLE_SQL = "forgotten_at IS NULL AND (expires_at IS NULL OR expires_at > ?)"
 
 

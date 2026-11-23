@@ -12,10 +12,8 @@ from typing import Literal
 
 _ROLE_OPTIONS = ("user", "assistant", "tool", "system")
 
-# meta cap 4096 bytes when serialized
 META_CAP_BYTES = 4096
 
-# tool result cap 32KB when dispatched
 RESULT_CAP_BYTES = 32_768
 
 
@@ -43,7 +41,6 @@ def estimate_tokens(text: str) -> int:
     """Shared char/4 token heuristic for conversation compaction + memory chunking."""
     return (len(text) + 3) // 4
 
-# ts format YYYY-MM-DDTHH:mm:ssZ strict UTC
 _TS_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 
 
@@ -58,7 +55,6 @@ def parse_ts(ts: str) -> datetime:
     accepted grammar cannot drift."""
     if not isinstance(ts, str) or not _TS_RE.match(ts):
         raise ValueError(f"ts must be ISO-8601 UTC YYYY-MM-DDTHH:mm:ssZ, got {ts!r}")
-    # also validate datetime parseable
     try:
         return datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
     except ValueError as e:
@@ -117,18 +113,12 @@ class ToolCall:
         )
 
 
-# ToolResult is not a separate wire type in conversation JSONL, but useful alias.
-# ConversationRuntime stores tool results as Message(role="tool", tool_call_id=..., content=...).
 @dataclass(frozen=True)
 class ToolResult:
     tool_call_id: str
     name: str
     content: str
     is_error: bool = False
-    #: Retained-engine execution behind this result (a pollable exec<N>),
-    #: or None when nothing was retained (fast inline results, errors).
-    #: Set only by the gateway from its own tracking — never parsed out
-    #: of output text — so shrink can promise a re-read pointer honestly.
     exec_ref: str | None = None
 
     def __post_init__(self) -> None:
@@ -169,8 +159,6 @@ class Message:
         if self.reasoning_details is not None:
             if not isinstance(self.reasoning_details, list):
                 raise ValueError("reasoning_details must be list or None")
-            # Provider signature blobs: validated for shape, never capped —
-            # truncating them would invalidate the signature on round-trip.
             for detail in self.reasoning_details:
                 if not isinstance(detail, dict):
                     raise ValueError("reasoning_details entries must be dict")
@@ -183,11 +171,6 @@ class Message:
     def to_canonical_dict(self) -> dict:
         """Canonical dict for JSONL per spec. Deterministic key order via sort in dumps."""
         d: dict = {"role": self.role, "ts": self.ts}
-        # content: include even if None? spec says content str|None, tool-call assistant may have null.
-        # For canonical we include content key if not None or role assistant with tool_calls
-        # Keep explicit to make loader validation clear.
-        # Always present (None for assistant tool-call rows) so the loader
-        # sees an explicit content key on every message.
         d["content"] = self.content
         if self.tool_calls is not None:
             d["tool_calls"] = [tc.to_dict() for tc in self.tool_calls]
@@ -198,7 +181,6 @@ class Message:
         if self.reasoning_details:
             d["reasoning_details"] = self.reasoning_details
         if self.meta is not None:
-            # re-check cap at serialization time as well
             _check_meta_cap(self.meta)
             d["meta"] = self.meta
         return d
@@ -214,7 +196,6 @@ class Message:
             raise ValueError("Message missing required 'role'")
         role = raw["role"]
         content = raw.get("content")
-        # tool_calls parse
         tool_calls = None
         if "tool_calls" in raw and raw["tool_calls"] is not None:
             if not isinstance(raw["tool_calls"], list):

@@ -4,8 +4,8 @@ import pytest
 
 from thyca.agents.assemble import Assemble
 from thyca.agents.stage import Stage
-from thyca.memories.active import ActiveSnapshot
 from thyca.core.protocol import Message
+from thyca.memories.active import ActiveSnapshot
 
 
 def test_assemble_copies_and_appends_user() -> None:
@@ -49,7 +49,7 @@ def test_assemble_injects_system_from_snapshot() -> None:
 
 def test_assemble_rejects_non_string_user_message() -> None:
     with pytest.raises(ValueError):
-        Assemble().assemble(Stage(), 123)  # type: ignore[arg-type]
+        Assemble().assemble(Stage(), 123)  # type: ignore[arg-type] -- reason: intentional invalid-type or test-double argument
 
 
 def test_assemble_keeps_naming_meta_as_regular_row() -> None:

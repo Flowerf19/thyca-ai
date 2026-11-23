@@ -1,10 +1,10 @@
 # Bối cảnh dự án
 
-Mục tiêu của file này là mô tả trạng thái thật tại HEAD. Mã nguồn và test là nguồn sự thật. Kế hoạch và quyết định cũ có thể đã lỗi thời.
+Mục tiêu của file này là mô tả trạng thái thật tại HEAD. Mã nguồn, test và `FEATURE_MAP.md` là nguồn sự thật. Kế hoạch và quyết định cũ có thể đã lỗi thời.
 
 ## Runtime hiện tại
 
-- Phiên bản: `0.88.0.dev2`. Kiểm tra ở `pyproject.toml`, `thyca/__init__.py`, `uv.lock` và `README.md`.
+- Phiên bản: `0.88.0.dev3`. Đồng bộ ở `pyproject.toml`, `thyca/__init__.py`, `uv.lock`, `README.md` và `.agents/`.
 - Điểm vào CLI nằm ở `thyca/app/cli.py`. Máy chủ WebUI vòng lặp nội bộ (loopback) nằm ở `thyca/serve/`.
 - WebUI là một SPA gốc duy nhất. File vào là `thyca/webui/ui/chat/index.html` tại `/`.
 - Sáu đường workspace cũ vẫn mở đúng màn. Đường Trace cũ được chuẩn hóa vào màn Sử dụng (Usage).
@@ -34,8 +34,8 @@ Mục tiêu của file này là mô tả trạng thái thật tại HEAD. Mã ng
 - Schema hiện tại là v2 (`SCHEMA_VERSION = 2` trong `thyca/conversations/store/database.py`).
 - Cơ sở dữ liệu chạy ở chế độ WAL. Gốc có marker và khóa riêng để chống mở nhầm gốc.
 - Không còn lưu hội thoại công khai bằng JSONL. Không có đường chuyển dữ liệu cũ (migration).
-- Hàm `require_no_legacy_sessions` trong `thyca/conversations/store/runtime.py` chặn khởi động khi còn `sessions/*.jsonl`. `ChatApp` gọi hàm này lúc dựng app.
-- Bốn class điều phối giữ nguyên tên ở bước này: `Session`, `SessionManager`, `SessionStore`, `SessionCompactor` trong `thyca/conversations/runtime/`.
+- Hàm `require_no_legacy_conversations` trong `thyca/conversations/store/runtime.py` chặn khởi động khi còn `sessions/*.jsonl`. `ChatApp` gọi hàm này lúc dựng app.
+- Bốn class điều phối trong `thyca/conversations/runtime/` là `ConversationRuntime`, `ConversationManager`, `ConversationStore`, `ConversationCompactor` (đã cắt sạch, không còn alias `Session*`).
 
 ### Lịch sử thực thi canonical
 
@@ -70,11 +70,12 @@ Mục tiêu của file này là mô tả trạng thái thật tại HEAD. Mã ng
 
 ## Bố cục gói
 
-- Layout backend là `thyca/{agents,llms,configs,memories,conversations,tools,skills,serve,app,core,platform,bots,webui,seeds}/`.
+- Layout backend là `thyca/{agents,app,bots,configs,conversations,core,llms,memories,platform,seeds,serve,skills,tools,webui}/`.
 - Cấm file lẻ ở tầng cao nhất, trừ `__init__.py` và `__main__.py`. Cấm shim.
 - `core/` và `platform/` là lá (leaf): chỉ dùng thư viện chuẩn, không import `thyca.*` khác.
 - `serve/` không import runtime `app/` ở mức module. Chỉ dùng `TYPE_CHECKING` và import lười (lazy).
 - MCP client nằm ở package `thyca/tools/mcp/` (`process`, `catalog`, `manager`). Không còn `thyca/tools/mcp.py`.
+- Mọi ranh giới trên được kiểm tra tự động trong `scripts/checks/check-tier1.sh`.
 
 ## MCP runtime
 
@@ -86,29 +87,24 @@ Mục tiêu của file này là mô tả trạng thái thật tại HEAD. Mã ng
 
 ## Dữ liệu và an toàn
 
-- User đã cho phép đặt lại (reset) và đã xóa toàn bộ dữ liệu `~/.thyca`. Dữ liệu đó gồm bộ nhớ, cấu hình, khóa và skills.
-- Không kiểm tra, không truy cập và không tạo lại `~/.thyca` hay nội dung trong đó.
+- User đã cho phép đặt lại (reset) và đã xóa toàn bộ dữ liệu `~/.thyca`. Không kiểm tra, không truy cập và không tạo lại `~/.thyca` trong quá trình phát triển hay chạy test.
+- `ensure_default(target)` truyền `target.parent` cho `write_config_guide` nên các root cô lập và test không chạm vào `~/.thyca`.
 - Không thêm ví dụ API key vào tài liệu hướng dẫn dự án.
 - Giữ nguyên các thay đổi không liên quan trong working tree và artifact untracked của user.
-- Mọi kế hoạch đã xong và lưu dưới `.agents/plans/done/` (cập nhật 2026-11-17: thêm `memories-optimize.md`). Không có plan in-progress. Không sửa và không xóa các file đã lưu trừ khi user yêu cầu cập nhật cho khớp HEAD.
-- Bộ nhớ L2 dùng 1 file ngày `memory/YYYY-MM-DD.md` với 3 sổ hành vi tách tại `thyca/memories/ledgers.py` (`apply_extracted` + delta `extract_from_transcript` nhận `open_tasks`, `today_entries`, `known_habits`): `Task` (`upsert_task_card` cập nhật tại chỗ trên `latest_memory_id` khi cùng cửa sổ `chat`, giữ `updated: YYYY-MM-DD` cho `last_day`, `TASK_STATUSES = open | done | cancelled`, `<memory_tasks>` rút ngay task đóng và gắn `[latest_memory_id]` + tóm tắt), `Habit` (`record_habit_entry` reinforce + cộng `count` theo ngày mới xuyên ngày trên cùng 1 lá theo nhãn chuẩn hóa, ẩn tóm tắt DM khi chéo cửa sổ, và đẩy lên `bots/<id>/USER.md` khi đủ 3 ngày hoặc `habit_explicit`), và `Other` (`append_other_journal` nối log thụt lề theo phạm vi `(bots, chat, proj)`, gộp chủ đề vào tiêu đề `##` và bỏ qua trùng chuẩn hóa / `rapidfuzz`). `ActiveMemory._here_block` gắn nhãn sổ gọn cho heading Task/Habit trong `<today>`.
+- Bộ nhớ L2 dùng 1 file ngày `memory/YYYY-MM-DD.md` với 3 sổ hành vi tách tại `thyca/memories/ledgers.py` (`Task`, `Habit`, `Other`); SQLite derived index ở `thyca/memories/schema.py` (`SCHEMA_VERSION = "10"`, FTS5 unigram + bigram + trigram, không vector). Lá bộ nhớ dùng `memory_id` / `latest_memory_id`.
 - Serve chỉ chạy loopback. Không để lộ secret, đường dẫn nội bộ hay stack trace qua API.
 - Markdown của bộ nhớ vẫn là nguồn sự thật của bộ nhớ. SQLite của bộ nhớ chỉ là mục lục suy ra (derived index).
-- Đọc `.agents/AGENT_RULES.md` và các quyết định/kế hoạch liên quan trước khi đổi contract bộ nhớ.
 
 ## Việc còn mở (nói rõ, không giấu)
 
-- Đổi tên bốn class `Session*` là bước riêng về sau. Bước này chưa làm.
-- Đổi tên trường `session_id` ở lá bộ nhớ thành `memory_id` là bước riêng về sau.
 - Chưa có bên phát hành vòng đời/đặt lại ngoài luồng khởi động cục bộ của `ChatApp`.
-- Chưa chốt chính sách giữ/xóa dữ liệu cũ (retention policy).
-- Chưa được phép đặt lại trên dữ liệu thật.
+- Chưa chốt chính sách giữ/xóa dữ liệu cũ (retention policy) cho SQLite hội thoại.
+- Chưa đóng nợ cách ly private qua `bash` và daily prefix vô chủ (`docs/TECH_DEBT.md` mục 10).
+- Chưa thiết lập kiểm chứng chất lượng nhà cung cấp thật tự động trong CI (`tests/test_live_memory_agent.py` là opt-in qua `THYCA_LIVE=1`).
 
 ## Kiểm chứng và review
 
-- Chạy cổng đầy đủ bằng `uv run pytest -q`. Chạy kiểm tra khoảng trắng bằng `git diff --check`.
-- Lần xác minh gần nhất (commit `e46b18e`): **2097 passed, 5 skipped** (bỏ qua vì Chrome/môi trường) và `git diff --check` sạch.
-- Đợt `e46b18e` gồm two-doors hardening (chia sẻ skill chỉ Thyca, skill IO qua checked descriptor, kiểm tra sender+recipient cùng transaction cho group request) và dọn code/test chết. Tất cả đã commit.
-- Review độc lập đã Approve cho đợt hardening + dọn dẹp trên. Chất lượng nhà cung cấp thật và kiểm tra khói trên gốc thật (live smoke) chưa được thiết lập.
-- Một test tập trung hoặc provider giả không chứng minh trạng thái toàn suite, hành vi trình duyệt hay chất lượng nhà cung cấp thật.
-- Cổng `ruff` đã cấu hình trong `pyproject.toml` nhưng chưa cài trong `.venv`. Cổng này chưa được xác minh.
+- **Tier 1:** `bash scripts/checks/check-tier1.sh` (chạy `ruff check .`, `node --check`, kiểm tra ranh giới + đồng bộ version, `scripts/checks/check-no-weakened-tests.sh`, `scripts/checks/check-comment-ban.sh`, `git diff --check`) và chạy tự động trong `.github/workflows/ci.yml`.
+- **Tier 2:** `uv run pytest -q` + kiểm chứng runtime thật (CLI / loopback HTTP / browser CDP khi có Chrome/Chromium qua `chromium_binary()`).
+- **Verification Artifacts:** xuất bằng chứng chạy thật vào `.agents/artifacts/manifest.md` (gitignored) và kiểm tra bằng `bash scripts/checks/check-artifacts.sh`.
+- Một test tập trung hoặc provider giả không chứng minh trạng thái toàn suite, hành vi trình duyệt thật hay chất lượng nhà cung cấp thật.

@@ -16,16 +16,18 @@ from thyca.agents.assemble import Assemble
 from thyca.agents.loop import AgentLoop
 from thyca.agents.observe import Observe
 from thyca.agents.think import Think
+from thyca.bots.timeline import CanonicalConversationStore, WorkspaceTimeline
 from thyca.configs import LimitsCfg
-from thyca.core.context import BACKSTOP_RATIO
-from thyca.core.protocol import Message
-from thyca.llms.llm_base import ChatReply
 from thyca.conversations.runtime import ConversationManager
+from thyca.conversations.runtime.compaction import ConversationCompactor, estimate_tokens
+from thyca.core.channel import WindowRef
+from thyca.core.context import BACKSTOP_RATIO
+from thyca.core.protocol import Message, ToolCall
+from thyca.llms.llm_base import ChatReply
+from thyca.serve.trace import turns_from_conversation
 
-# Build a canonical-timeline manager holding one execution conversation.
+
 def _canonical_manager(root: Path, limits=None) -> ConversationManager:
-    from thyca.bots.timeline import CanonicalConversationStore, WorkspaceTimeline
-    from thyca.core.channel import WindowRef
 
     timeline = WorkspaceTimeline(root, "thyca")
     window = WindowRef(
@@ -37,8 +39,6 @@ def _canonical_manager(root: Path, limits=None) -> ConversationManager:
     manager = ConversationManager(store=store, limits=limits)
     manager.load(conversation_id)
     return manager
-
-from thyca.conversations.runtime.compaction import ConversationCompactor, estimate_tokens
 
 
 class _FakeLLM:
@@ -52,7 +52,7 @@ class _FakeLLM:
 
 
 class _FakeDispatcher:
-    async def submit(self, call):  # pragma: no cover - no tools in this turn
+    async def submit(self, call):  # pragma: no cover -- reason: no tools in this turn
         raise AssertionError("no tool calls expected")
 
 
@@ -93,14 +93,11 @@ def test_compactor_fires_at_backstop_not_at_cap() -> None:
     ] * 3
     total = sum(estimate_tokens(message) for message in messages)
     assert total <= int(4000 * BACKSTOP_RATIO) < total + 25 <= 4000
-    # History alone sits under the backstop: only the full pending
-    # overhead (hot prompt + tools + the new user text) trips it.
     assert compactor.compact(list(messages), 4000) is None
     assert (
         compactor.compact(list(messages), 4000, pending_user_tokens=25)
         is not None
     )
-    # Well under the backstop: no aggressive compaction for low usage.
     small = [Message(role="user", content="hi")]
     assert compactor.compact(list(small), 4000) is None
 
@@ -128,7 +125,6 @@ def test_retry_user_survives_compaction(tmp_path: Path) -> None:
 
 
 def test_tool_group_never_splits(tmp_path: Path) -> None:
-    from thyca.core.protocol import ToolCall
 
     manager = _manager(tmp_path)
     _seed_pairs(manager)
@@ -214,7 +210,6 @@ def test_overhead_only_trip_keeps_prior_marker_byte_identical(
 
 
 def test_context_stop_is_not_success(tmp_path: Path) -> None:
-    from thyca.serve.trace import turns_from_conversation
 
     manager = _manager(tmp_path)
     conversation = manager.current
@@ -237,7 +232,6 @@ def test_context_stop_is_not_success(tmp_path: Path) -> None:
 
 
 def test_context_stop_keeps_prior_real_call(tmp_path: Path) -> None:
-    from thyca.serve.trace import turns_from_conversation
 
     manager = _manager(tmp_path)
     conversation = manager.current

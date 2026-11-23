@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import uuid
 
+from thyca.conversations.runtime import ConversationRuntime
 from thyca.core.channel import (
     ActorRef,
     ChannelAction,
@@ -18,7 +19,6 @@ from thyca.core.channel import (
     WindowRef,
 )
 from thyca.core.protocol import utc_now_ts
-from thyca.conversations.runtime import ConversationRuntime
 
 WEBUI_CHANNEL = ChannelRef(channel_id="webui", kind="webui")
 

@@ -10,15 +10,17 @@ Run::
 """
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import shutil
 import tempfile
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from tests.live.behavior_scenarios import (
@@ -277,10 +279,12 @@ def scenario_write_habit(app: ChatApp, root: Path, today: str) -> ScenarioResult
     else:
         if any(not str(c.args.get("habit") or "").strip() for c in habits):
             reasons.append("habit remember missing non-empty habit label")
-    if '"kind": "habit"' not in today_md and "kind\":\"habit\"" not in today_md:
-        # Heading JSON may use spacing variants.
-        if "habit" not in today_md.lower():
-            reasons.append("today.md missing habit marker")
+    if (
+        '"kind": "habit"' not in today_md
+        and "kind\":\"habit\"" not in today_md
+        and "habit" not in today_md.lower()
+    ):
+        reasons.append("today.md missing habit marker")
     return ScenarioResult(
         name="write_habit",
         passed=not reasons,
@@ -333,7 +337,6 @@ def scenario_search_seeded(
     app: ChatApp, root: Path, today: str, yesterday: str
 ) -> ScenarioResult:
     seed_yesterday_search_fixture(root, yesterday)
-    # Closed-day leaves need an index refresh before search.
     app._memory_facade.archive.reindex()
     dm_id = app.bot_dm(SYSTEM_BOT_ID)["conversation_id"]
     prompt = (
@@ -355,7 +358,6 @@ def scenario_search_seeded(
     index_hits = app._memory_facade.search("BazziteSmokeHeading", limit=5)
     if searches and not gold_ok:
         if index_hits.hits:
-            # Tool was used and index is healthy; accept query aiming at gold.
             qblob = " ".join(str(c.args.get("query") or "") for c in searches)
             if not any(tok.lower() in qblob.lower() for tok in ("bazzite", "nang", "đà", "da nang", "smoke")):
                 reasons.append("memory_search queries miss seeded topics")
@@ -411,7 +413,6 @@ def scenario_call_must_search(
     reasons: list[str] = []
     if not find_tools(calls, "memory_search"):
         reasons.append("must call memory_search for seeded recall")
-    # Writing is wrong for a pure recall question.
     if find_tools(calls, "memory_remember"):
         reasons.append("must not memory_remember when only asked to recall")
     return ScenarioResult(
@@ -439,11 +440,12 @@ def scenario_call_no_remember_chitchat(
         "Không ghi nhớ, không mở task, không search trí nhớ."
     )
     reply, calls = _run_turn(app, dm_id, prompt)
-    reasons: list[str] = []
     names = [c.name for c in calls]
-    for forbidden in ("memory_remember", "memory_search", "memory_tasks", "memory_update"):
-        if forbidden in names:
-            reasons.append(f"must not call {forbidden} on chitchat/math")
+    reasons = [
+        f"must not call {forbidden} on chitchat/math"
+        for forbidden in ("memory_remember", "memory_search", "memory_tasks", "memory_update")
+        if forbidden in names
+    ]
     return ScenarioResult(
         name="call_no_remember_chitchat",
         passed=not reasons,
@@ -607,8 +609,7 @@ def format_report(results: list[ScenarioResult], *, verbose: bool = False) -> st
         if r.passed and not verbose:
             continue
         lines.append(f"### `{r.name}` details")
-        for reason in r.reasons:
-            lines.append(f"- reason: {reason}")
+        lines.extend(f"- reason: {reason}" for reason in r.reasons)
         for idx, c in enumerate(r.tool_calls, start=1):
             err_tag = " [ERROR]" if c.is_error else ""
             args_s = _clip(json.dumps(c.args, ensure_ascii=False), 180)
@@ -621,7 +622,6 @@ def format_report(results: list[ScenarioResult], *, verbose: bool = False) -> st
 
 
 def main(argv: list[str] | None = None) -> int:
-    import argparse
 
     parser = argparse.ArgumentParser(description="Live Thyca memory-agent scenarios")
     parser.add_argument(

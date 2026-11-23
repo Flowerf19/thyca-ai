@@ -31,9 +31,6 @@ def _heading(entry: str, title: str, exp: str) -> str:
     )
 
 
-# --- T6a: expired/forgotten vs never-existed ---
-
-
 def test_t6a_expired_errors_name_the_cause(tmp_path: Path) -> None:
     _seed(
         tmp_path,
@@ -48,12 +45,10 @@ def test_t6a_expired_errors_name_the_cause(tmp_path: Path) -> None:
         facade.archive.get(memory_id=sid)
     with pytest.raises(ArchiveError, match=r"^chunk expired: "):
         facade.archive.get(chunk_id=cid)
-    # Facade must not mask the cause behind the writer fallback.
     with pytest.raises(ArchiveError, match=r"^memory expired: "):
         facade.get(memory_id=sid)
     with pytest.raises(ArchiveError, match=r"^chunk expired: "):
         facade.get(chunk_id=cid)
-    # Live rows and never-existed ids keep their behavior.
     assert "still alive" in facade.get(memory_id="2026-08-13#ffffffff")
     with pytest.raises(ArchiveError, match=r"^memory not found: "):
         facade.archive.get(memory_id="2026-08-13#zzzzzzzz")
@@ -97,15 +92,11 @@ def test_t6a_lookup_memory_id_is_precise(tmp_path: Path) -> None:
         facade.archive.lookup_memory_id("2026-08-13#zzzzzzzz#1")
 
 
-# --- T6b: search warnings ---
-
-
 def test_t6b_limit_clamp_warns(tmp_path: Path) -> None:
     facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
     assert facade.search("x", limit=0).warnings == ["limit clamped from 0 to 1"]
     assert facade.search("x", limit=99).warnings == ["limit clamped from 99 to 10"]
     assert facade.search("x", limit=5).warnings == []
-    # Early validation returns keep their single warning.
     assert facade.search("", limit=0).warnings == ["empty query"]
 
 
@@ -150,9 +141,6 @@ def test_t6b_candidate_cap_warns(tmp_path: Path) -> None:
     ]
 
 
-# --- T6c: timeline_day=today warns ---
-
-
 def test_t6c_timeline_day_today_warns(tmp_path: Path) -> None:
     facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
     now = at("2026-08-17")
@@ -167,18 +155,14 @@ def test_t6c_timeline_day_today_warns(tmp_path: Path) -> None:
     assert past.warnings == []
 
 
-# --- T8: chunk_id writer fallback ---
-
-
 def test_t8_today_chunk_falls_back_to_writer(tmp_path: Path) -> None:
     facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
     sid = facade.remember("lunch", "eat pho today maybe uniquetokenzz")
     cid = f"{sid}#1"
     leaf = facade.get(chunk_id=cid)
     assert "uniquetokenzz" in leaf
-    assert "## " not in leaf  # leaf text, not the whole session
+    assert "## " not in leaf
     assert cid in facade.archive.store.usage.get_map()
-    # ConversationRuntime fallback still works alongside.
     assert "uniquetokenzz" in facade.get(memory_id=sid)
 
 

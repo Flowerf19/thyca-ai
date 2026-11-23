@@ -5,20 +5,21 @@ and re-exports the store vocabulary so existing imports stay stable.
 """
 from __future__ import annotations
 
+from dataclasses import replace as _replace
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from thyca.configs import DEFAULT_TIMELINE_TIMEZONE
 from thyca.memories.archive_store import (
-    CANDIDATE_CAP,  # noqa: F401 — re-exported
+    CANDIDATE_CAP,  # noqa: F401 -- reason: re-exported
     DATE_RE,
     GET_MEMORY_CAP,
-    SCHEMA_VERSION,  # noqa: F401 — re-exported
+    SCHEMA_VERSION,  # noqa: F401 -- reason: re-exported
     ArchiveError,
     ArchiveStore,
     Hit,
-    SearchResult,  # noqa: F401 — re-exported
+    SearchResult,  # noqa: F401 -- reason: re-exported
     hit_from_row,
 )
 from thyca.memories.chunk import Chunker
@@ -146,7 +147,6 @@ class ArchivedMemory:
         ]
 
     def with_counts(self, hits: list[Hit], now: datetime | None = None) -> list[Hit]:
-        from dataclasses import replace as _replace
 
         if not hits:
             return []
@@ -203,17 +203,14 @@ class ArchivedMemory:
         except UnicodeDecodeError as exc:
             raise ArchiveError(f"memory file is not valid UTF-8: {path}") from exc
         except FileNotFoundError:
-            text = None  # Vanished mid-read: same drop path as text is None.
+            text = None
         if text is None:
-            # Vanished between the stat and the read: drop, like a missing file.
             self.store.drop_source(str(path))
             return
         chunks = self.chunker.chunk_markdown(path, text, source_kind=kind, timeline_day=day)
         self.store.replace_source(str(path), kind, day, stat.st_mtime_ns, stat.st_size, chunks)
 
     def _chunk_miss_error(self, chunk_id: str, now: str) -> ArchiveError:
-        # T6a: VISIBLE_SQL collapses expired/forgotten/never-existed into
-        # one miss — re-read the raw row to name the real cause.
         row = self.store.get_chunk_any(chunk_id)
         if row is None:
             return ArchiveError(f"chunk not found: {chunk_id}")
@@ -234,9 +231,6 @@ class ArchivedMemory:
         return ArchiveError(f"memory not found: {memory_id}")
 
 
-#: Miss prefixes that must not fall back to the writer (T6a): the row is
-#: indexed but invisible, so the file holds the same expired/forgotten
-#: heading — falling back would mask the real cause as "not found".
 NO_FALLBACK_PREFIXES = (
     "chunk expired:",
     "chunk forgotten:",

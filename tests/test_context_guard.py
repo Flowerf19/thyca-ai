@@ -17,15 +17,15 @@ from thyca.agents.shrink import (
     shrink_stage_messages,
 )
 from thyca.agents.think import Think
+from thyca.bots.timeline import CanonicalConversationStore, WorkspaceTimeline
+from thyca.conversations.runtime import ConversationManager
+from thyca.core.channel import WindowRef
 from thyca.core.protocol import Message, ToolCall, ToolResult
 from thyca.core.protocol import estimate_tokens as _chars_to_tokens
 from thyca.llms.llm_base import ChatReply
-from thyca.conversations.runtime import ConversationManager
 
-# Build a canonical-timeline manager holding one execution conversation.
+
 def _canonical_manager(root: Path, limits=None) -> ConversationManager:
-    from thyca.bots.timeline import CanonicalConversationStore, WorkspaceTimeline
-    from thyca.core.channel import WindowRef
 
     timeline = WorkspaceTimeline(root, "thyca")
     window = WindowRef(
@@ -39,15 +39,12 @@ def _canonical_manager(root: Path, limits=None) -> ConversationManager:
     return manager
 
 
-
 def _tool(content: str, round_no: int | None = None, call_id: str = "c1") -> Message:
     meta = {"round": round_no} if round_no is not None else None
     return Message(role="tool", content=content, tool_call_id=call_id, meta=meta)
 
 
 def test_exec_ids_come_from_metadata_never_text() -> None:
-    # Quoted ids in output text are not references: without gateway
-    # metadata (or an original tool_read call) there is no pointer.
     content = "x" * 3000 + '\nread more: tool_read id="exec3"'
     messages = [_tool(content, 1)]
     estimate = estimate_wire_tokens(messages)
@@ -57,7 +54,6 @@ def test_exec_ids_come_from_metadata_never_text() -> None:
     )
     assert count == 1
     assert 'id="exec3"' not in (shrunk[0].content or "")
-    # Gateway-attached metadata is the authority: the pointer names it.
     trusted = Message(
         role="tool",
         content="x" * 3000,
@@ -94,7 +90,6 @@ def test_refetchable_shape_head_plus_pointer() -> None:
     assert shrunk[0].role == "tool"
     assert shrunk[0].tool_call_id == "c1"
     assert shrunk[0].meta == {"round": 1, "exec_id": "exec9"}
-    # Original untouched (in-memory-only).
     assert messages[0].content == content
 
 
@@ -115,8 +110,6 @@ def test_fastpath_shape_head_plus_rerun() -> None:
 
 
 def test_quoted_exec_refs_never_become_pointers() -> None:
-    # Two quoted ids in text used to block shrinking (ambiguity); text
-    # carries no authority now, so the output shrinks as a fast path.
     content = "z" * 3000 + '\ntool_read id="exec1" and tool_read id="exec2"'
     messages = [_tool(content, 1)]
     estimate = estimate_wire_tokens(messages)
@@ -137,10 +130,8 @@ def test_last_three_rounds_protected() -> None:
         messages, current_round=5, context_tokens=context
     )
     assert count >= 1
-    # Rounds 3,4,5 never touched.
     for original, new in zip(messages[2:], shrunk[2:], strict=True):
         assert new.content == original.content
-    # At least round 1 (oldest eligible) shrunk.
     assert shrunk[0].content != messages[0].content
 
 
@@ -153,7 +144,6 @@ def test_refetchable_before_fastpath_despite_age() -> None:
         meta={"round": 2, "exec_id": "exec4"},
     )
     messages = [fastpath, refetch]
-    # One shrink must suffice: total just over 80%, one refetch save drops under 70%.
     estimate = estimate_wire_tokens(messages)
     context = int(estimate / 0.82)
     shrunk, count, _, new_estimate = shrink_stage_messages(
@@ -161,8 +151,8 @@ def test_refetchable_before_fastpath_despite_age() -> None:
     )
     assert count == 1
     assert new_estimate < int(context * 0.7)
-    assert shrunk[0].content == fastpath.content  # fast-path intact
-    assert shrunk[1].content != refetch.content  # refetchable shrunk first
+    assert shrunk[0].content == fastpath.content
+    assert shrunk[1].content != refetch.content
     assert 'tool_read id="exec4"' in (shrunk[1].content or "")
 
 
@@ -241,7 +231,6 @@ def test_loop_shrink_history_then_continue_disk_intact(tmp_path: Path) -> None:
     manager.append(_tool(big, 9, call_id="old-call"))
     llm = _FakeLLM([ChatReply(content="fresh answer")])
     events: list[TurnEvent] = []
-    # History alone exceeds 80%: guard must shrink it in-memory and continue.
     history_estimate = estimate_wire_tokens(
         [Message(role="user", content="new q"), *manager.current.messages]
     )
@@ -254,7 +243,6 @@ def test_loop_shrink_history_then_continue_disk_intact(tmp_path: Path) -> None:
     assert len(shrunk_events) == 1
     assert shrunk_events[0].tool_count == 1
     assert (shrunk_events[0].hidden_bytes or 0) > 0
-    # Wire saw the stub; disk keeps the full output.
     wire_tool = next(m for m in llm.requests[0] if m.role == "tool")
     assert "[shrunk:" in (wire_tool.content or "")
     stored = _canonical_manager(tmp_path).load(conversation.conversation_id).messages
@@ -267,7 +255,6 @@ def test_loop_backstop_when_still_over_95(tmp_path: Path) -> None:
     manager = _canonical_manager(tmp_path)
     conversation = manager.current
     llm = _FakeLLM([ChatReply(content="never reached")])
-    # User text alone exceeds 95% and is never shrinkable.
     context = 500
     big_user = "q" * 3000
     loop = _loop(manager, llm, _FakeDispatcher({}), context)
@@ -300,8 +287,6 @@ def test_loop_guard_disabled_by_default(tmp_path: Path) -> None:
 
 
 def test_shrink_is_idempotent_across_rounds() -> None:
-    # Unshrinkable user bulk keeps the estimate over trigger after round 1,
-    # forcing a real second scan (not the early return).
     messages = [
         Message(role="user", content="u" * 40000),
         _tool("y" * 2500, 1),
@@ -324,7 +309,7 @@ def test_shrink_is_idempotent_across_rounds() -> None:
 
 
 def test_history_before_run_start_ignores_round_protection() -> None:
-    history = _tool("h" * 4000, 1)  # round collides with current_round=1
+    history = _tool("h" * 4000, 1)
     own = _tool("o" * 4000, 1)
     messages = [history, own]
     estimate = estimate_wire_tokens(messages)
@@ -333,8 +318,8 @@ def test_history_before_run_start_ignores_round_protection() -> None:
         messages, current_round=1, context_tokens=context, run_start=1
     )
     assert count == 1
-    assert shrunk[0].content != history.content  # history: oldest-first
-    assert shrunk[1].content == own.content  # own round: protected
+    assert shrunk[0].content != history.content
+    assert shrunk[1].content == own.content
 
 
 def test_loop_backstop_after_shrink_reports_both(tmp_path: Path) -> None:
@@ -362,13 +347,10 @@ def test_loop_backstop_after_shrink_reports_both(tmp_path: Path) -> None:
     stored = _canonical_manager(tmp_path).load(conversation.conversation_id).messages
     assert stored[-1].content == "context limit reached"
     assert (stored[-1].meta or {}).get("status") == "context_limit"
-    # Minimal backstop meta: no stale usage/cost from a previous round.
     assert "usage" not in (stored[-1].meta or {})
 
 
 def test_loop_live_exec_ids_reaches_think_under_pressure(tmp_path: Path) -> None:
-    # Bug 1: loop passed Act.live_exec_ids without parens (bound method, not
-    # a set), so any scanned in-run candidate crashed `in` with TypeError.
     manager = _canonical_manager(tmp_path)
     big = "x" * 8000
     dispatcher = _FakeDispatcher(
@@ -380,7 +362,7 @@ def test_loop_live_exec_ids_reaches_think_under_pressure(tmp_path: Path) -> None
             "c3": ToolResult(tool_call_id="c3", name="bash", content="ok3"),
         }
     )
-    dispatcher.executions = {"exec1": object()}  # gateway-style retention
+    dispatcher.executions = {"exec1": object()}
     llm = _FakeLLM(
         [
             ChatReply(
@@ -398,8 +380,6 @@ def test_loop_live_exec_ids_reaches_think_under_pressure(tmp_path: Path) -> None
             ChatReply(content="done"),
         ]
     )
-    # Round-4 wire shape: only the round-1 tool escapes round protection
-    # (4 - 1 >= 3) and reaches the live-set membership check.
     round4 = [
         Message(role="user", content="go"),
         Message(
@@ -423,8 +403,8 @@ def test_loop_live_exec_ids_reaches_think_under_pressure(tmp_path: Path) -> None
     ]
     estimate = estimate_wire_tokens(round4)
     context = int(estimate / 0.85)
-    assert estimate > int(context * TRIGGER_RATIO)  # guard must scan
-    assert estimate <= int(context * 0.95)  # ...but no backstop
+    assert estimate > int(context * TRIGGER_RATIO)
+    assert estimate <= int(context * 0.95)
     loop = _loop(manager, llm, dispatcher, context)
     events: list[TurnEvent] = []
     assert asyncio.run(loop.run("go", event_sink=events.append)) == "done"
@@ -432,14 +412,11 @@ def test_loop_live_exec_ids_reaches_think_under_pressure(tmp_path: Path) -> None
     shrunk_events = [event for event in events if event.type == "context.shrunk"]
     assert len(shrunk_events) == 1
     assert shrunk_events[0].tool_count == 1
-    # Live-set membership trusted the id: refetchable pointer on the wire.
     wire_c1 = next(m for m in llm.requests[3] if m.tool_call_id == "c1")
     assert 'tool_read id="exec1"' in (wire_c1.content or "")
 
 
 def test_pending_user_uses_wire_estimate(tmp_path: Path) -> None:
-    # Bug 2: loop counted raw chars while the guard counts the wire payload
-    # (~8-token undercount). Compactor and guard must agree within a few.
     manager = _canonical_manager(tmp_path)
     seen: dict = {}
     real_compact = manager.compact_if_needed
@@ -448,12 +425,11 @@ def test_pending_user_uses_wire_estimate(tmp_path: Path) -> None:
         seen.update(kwargs)
         return real_compact(*args, **kwargs)
 
-    manager.compact_if_needed = spy  # type: ignore[method-assign]
+    manager.compact_if_needed = spy  # type: ignore[method-assign] -- reason: test spy method replacement
     user_msg = "please summarize the logs"
     llm = _FakeLLM([ChatReply(content="ok")])
     loop = _loop(manager, llm, _FakeDispatcher({}), 4000)
     assert asyncio.run(loop.run(user_msg)) == "ok"
     wire = estimate_wire_tokens([Message(role="user", content=user_msg)])
     assert abs(seen["pending_user_tokens"] - wire) <= 3
-    # Sensitivity: raw char-count really is several tokens short here.
     assert wire - _chars_to_tokens(user_msg) >= 5

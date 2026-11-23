@@ -14,11 +14,6 @@ import threading
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
-
-#: A completed turn stays visibly "done" only briefly; after this the
-#: bot is simply idle again. Waiting/error latches behave differently:
-#: they persist until the user answers in that room or the bot starts
-#: another turn there (see ``note_user_message`` / ``begin_turn``).
 DONE_TTL_SECONDS = 60
 
 _BOT_ID_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
@@ -59,18 +54,14 @@ class _Turn:
     started_at: datetime
     updated_at: datetime
     phase: str = "turn"
-    # Live calls by public call id. A list (not one entry) so two
-    # concurrent calls that sanitize to the same public id stay two
-    # calls: each finish removes exactly one, keeping displayed ×N
-    # counts accurate under sanitized id collisions.
     actions: dict[str, list[_Action]] = field(default_factory=dict)
     seen_invocations: set[str] = field(default_factory=set)
-    wait_kind: str | None = None  # "user" (ask_user) | "blocked" (report_error)
+    wait_kind: str | None = None
 
 
 @dataclass
 class _Latch:
-    state: str  # waiting | done | error
+    state: str
     since: datetime
     updated_at: datetime
     room_id: str
@@ -94,7 +85,6 @@ class AgentStatusTracker:
         self._latches: dict[tuple[str, str], _Latch] = {}
         self._last_results: dict[str, dict] = {}
 
-    # -- turn lifecycle -------------------------------------------------
 
     def begin_turn(
         self,
@@ -113,7 +103,6 @@ class AgentStatusTracker:
         now = at or datetime.now(UTC)
         room = room_id if isinstance(room_id, str) else ""
         with self._lock:
-            # New work in a room supersedes that room's terminal latch.
             self._latches.pop((bot, room), None)
             self._active[span] = _Turn(
                 bot_id=bot,
@@ -186,8 +175,6 @@ class AgentStatusTracker:
                                   if action.kind == kind
                                   and (name is None or action.name == name)
                                   and (action.invocation_id == invocation_id)]
-                    # Legacy events have no invocation token. Only a unique
-                    # legacy match is safe; never guess among collisions.
                     if len(candidates) == 1:
                         entries.pop(candidates[0])
                         if not entries:
@@ -196,8 +183,6 @@ class AgentStatusTracker:
             elif event_type == "llm.finished":
                 turn.phase = "turn"
             else:
-                # turn.accepted, context.shrunk, and anything else the
-                # loop emits still prove the turn is alive and working.
                 turn.phase = "turn"
 
     def note_card_posted(
@@ -293,7 +278,6 @@ class AgentStatusTracker:
             )
             return True
 
-    # -- room / roster maintenance ---------------------------------------
 
     def note_user_message(self, room_id: object, *, at: datetime | None = None) -> None:
         """A fresh user message resolves waiting/error/done in its room."""
@@ -331,7 +315,6 @@ class AgentStatusTracker:
             for bot in [bot for bot in self._last_results if bot not in keep]:
                 del self._last_results[bot]
 
-    # -- snapshots ---------------------------------------------------------
 
     def snapshot(
         self,
@@ -452,8 +435,6 @@ class AgentStatusTracker:
             "waiting_on": None,
         }
         if not bot or not room:
-            # No exact window, no tasks: an absent binding or room must
-            # never read as permission to display another room's work.
             return base
         with self._lock:
             self._prune_expired(now)

@@ -1,13 +1,21 @@
 """Shared heading grammar — JSON comment is the write format."""
 from __future__ import annotations
 
+from datetime import datetime
+from pathlib import Path
+from zoneinfo import ZoneInfo
+
 import pytest
 
+from thyca.memories.active import ActiveMemory
+from thyca.memories.archived import ArchivedMemory
 from thyca.memories.heading import (
     HeadingMeta,
+    day,
     is_session_heading,
     memory_id,
     parse_heading,
+    read_text_file,
     render_heading,
     resolve_entry_id,
     strip_comment,
@@ -104,13 +112,7 @@ def test_proj_chat_roundtrip_and_old_heading_stays_empty() -> None:
     assert old.chat is None
 
 
-# Moved from test_b4_unification.py / test_b4_p2.py (B4 batch).
-from datetime import datetime
-from zoneinfo import ZoneInfo
-from pathlib import Path
-
 def test_x8_read_text_file_policy(tmp_path: Path) -> None:
-    from thyca.memories.heading import read_text_file
 
     assert read_text_file(tmp_path / "missing.md") is None
     link = tmp_path / "link.md"
@@ -126,9 +128,6 @@ def test_x8_read_text_file_policy(tmp_path: Path) -> None:
 
 
 def test_x9_day_shared_by_active_and_archived(tmp_path: Path) -> None:
-    from thyca.memories.active import ActiveMemory
-    from thyca.memories.archived import ArchivedMemory
-    from thyca.memories.heading import day
 
     zone = ZoneInfo("Asia/Ho_Chi_Minh")
     assert day(datetime(2026, 1, 1, 23, 30), zone) == "2026-01-01"

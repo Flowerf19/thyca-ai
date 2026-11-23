@@ -61,7 +61,6 @@ def _conversation_text(fresh: list[Message]) -> str:
             if message.tool_calls:
                 hints = ", ".join(_tool_hint(call) for call in message.tool_calls)
                 lines.append(f"Assistant used tools: {hints}")
-        # Tool results and system rows never enter the summarizer input.
     return "\n".join(lines)
 
 

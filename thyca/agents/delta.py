@@ -29,7 +29,6 @@ class _Delta:
             and len(self.bot_id) <= 64
             and _BOT_ID_RE.fullmatch(self.bot_id)
         ):
-            # Attribution is telemetry: a bad stamp is dropped.
             object.__setattr__(self, "bot_id", None)
 
     def to_dict(self) -> dict:

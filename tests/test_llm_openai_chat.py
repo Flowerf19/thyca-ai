@@ -1,14 +1,27 @@
 from __future__ import annotations
 
+import asyncio
 import json
 
 import httpx
 import pytest
 
+import thyca.llms._http as http
+import thyca.llms.openai_chat as chat_parse
+import thyca.llms.openai_responses as resp_parse
+import thyca.llms.streaming as streaming
 from thyca.configs import Config, ModelCfg, ProviderCfg, ProviderEntry
-from thyca.llms.llm_base import LLMError, normalize_usage
-from thyca.llms.openai_chat import OpenAIChat, _chat_url
-from thyca.core.protocol import Message, ToolCall
+from thyca.configs.providers import resolve
+from thyca.core.protocol import RESULT_CAP_BYTES, Message, ToolCall
+from thyca.llms._http import BaseConnect, iter_sse_data, parse_json_bytes
+from thyca.llms.llm_base import ChatReply, LLMError, normalize_usage
+from thyca.llms.openai_chat import (
+    OpenAIChat,
+    _chat_url,
+    _to_openai_message,
+    parse_chat_bytes,
+    slots_to_calls,
+)
 
 
 def test_chat_url_does_not_double_slash() -> None:
@@ -132,8 +145,6 @@ def test_normalize_usage_unknown_shape_is_none() -> None:
 
 
 def test_normalize_usage_unknown_provider_uses_generic_counters() -> None:
-    # OpenAI-only is deliberate: vendor-specific shapes are gone; unknown
-    # providers read the generic snake_case counters.
     assert normalize_usage(
         {"prompt_tokens": 10, "completion_tokens": 3, "total_tokens": 13},
         "anthropic",
@@ -346,8 +357,6 @@ async def test_chat_sends_default_max_tokens() -> None:
 
 @pytest.mark.asyncio
 async def test_chat_model_max_tokens_wins_and_survives_drop_retry() -> None:
-    from thyca.configs import ModelCfg
-    from thyca.configs.providers import resolve
 
     provider = resolve(
         ProviderEntry(baseUrl="https://api.example.com/v1", apiKey="sk-secret-key"),
@@ -593,7 +602,6 @@ async def test_reasoning_key_redacted_in_delta() -> None:
 
 @pytest.mark.asyncio
 async def test_reasoning_capped_at_result_limit() -> None:
-    from thyca.core.protocol import RESULT_CAP_BYTES
 
     huge = "a" * (RESULT_CAP_BYTES + 50)
 
@@ -716,7 +724,6 @@ async def test_no_reasoning_details_is_none() -> None:
 
 
 def test_to_openai_message_roundtrips_reasoning_details() -> None:
-    from thyca.llms.openai_chat import _to_openai_message
 
     details = [{"type": "reasoning.text", "text": "t", "signature": "s"}]
     payload = _to_openai_message(
@@ -809,19 +816,10 @@ async def test_split_chunk_key_redacted() -> None:
     assert all("sk-secret-key" not in item for item in seen_content)
 
 
-# Moved from test_b4_unification.py / test_b4_p2.py (B4 batch).
-import asyncio
-import json
-
 def test_x5_redact_cap_single_home() -> None:
-    import thyca.llms._http as http
-    import thyca.llms.openai_chat as chat_parse
-    import thyca.llms.openai_responses as resp_parse
-    import thyca.llms.streaming as streaming
 
-    # No onboarding leg: onboarding handles no raw keys anymore (TASK-013).
     assert chat_parse.redact is http.redact
-    assert not hasattr(chat_parse, "cap")  # no error-caps left here at all
+    assert not hasattr(chat_parse, "cap")
     assert resp_parse.redact is http.redact
     assert resp_parse.cap is http.cap
     assert streaming.redact is http.redact
@@ -831,10 +829,7 @@ def test_x5_redact_cap_single_home() -> None:
 
 
 def test_x15_sse_preamble_shared() -> None:
-    import httpx
 
-    from thyca.llms._http import iter_sse_data
-    from thyca.llms.llm_base import LLMError
 
     async def collect(payload: bytes):
         response = httpx.Response(200, content=payload)
@@ -849,9 +844,6 @@ def test_x15_sse_preamble_shared() -> None:
 
 
 def test_x15_bytes_and_slots_shared() -> None:
-    from thyca.llms._http import parse_json_bytes
-    from thyca.llms.llm_base import LLMError
-    from thyca.llms.openai_chat import slots_to_calls, parse_chat_bytes
 
     assert parse_json_bytes(b'{"a": 1}', "k") == {"a": 1}
     with pytest.raises(LLMError, match="must be an object"):
@@ -872,8 +864,6 @@ def test_x15_bytes_and_slots_shared() -> None:
 
 
 def test_x15_emit_callbacks_shared() -> None:
-    from thyca.llms._http import BaseConnect
-    from thyca.llms.llm_base import ChatReply
 
     seen: list[str] = []
     reply = ChatReply(content="c", reasoning="r")
@@ -882,7 +872,6 @@ def test_x15_emit_callbacks_shared() -> None:
     BaseConnect._emit_callbacks(ChatReply(content=None), None, None)
 
 
-# Moved from tests/test_b2_contracts.py (B2 batch).
 def _provider() -> ProviderCfg:
     return ProviderCfg(
         baseUrl="https://api.example.com/v1",

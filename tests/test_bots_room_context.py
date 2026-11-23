@@ -66,7 +66,7 @@ def test_filter_matrix() -> None:
     assert by_content["card body here"] == "designer"
     assert by_content["[thẻ question: Pick one]"] == "designer"
     assert by_content["delegated result"] == "designer"
-    assert "reasoned" in by_content  # content only; reasoning never leaks
+    assert "reasoned" in by_content
     for dropped in ("my own words", "bus copy", "do this", "step update",
                     "tool output here", "naming pick", "compacted",
                     "old bus message"):
@@ -81,22 +81,18 @@ def test_delta_first_match_mismatch_and_empty() -> None:
     assert "lịch sử phòng chưa đọc" in text
     assert "trước khi bạn tham gia" in text
     assert "one" in text and "two" in text
-    count, last_fp = cursor
+    count, _last_fp = cursor
     assert count == 2
-    # Matching cursor + one new message: only the new one.
     rows.append(_msg("user", "three"))
     text2, cursor2 = room_delta(rows, "coder", cursor)
     assert "Tin mới trong phòng" in text2
     assert "three" in text2 and "one" not in text2
-    # Nothing new: empty text, same cursor.
     text3, cursor3 = room_delta(rows, "coder", cursor2)
     assert text3 == "" and cursor3 == cursor2
-    # Edited history: fingerprint mismatch redelivers everything.
     edited = [_msg("user", "one EDITED"), _msg("user", "two")]
     text4, _cursor4 = room_delta(edited, "coder", cursor2)
     assert "đã thay đổi" in text4
     assert "one EDITED" in text4
-    # Preamble always present on delivery.
     assert "KHÔNG phải lời của bạn" in text2
 
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import json
+import re
 import threading
 from pathlib import Path
 
@@ -18,6 +19,7 @@ from thyca.bots.workspace import (
     WorkspaceTurnConflict,
 )
 from thyca.bots.workspace_store import WorkspaceStore, WorkspaceStoreError
+from thyca.conversations.runtime import ConversationManager
 from thyca.core.channel import (
     ActorRef,
     ChannelAction,
@@ -26,8 +28,8 @@ from thyca.core.channel import (
     ChannelRef,
     WindowRef,
 )
+from thyca.core.channel import WindowRef as _WR
 from thyca.core.protocol import Message, utc_now_ts
-from thyca.conversations.runtime import ConversationManager
 
 
 def _runtime(tmp_path: Path) -> BotRuntime:
@@ -87,10 +89,8 @@ def test_contract_validation_and_window_serialization() -> None:
 
 
 def test_registry_single_current_shape_and_strictness(tmp_path: Path) -> None:
-    from thyca.core.channel import WindowRef as _WR
 
     store = WorkspaceStore(tmp_path)
-    # One current shape only: a legacy room_conversations.json file is ignored.
     legacy = tmp_path / "bots" / "coder" / "room_conversations.json"
     legacy.parent.mkdir(parents=True)
     legacy.write_text(json.dumps({
@@ -104,7 +104,6 @@ def test_registry_single_current_shape_and_strictness(tmp_path: Path) -> None:
         participants=("coder",)), cursor=(4, "fp4"))
     assert binding.internal_conversation_id
     assert binding.cursor == (4, "fp4")
-    # Malformed registry entries raise instead of being tolerated.
     path = tmp_path / "bots" / "coder" / "workspace" / "registry.json"
     doc = json.loads(path.read_text(encoding="utf-8"))
     doc["windows"]["w-bad"] = "sess-string"
@@ -130,9 +129,6 @@ def test_restart_loads_exact_internal_ids_and_cursors(tmp_path: Path) -> None:
 
 
 def test_transcript_rows_never_seed_the_cursor(tmp_path: Path) -> None:
-    from thyca.bots.timeline import WorkspaceTimeline
-    from thyca.bots.timeline import CanonicalConversationStore
-    from thyca.core.channel import WindowRef as _WR
 
     runtime = _runtime(tmp_path)
     internal = runtime.internal_conversation("coder", "room1")
@@ -141,8 +137,6 @@ def test_transcript_rows_never_seed_the_cursor(tmp_path: Path) -> None:
     store = runtime._canonical_store("coder", window, internal.conversation_id)
     manager = ConversationManager(store=store)
     manager.load(internal.conversation_id)
-    # Even a legacy-shaped synthetic row in the transcript must not
-    # seed the cursor: the registry binding is the only source.
     manager.append(Message(role="user", content="delta",
                            meta={"kind": "room_context", "room_cursor": 9,
                                  "room_fingerprint": "fp9"}))
@@ -166,10 +160,7 @@ def test_bind_dm_and_group_window_metadata(tmp_path: Path) -> None:
 
 
 def test_bind_window_mints_conversation_id_for_new_window(tmp_path: Path) -> None:
-    import re
 
-    # Canonical per-bot timeline ids are an internal concept with their
-    # own timestamp grammar; they are never public DM/group door ids.
     store = WorkspaceStore(tmp_path)
     binding = store.bind_window("coder", WindowRef(
         window_id="w1", channel_id="webui", kind="dm",
@@ -183,7 +174,6 @@ def test_bind_window_mints_conversation_id_for_new_window(tmp_path: Path) -> Non
     assert loaded.internal_conversation_id == binding.internal_conversation_id
     assert loaded.cursor is None
     assert loaded.window.kind == "dm"
-    # An explicit conversation id is preserved, never reminted.
     second = store.bind_window(
         "coder", WindowRef(
             window_id="w1", channel_id="webui", kind="dm",
@@ -282,7 +272,6 @@ def test_runtime_binding_roundtrip_in_registry_no_legacy_files(
     assert entry["conversation"] == internal.conversation_id
     assert entry["room_cursor"] == 3
     assert entry["room_fingerprint"] == "fp3"
-    # No legacy mirror or backup is ever written.
     assert not (tmp_path / "bots" / "coder" / "room_conversations.json").exists()
     assert not (tmp_path / "bots" / "coder"
                 / "room_conversations.json.bak").exists()
@@ -339,11 +328,10 @@ def test_lease_reentry_same_bot_conflicts(tmp_path: Path) -> None:
     registry = WorkspaceRegistry(tmp_path)
 
     async def main() -> None:
-        async with registry.lease("alpha"):
-            async with registry.lease("beta"):
-                with pytest.raises(WorkspaceTurnConflict):
-                    async with registry.lease("alpha"):
-                        pass
+        async with registry.lease("alpha"), registry.lease("beta"):
+            with pytest.raises(WorkspaceTurnConflict):
+                async with registry.lease("alpha"):
+                    pass
 
     asyncio.run(main())
 
@@ -502,9 +490,8 @@ def test_lease_cancel_while_queued_clears_wait_edge(tmp_path: Path) -> None:
             assert registry._waiting == {}
 
     async def _nested(reg: WorkspaceRegistry) -> None:
-        async with reg.lease("helper"):
-            async with reg.lease("coder"):
-                pass
+        async with reg.lease("helper"), reg.lease("coder"):
+            pass
 
     asyncio.run(main())
 

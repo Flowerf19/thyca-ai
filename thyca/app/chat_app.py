@@ -15,33 +15,22 @@ from zoneinfo import ZoneInfo
 from thyca.agents.act import Act
 from thyca.agents.events import EventSink
 from thyca.agents.think import LLMPort
-from thyca.bots.bus import Bus, new_span_id, new_trace_id
-from thyca.bots.policy import BotPolicy
-from thyca.bots.registry import BotRegistry
-from thyca.bots.runtime import BotRuntime
-from thyca.bots.status import AgentStatusTracker
-from thyca.configs import Config, ConfigError, load
-from thyca.core.protocol import Message
-from thyca.llms.llm_base import LLMError
-from thyca.llms.llm_factory import ConnectFactory
-from thyca.memories.active import ActiveMemory, ActiveSnapshot
-from thyca.memories.facade import MemoryFacade
-from thyca.conversations.runtime import ConversationRuntime, ConversationBusy, ConversationManager
-from thyca.conversations.runtime.models import is_blank
-from thyca.conversations.runtime.store import ConversationStore
-from thyca.tools.gateway.background import BackgroundProcs
-from thyca.tools.mcp import MCPManager, ProcessFactory
-from thyca.tools.task_store import TaskStore
-from thyca.serve.turn_state import TurnHub, TurnState
-
-from thyca.app.loop_turns import _CANCEL_WAIT_S, _LoopTurns, TurnCancelled
-from thyca.bots.context import BotTurnScope
+from thyca.app.a2a_delivery import A2ADeliveryDeps, A2ADeliveryService
+from thyca.app.background_jobs import BackgroundJobsDeps, BackgroundJobsService
+from thyca.app.bot_operations import BotOperationsDeps, BotOperationsService
+from thyca.app.bot_posting import BotPostingDeps, BotPostingService
+from thyca.app.bot_settings import get_bot_settings
+from thyca.app.bot_settings import update_bot_settings as _update
+from thyca.app.conversation_admin import ConversationAdminDeps, ConversationAdminService
+from thyca.app.loop_turns import _CANCEL_WAIT_S, TurnCancelled, _LoopTurns
+from thyca.app.private_followups import PrivateFollowupService
 from thyca.app.toolchain import (
     build_tool_gateway,
     build_tool_registry,
     install_mcp_specs,
     report_spawn_diags,
 )
+from thyca.app.turn_event import current_channel_event
 from thyca.app.turn_options import (
     InvalidTurnOption,
     InvalidTurnText,
@@ -49,16 +38,58 @@ from thyca.app.turn_options import (
     resolve_bot_cfg,
     resolve_bot_provider,
 )
-from thyca.app.webui_channel import WebUIChannelAdapter
+from thyca.app.webui_channel import WebUIChannelAdapter, WebUIOutboundAdapter
 from thyca.app.workspace_turns import WorkspaceTurnService
+from thyca.bots.admin_tools import AdminDeps, register_admin_tools
+from thyca.bots.admin_tools.skill_share import register_skill_share_tools
+from thyca.bots.bus import Bus, new_span_id, new_trace_id
+from thyca.bots.channel_tools import register_channel_tools
 from thyca.bots.channels import ChannelActionService, ChannelRegistry
-from thyca.bots.private_followups import PrivateFollowupError
+from thyca.bots.context import BotTurnScope
+from thyca.bots.exchanges import collect_exchange_rooms, pair_thread, partners_for
+from thyca.bots.policy import BotPolicy
+from thyca.bots.private_followups import PrivateFollowupStore
+from thyca.bots.registry import BotRegistry
+from thyca.bots.room_context import fingerprint as _fp
+from thyca.bots.room_context import public_room_messages as _prm
+from thyca.bots.room_context import room_delta
+from thyca.bots.runtime import BotRuntime, filtered_tool_schemas
+from thyca.bots.settings import SettingsError
+from thyca.bots.status import AgentStatusTracker, workspace_status
+from thyca.configs import Config, ConfigError, load
+from thyca.configs.coordination import CoordinationError, hold
+from thyca.conversations.runtime import ConversationManager, ConversationRuntime
+from thyca.conversations.runtime.models import is_blank
+from thyca.conversations.runtime.store import ConversationStore
+from thyca.conversations.store.admin import AdminStore
+from thyca.conversations.store.contracts import ConversationStoreError
+from thyca.conversations.store.read_adapter import (
+    assemble_history,
+    summary_for,
+)
+from thyca.conversations.store.runtime import (
+    RuntimeReadIntent,
+    ensure_runtime_store,
+    require_no_legacy_conversations,
+    runtime_reader_for,
+)
+from thyca.core.channel import WORK_REF_RE
+from thyca.core.protocol import Message
+from thyca.llms.llm_base import LLMError
+from thyca.llms.llm_factory import ConnectFactory
+from thyca.memories.active import ActiveMemory
+from thyca.memories.facade import MemoryFacade
+from thyca.serve.turn_state import TurnHub, TurnState
+from thyca.skills.sharing import SharingService
+from thyca.tools.gateway.background import BackgroundProcs
+from thyca.tools.mcp import MCPManager, ProcessFactory
+from thyca.tools.task_store import TaskStore
 
 __all__ = [
     "ChatApp",
+    "ConversationIdle",
     "InvalidTurnOption",
     "InvalidTurnText",
-    "ConversationIdle",
     "TurnCancelled",
     "TurnInFlight",
 ]
@@ -83,21 +114,10 @@ class ChatApp:
     ) -> None:
         self._root = root
         self._stderr = stderr if stderr is not None else sys.stderr
-        # Migration guard (hard-cut branch): refuse to start when legacy
-        # ``sessions/*.jsonl`` files exist under the live root. Empty (or
-        # missing) passes; tmp/disposable roots are never refused here.
-        from thyca.conversations.store.runtime import (
-            ensure_runtime_store,
-            require_no_legacy_conversations,
-        )
 
         require_no_legacy_conversations(Path(root))
-        # Trusted init: this local process construction (never a request
-        # handler) issues a fresh root; existing roots are audited first.
-        # Runtime store owns all room state on every root (live stopped).
         ensure_runtime_store(Path(root))
         self._config_file = root / "config.json"
-        # Seed before re-read: _current_cfg falls back to _cfg on ConfigError.
         self._cfg = cfg
         if self._config_file.exists():
             self._cfg = self._current_cfg()
@@ -130,9 +150,6 @@ class ChatApp:
             soft_timeout_s=cfg.effective_limits().softTimeoutS,
             policy=BotPolicy(),
         )
-        # Team (BE-1..BE-3): bot registry + A2A bus + per-card runtime.
-        # ensure_thyca seeds the system card on first run; BotPolicy above
-        # denies hidden_tools at submit time for bot turns (allow-all else).
         self._bots = BotRegistry(root)
         self._bots.ensure_thyca()
         self._bus = Bus()
@@ -143,23 +160,13 @@ class ChatApp:
         self._runtime = BotRuntime(
             root, self._bots, self._bus, status_tracker=self._agent_status
         )
-        # A2A delivery: send tools run the recipient's turn through the
-        # delivery service (installed after construction below).
-        # CBE-4: flush-before-compact + post-compact recall hooks.
         self._runtime.memory_flush = self._flush_bot_memory
         self._runtime.memory_searcher = self._search_bot_memory
-        # Phase 1C: open memory-task catalog rows per bot.
         self._runtime.memory_task_catalog = self._memory_task_rows
         self._webui = WebUIChannelAdapter()
         self._turn_service = WorkspaceTurnService(
             self, self._runtime.workspaces
         )
-        # Thyca-only admin tools (BE-5): registered once on the shared
-        # registry; the runtime hides every bot_* name from child bots and
-        # each handler re-checks the caller, so a leak still cannot be used.
-        from thyca.bots.admin_tools import AdminDeps, register_admin_tools
-
-        from thyca.app.bot_posting import BotPostingDeps, BotPostingService
 
         self._posting = BotPostingService(BotPostingDeps(
             root=self._root,
@@ -182,13 +189,9 @@ class ChatApp:
         )
         _deps.dm_card_post = self._posting.post_bot_dm_card
         register_admin_tools(self._registry, _deps)
-        from thyca.bots.admin_tools.skill_share import register_skill_share_tools
-        from thyca.skills.sharing import SharingService
         register_skill_share_tools(self._registry, SharingService(root))
-        from thyca.bots.channel_tools import register_channel_tools
 
         register_channel_tools(self._registry, _deps)
-        from thyca.app.webui_channel import WebUIOutboundAdapter
 
         self._channel_registry = ChannelRegistry()
         self._channel_registry.register(WebUIOutboundAdapter(
@@ -208,26 +211,16 @@ class ChatApp:
         self._thread = threading.Thread(
             target=self._run_loop, name="thyca-mcp-loop", daemon=True
         )
-        # conversation_id -> started_at for every turn in flight. Turns are keyed by
-        # conversation, not serialized globally: a slow turn in one conversation must not
-        # block another (nor its own UI, which reads this map). The claim lock
-        # coordinates each app-level turn/compaction start with its loop job.
         self._turns = TurnState()
         self._loop_turns = _LoopTurns(self._loop, self._turns)
         self._claim_lock = threading.Lock()
-        # Serializes bot_dm's scan/adopt/create so concurrent lookups can
-        # never mint two DMs for the same bot (CBE-5 race fix).
         self._dm_lock = threading.Lock()
-        # Guards MCP sync (manager + registry + tools snapshot): concurrent
-        # turns share all three. Always taken before _claim_lock, never after.
         self._mcp_lock = threading.Lock()
         self._stopped = False
         self._thread.start()
         try:
             if not self._ready.wait(timeout=5):
                 raise RuntimeError("mcp loop thread failed to start")
-            # Kick off MCP connects in parallel without blocking serve/CLI boot.
-            # First turn's _sync_mcp settles, installs specs, and reports diags.
             self._submit(self._mcp.schedule(cfg.mcpServers))
             self._tools = self._registry.to_openai_schema()
             self._mcp_status = ""
@@ -235,12 +228,6 @@ class ChatApp:
         except BaseException:
             self.shutdown()
             raise
-        # Read-model service (canonical-workspace reads + metering):
-        # concrete collaborators only, no back-reference to ChatApp.
-        # tools_fn reads the live snapshot (MCP hot-reload rebinds it).
-        from thyca.app.bot_operations import BotOperationsDeps, BotOperationsService
-
-        from thyca.app.a2a_delivery import A2ADeliveryDeps, A2ADeliveryService
 
         self._delivery = A2ADeliveryService(A2ADeliveryDeps(
             root=self._root,
@@ -256,7 +243,6 @@ class ChatApp:
             room_bots=self.room_bots,
         ))
         self._runtime.deliverer = self._delivery.deliver_envelope
-        from thyca.app.background_jobs import BackgroundJobsDeps, BackgroundJobsService
 
         self._background_jobs = BackgroundJobsService(BackgroundJobsDeps(
             root=self._root,
@@ -272,7 +258,6 @@ class ChatApp:
             injected_connect=self._injected_connect,
             facade=self._memory_facade,
         ))
-        from thyca.app.conversation_admin import ConversationAdminDeps, ConversationAdminService
 
         self._conversations_admin = ConversationAdminService(ConversationAdminDeps(
             root=self._root,
@@ -321,23 +306,11 @@ class ChatApp:
     def _submit(self, coro):
         return asyncio.run_coroutine_threadsafe(coro, self._loop).result()
 
-    # List conversation summaries from the SQLite store only.
     def list_payload(self) -> dict:
-        from thyca.conversations.store.admin import AdminStore
-        from thyca.conversations.store.read_adapter import (
-            assemble_history,
-            summary_for,
-        )
-        from thyca.conversations.store.contracts import ConversationStoreError
-        from thyca.conversations.store.runtime import (
-            RuntimeReadIntent,
-            runtime_reader_for,
-        )
 
         intent = RuntimeReadIntent("runtime-list")
         admin = AdminStore(self._root)
         summaries: list[dict] = []
-        # Paginate newest-first exactly like AdminStore.list.
         offset = 0
         while True:
             items, has_more = admin.list(limit=200, offset=offset)
@@ -350,13 +323,9 @@ class ChatApp:
                         self._root, row.ref, actor, intent=intent
                     )
                 except ConversationStoreError as exc:
-                    # Local damage blocks only its own door; global
-                    # damage surfaces instead of reading as empty.
                     if getattr(exc, "scope", "global") == "local":
                         continue
                     raise
-                # Blank conversations drop unless they are non-DM rooms with
-                # an explicit participant list (the second create path).
                 probe = ConversationRuntime(
                     row.ref.id,
                     self._conversations.store.path_for(row.ref.id),
@@ -364,9 +333,6 @@ class ChatApp:
                     bots=list(conv.participants),
                     dm_bot=row.ref.id if row.ref.kind == "dm" else None,
                 )
-                # Blank doors drop, except explicit groups: groups
-                # always carry two or more participants, while a raw
-                # single-participant door is an unmarked solo room.
                 _explicit_group = (
                     row.ref.kind == "group" and len(conv.participants) >= 2
                 )
@@ -417,11 +383,8 @@ class ChatApp:
         }
         self._agent_status.retain(paused.keys())
         statuses = self._agent_status.snapshot_all(paused)
-        from thyca.bots.private_followups import PrivateFollowupStore
-        from thyca.bots.status import workspace_status
 
         pf_store = PrivateFollowupStore(self._root)
-        from thyca.bots.runtime import filtered_tool_schemas
 
         for card in cards:
             snap = statuses.get(
@@ -433,9 +396,6 @@ class ChatApp:
             pending = pf_store.active(card["id"])
             card["agent_status"] = workspace_status(
                 snap, pending=pending, channel="webui")
-            # Drawer fields: persona + the EFFECTIVE tool list (same
-            # filter the runtime applies — baseline + allowlist -
-            # hidden - memory/bash policy), not the raw card rows.
             doc = self._bots.get(card["id"])
             if doc is not None and doc.ok and doc.card is not None:
                 card["persona"] = (doc.card.persona or "").strip()
@@ -454,7 +414,6 @@ class ChatApp:
 
     def bot_settings(self, bot_id: str) -> dict:
         """One bot's model settings + resolved effective connection."""
-        from thyca.app.bot_settings import get_bot_settings
 
         return get_bot_settings(self._bots, self._current_cfg(), bot_id)
 
@@ -469,10 +428,6 @@ class ChatApp:
         fails the mutation closed instead of validating against a stale
         snapshot. Contention fails closed as 503 via ``SettingsError``.
         """
-        from thyca.app.bot_settings import update_bot_settings as _update
-        from thyca.bots.settings import SettingsError
-        from thyca.configs import ConfigError, load
-        from thyca.configs.coordination import CoordinationError, hold
 
         try:
             with hold(self._root):
@@ -609,7 +564,6 @@ class ChatApp:
         Collection lives in :mod:`thyca.bots.exchanges` next to the
         pairing rule; pairing filters by the involved pair so unrelated
         pairs never surface."""
-        from thyca.bots.exchanges import collect_exchange_rooms
 
         return collect_exchange_rooms(self._conversations.list_conversations())
 
@@ -618,7 +572,6 @@ class ChatApp:
 
         Each item: ``{partner, count, last_ts}``. Unknown bots raise
         :class:`RegistryError` (404 at the serve layer, like ``bot_dm``)."""
-        from thyca.bots.exchanges import partners_for
 
         self._bots.require(bot_id)
         return partners_for(bot_id, self._exchange_rooms())
@@ -629,7 +582,6 @@ class ChatApp:
         Items carry ``sender/kind/content/ts/trace_id/span_id``. The
         partner need not be a registered bot (deleted bots still read
         by id); an unknown base bot raises :class:`RegistryError`."""
-        from thyca.bots.exchanges import pair_thread
 
         self._bots.require(bot_id)
         return pair_thread(bot_id, partner_id, self._exchange_rooms())
@@ -667,7 +619,6 @@ class ChatApp:
         return self._turn_service.run_system(bot_id, text)
 
     def cancel(self, conversation_id: str) -> None:
-        from thyca.app.private_followups import PrivateFollowupService
 
         with self._claim_lock:
             running = self._turns.hub(conversation_id) is not None
@@ -713,7 +664,6 @@ class ChatApp:
     def _room_delta_for(self, bot_id: str, room_id: str,
                         room_messages: list) -> tuple[str, tuple[int, str] | None]:
         """Unread public room text + next cursor for one bot (phase 2A)."""
-        from thyca.bots.room_context import room_delta
 
         return room_delta(room_messages, bot_id, self._room_cursor(bot_id, room_id))
 
@@ -732,7 +682,7 @@ class ChatApp:
     ) -> dict:
         """Run one bot turn and record it into the room transcript.
 
-        The bot thinks in its private (bot × room) conversation; the room only
+        The bot thinks in its private (bot x room) conversation; the room only
         ever gains rows written here by the app layer (user row + the
         bot's reply + fresh bus events), each stamped with
         ``bot_id/kind/trace_id`` (contract §6/BE-6)."""
@@ -754,16 +704,10 @@ class ChatApp:
             provider.api, provider
         )
         owns = self._injected_connect is None
-        # Phase 2A rework: cursor truth lives in the room map. The delta
-        # covers room history BEFORE the current user row; after a
-        # successful turn the cursor advances past that row too (DMs skip
-        # all of this — strictly private).
         room_context, room_cursor, room_after = "", None, None
         current_msg = None
         is_dm = self._room_dm_owner(conversation_id) is not None
         if not retry:
-            from thyca.app.turn_event import current_channel_event
-            from thyca.core.channel import WORK_REF_RE
 
             _ev = current_channel_event()
             _row_meta = None
@@ -779,11 +723,9 @@ class ChatApp:
                     _row_meta["work_id"] = _wr
             current_msg = Message(
                 role="user", content=text,
-                meta=_row_meta if _row_meta else None)
+                meta=_row_meta or None)
         if not is_dm:
             try:
-                from thyca.bots.room_context import fingerprint as _fp
-                from thyca.bots.room_context import public_room_messages as _prm
 
                 prior = list(conversations.current.messages)
                 room_context, room_cursor = self._room_delta_for(
@@ -812,16 +754,12 @@ class ChatApp:
             trace_id = new_trace_id()
             span_id = new_span_id()
             if not retry:
-                # The user row lands before the turn runs so A2A rows
-                # delivered mid-turn order after it in the transcript.
-                # Same object fingerprinted for the post-turn cursor.
                 early_room = ConversationManager(
                     limits=turn_cfg.effective_limits(),
                     timezone_name=turn_cfg.timeline.timezone,
                     store=self._conversations.store,
                 )
                 early_room.load(conversation_id)
-                # The responding bot records the user row for this turn.
                 early_room.append(
                     current_msg
                     if current_msg is not None
@@ -872,14 +810,10 @@ class ChatApp:
             )
             room.load(conversation_id)
             self._record_bus_events(room, conversation_id)
-            # The reply is recorded as the bot that produced it.
             room.append(
                 Message(
                     role="assistant",
                     content=reply,
-                    # Aggregated internal-turn meta (model/usage/cost/
-                    # latency) rides along so trace by_bot sees real
-                    # numbers for this bot's work.
                     meta=result.room_meta(
                         kind="message", trace_id=trace_id, parent_span_id=None
                     ),

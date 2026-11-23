@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import pytest
 
+from thyca.agents.delta import _Delta
 from thyca.agents.events import TurnEvent, emit_event
+from thyca.agents.reply import ContentDelta
+from thyca.agents.thinking import ThinkingDelta
 
 
 def test_valid_types_to_dict_exact_keys() -> None:
@@ -175,7 +178,6 @@ def test_llm_retry_rejects_bad_counts() -> None:
 
 
 def test_thinking_delta_to_dict_exact_keys() -> None:
-    from thyca.agents.thinking import ThinkingDelta
 
     assert ThinkingDelta(round=1, delta="First I check").to_dict() == {
         "type": "llm.thinking",
@@ -190,12 +192,9 @@ def test_bot_id_stamp_rides_events_and_deltas() -> None:
         "round": 1,
         "bot_id": "coder",
     }
-    # A bad stamp is telemetry noise: dropped, never raised.
     assert TurnEvent(type="llm.started", round=1, bot_id="../secret").bot_id is None
     assert TurnEvent(type="llm.started", round=1).bot_id is None
 
-    from thyca.agents.reply import ContentDelta
-    from thyca.agents.thinking import ThinkingDelta
 
     assert ThinkingDelta(round=1, delta="x", bot_id="coder").to_dict() == {
         "type": "llm.thinking",
@@ -212,7 +211,6 @@ def test_bot_id_stamp_rides_events_and_deltas() -> None:
 
 
 def test_thinking_delta_rejects_empty() -> None:
-    from thyca.agents.thinking import ThinkingDelta
 
     with pytest.raises(ValueError, match="delta"):
         ThinkingDelta(round=1, delta="")
@@ -220,14 +218,7 @@ def test_thinking_delta_rejects_empty() -> None:
         ThinkingDelta(round=0, delta="x")
 
 
-
-# Moved from test_b4_unification.py / test_b4_p2.py (B4 batch).
-import pytest
-
 def test_x23_deltas_share_base() -> None:
-    from thyca.agents.delta import _Delta
-    from thyca.agents.reply import ContentDelta
-    from thyca.agents.thinking import ThinkingDelta
 
     assert issubclass(ContentDelta, _Delta)
     assert issubclass(ThinkingDelta, _Delta)
@@ -243,7 +234,6 @@ def test_x23_deltas_share_base() -> None:
 
 
 def test_invocation_id_is_optional_and_accepts_only_opaque_tokens() -> None:
-    import pytest
 
     old = TurnEvent(type='tool.started', round=1, call_id='id', name='read')
     assert 'invocation_id' not in old.to_dict()

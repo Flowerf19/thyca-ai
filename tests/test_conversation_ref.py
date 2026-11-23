@@ -13,8 +13,6 @@ from thyca.core.conversation import ConversationRef, bot_is_participant
 
 def test_ref_dict_round_trip_keeps_kind_explicit() -> None:
     group = ConversationRef.new_group()
-    # The same text may validly name a bot and a group; round-trip must
-    # keep them distinct doors.
     dm_same_text = ConversationRef.dm(group.id)
     for ref in (ConversationRef.dm('coder'), group, dm_same_text):
         assert ref.to_dict() == {'kind': ref.kind, 'id': ref.id}
@@ -57,7 +55,6 @@ def test_bot_participant_group_uses_current_membership() -> None:
     participants = ['coder', 'thyca']
     assert bot_is_participant(ref, participants, 'coder') is True
     assert bot_is_participant(ref, participants, 'scout') is False
-    # A former participant is no longer a member.
     assert bot_is_participant(ref, ['thyca'], 'coder') is False
 
 

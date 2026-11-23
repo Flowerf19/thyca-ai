@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from thyca.configs.store import config_path
 from thyca.llms.prompt_manager import PromptManager
 from thyca.memories.active import ActiveMemory, ActiveSnapshot
 from thyca.skills import _PACKAGED_SKILLS, SkillStore
@@ -163,7 +164,6 @@ def test_prompt_renders_skills_before_rules() -> None:
 
 
 def test_prompt_omits_skills_when_empty() -> None:
-    # "<skills>" appears inside rules.md text; the section only renders with a closing tag.
     assert "</skills>" not in PromptManager().build(_hot())
 
 
@@ -179,11 +179,7 @@ def test_packaged_templates_exist() -> None:
     assert (_PACKAGED_SKILLS / "create-mcp-tool" / "SKILL.md").is_file()
 
 
-# Moved from test_b4_unification.py / test_b4_p2.py (B4 batch).
-from pathlib import Path
-
 def test_m1_bom_skill_is_valid(tmp_path: Path) -> None:
-    from thyca.skills import SkillStore
 
     skill = tmp_path / "skills" / "bom-skill"
     skill.mkdir(parents=True)
@@ -195,7 +191,6 @@ def test_m1_bom_skill_is_valid(tmp_path: Path) -> None:
 
 
 def test_m1_skills_sorted_once_by_name(tmp_path: Path) -> None:
-    from thyca.skills import SkillStore
 
     for name in ("b-skill", "a-skill"):
         d = tmp_path / "skills" / name
@@ -210,7 +205,6 @@ def test_default_thyca_dir_is_config_path_parent(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """Bare SkillStore() shares the one home default with config."""
-    from thyca.configs.store import config_path
 
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     assert SkillStore().thyca_dir == config_path().parent == tmp_path / ".thyca"

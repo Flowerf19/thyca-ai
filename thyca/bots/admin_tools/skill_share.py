@@ -7,12 +7,13 @@ Thyca bot id.
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 from thyca.memories.identity import current_bot_id
 from thyca.tools.registry import ToolSpec
 
 
 def _deny_child() -> str | None:
-    # Only runtime-bound Thyca manages sharing; missing identity fails closed.
     caller = current_bot_id()
     if caller != "thyca":
         return f"denied: skill sharing is Thyca-only (caller: {caller})"
@@ -30,9 +31,6 @@ def _share_spec(service) -> ToolSpec:
                 shared = service.list_shared()
             except Exception as exc:
                 return f"skill sharing state invalid: {exc}"
-            # List every team skill with its sharing flag; never trust a
-            # caller-supplied identity field.
-            from pathlib import Path
 
             root = service.root
             team_root = Path(root) / "skills-team"

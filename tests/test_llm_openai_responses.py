@@ -5,7 +5,14 @@ import json
 import httpx
 import pytest
 
-from thyca.configs import ProviderCfg
+from thyca.agents.observe import Observe
+from thyca.agents.stage import Stage
+from thyca.bots.timeline import CanonicalConversationStore, WorkspaceTimeline
+from thyca.configs import ModelCfg, PricingCfg, ProviderCfg, ProviderEntry
+from thyca.configs.providers import resolve
+from thyca.conversations.runtime import ConversationManager
+from thyca.core.channel import WindowRef
+from thyca.core.protocol import Message, ToolCall
 from thyca.llms.llm_base import LLMError, normalize_usage
 from thyca.llms.openai_responses import (
     OpenAIResponses,
@@ -15,7 +22,7 @@ from thyca.llms.openai_responses import (
     _to_responses_tools,
     parse_responses_payload,
 )
-from thyca.core.protocol import Message, ToolCall
+from thyca.llms.pricing import cost_for
 
 
 def _sse(*chunks: dict) -> httpx.Response:
@@ -63,8 +70,6 @@ def test_input_mapping() -> None:
         Message(role="assistant", content=None, tool_calls=None),
         Message(role="tool", content="out", tool_call_id="c1"),
     ]
-    # B2/F26: empty-system and user-None pass through as empty (provider
-    # decides); tool-without-id raises (see test_b2_contracts).
     assert _to_responses_input(messages) == [
         {"role": "system", "content": "sys"},
         {"role": "system", "content": ""},
@@ -271,8 +276,6 @@ async def test_responses_sends_default_max_output_tokens() -> None:
 
 @pytest.mark.asyncio
 async def test_responses_model_max_output_tokens_wins_and_survives_drop_retry() -> None:
-    from thyca.configs import ModelCfg, ProviderEntry
-    from thyca.configs.providers import resolve
 
     provider = resolve(
         ProviderEntry(baseUrl="https://api.example.com/v1", apiKey="sk-secret-key"),
@@ -411,13 +414,6 @@ async def test_reasoning_summary_feeds_persist_and_cost_pipeline(tmp_path) -> No
             ),
         )
 
-    from thyca.agents.observe import Observe
-    from thyca.agents.stage import Stage
-    from thyca.bots.timeline import CanonicalConversationStore, WorkspaceTimeline
-    from thyca.configs import PricingCfg
-    from thyca.core.channel import WindowRef
-    from thyca.llms.pricing import cost_for
-    from thyca.conversations.runtime import ConversationManager
 
     connect = OpenAIResponses(_provider(), client=_client(handler))
     reply = await connect.chat([Message(role="user", content="x")])
@@ -510,8 +506,6 @@ async def test_stream_content_and_split_chunk_key_redacted() -> None:
     assert all("sk-secret-key" not in item for item in seen_content)
 
 
-# Moved from tests/test_b2_contracts.py (B2 batch).
-
 def _provider() -> ProviderCfg:
     return ProviderCfg(
         baseUrl="https://api.example.com/v1",
@@ -579,10 +573,6 @@ def test_f26_none_and_empty_pass_through_as_empty() -> None:
     assert _to_responses_input([Message(role="system", content=None)]) == [
         {"role": "system", "content": ""}
     ]
-
-
-# T5: responses reasoning_details parity (chat path parses + round-trips;
-# responses path must too for multi-round tool-loop continuity).
 
 
 def test_t5_nonstream_reasoning_details_parsed_and_invalid_ignored() -> None:
@@ -704,7 +694,6 @@ async def test_t5_stream_reasoning_details_from_done_invalid_ignored() -> None:
     connect = OpenAIResponses(_provider(), client=_client(handler))
     reply = await connect.chat([Message(role="user", content="x")])
     assert reply.reasoning == "thinking"
-    # added is id-only and ignored; only the full done item is kept, once.
     assert reply.reasoning_details == [
         {
             "type": "reasoning",
@@ -758,11 +747,9 @@ def test_t5_input_roundtrips_reasoning_details() -> None:
         {"role": "assistant", "content": "working"},
         {"type": "function_call", "call_id": "c1", "name": "bash", "arguments": "{}"},
     ]
-    # Input items are copies; the stored details keep output-only fields.
     assert details[0]["status"] == "completed"
     plain = _to_responses_input([Message(role="assistant", content="hi")])
     assert plain == [{"role": "assistant", "content": "hi"}]
-    # Only assistant turns carry reasoning; other roles ignore details.
     assert _to_responses_input(
         [Message(role="user", content="hi", reasoning_details=[{"type": "reasoning", "id": "rs_x"}])]
     ) == [{"role": "user", "content": "hi"}]
@@ -826,8 +813,6 @@ def test_t5_reasoning_content_parts_parse_and_round_trip() -> None:
             "content": [{"type": "reasoning_text", "text": "deep thought"}],
         }
     ]
-    # Content-only details are kept in storage but never sent: providers
-    # require `summary` on reasoning inputs (live 400 otherwise).
     items = _to_responses_input(
         [
             Message(
@@ -838,7 +823,6 @@ def test_t5_reasoning_content_parts_parse_and_round_trip() -> None:
         ]
     )
     assert items == [{"role": "assistant", "content": "ok"}]
-    # With a summary present, the item round-trips minus output-side keys.
     with_summary = [
         {
             "type": "reasoning",
@@ -859,9 +843,6 @@ def test_t5_reasoning_content_parts_parse_and_round_trip() -> None:
 
 
 def test_t5_input_drops_summary_less_reasoning_and_strips_output_keys() -> None:
-    # Live 400: `input[N]` missing required field `summary`. Id-only,
-    # encrypted-only, and content-only details must not reach the wire;
-    # output-side content/signature keys are stripped from survivors.
     details = [
         {"type": "reasoning", "id": "rs_only_id"},
         {"type": "reasoning", "id": "rs_enc", "encrypted_content": "blob"},

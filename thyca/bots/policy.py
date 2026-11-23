@@ -20,14 +20,22 @@ change for existing single-user turns.
 """
 from __future__ import annotations
 
+import os as _os
 from contextvars import ContextVar
 from pathlib import Path
+from pathlib import Path as _Path
 
 from thyca.bots.card import CARD_FILENAMES
 from thyca.bots.context import current_bot_turn_context
 from thyca.core.protocol import ToolCall
 from thyca.memories.identity import current_bot_id
+from thyca.skills.sharing import (
+    SharingService,
+    skill_refs_for,
+    skill_refs_match,
+)
 from thyca.tools.gateway.policy import Policy, PolicyDenied
+from thyca.tools.path_guard import absolutize
 
 _hidden_tools: ContextVar[frozenset[str] | None] = ContextVar(
     "thyca_hidden_tools", default=None
@@ -67,12 +75,9 @@ def _is_system_bot() -> bool:
 
 def _protected_roots() -> list[Path]:
     ctx = current_bot_turn_context()
-    # BotRuntime binds the thyca root on the context via `thyca_dir` when
-    # present; fall back to the home default the config layer also uses.
     root = getattr(ctx, "thyca_dir", None) if ctx is not None else None
     if root is None:
         root = Path.home() / ".thyca"
-    # Canonical root, like PathGuard: the context may carry an alias.
     try:
         root = Path(root).resolve()
     except (OSError, RuntimeError, ValueError):
@@ -92,9 +97,7 @@ def _targets_protected(value: str) -> bool:
     lowered = text.lower()
     if "/.thyca/bots" in lowered or "/.thyca/skills-team" in lowered:
         return True
-    if lowered.rstrip("/").endswith("/.thyca/config.json") or "~/.thyca/config.json" in lowered:
-        return True
-    return False
+    return lowered.rstrip("/").endswith("/.thyca/config.json") or "~/.thyca/config.json" in lowered
 
 
 class BotPolicy(Policy):
@@ -114,17 +117,8 @@ class BotPolicy(Policy):
         if call.name in _FILE_TOOLS:
             path = call.arguments.get("path") if isinstance(call.arguments, dict) else None
             if isinstance(path, str) and path.strip():
-                # Recognized skill paths use the sharing gate on both lexical
-                # and resolved identities: own-private reads/writes and shared
-                # reads pass here; PathGuard still enforces precise
-                # authorization plus link safeguards. An alias mismatch fails
-                # closed here too. Foreign-private, unshared team,
-                # Thyca-owned roots, and child shared writes stay denied.
                 try:
-                    from thyca.skills.sharing import SharingService, skill_refs_for, skill_refs_match
-                    from thyca.tools.path_guard import absolutize
-                    import os as _os
-                    from pathlib import Path as _Path
+
 
                     ctx = current_bot_turn_context()
                     root = getattr(ctx, "thyca_dir", None) if ctx is not None else None
@@ -165,8 +159,6 @@ class BotPolicy(Policy):
                         raise PolicyDenied(f"bot may not access team-control file: {path}")
                 elif _targets_protected(path):
                     raise PolicyDenied(f"bot may not access team-control file: {path}")
-            # Relative or obfuscated paths are still caught by PathGuard
-            # inside the handler, which resolves against the real root.
         if call.name == "bash":
             command = call.arguments.get("command") if isinstance(call.arguments, dict) else None
             if isinstance(command, str) and (

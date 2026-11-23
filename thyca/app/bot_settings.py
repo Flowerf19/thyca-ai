@@ -9,9 +9,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from thyca.app.turn_options import resolve_bot_cfg, resolve_bot_provider
 from thyca.bots.card import BotModel
 from thyca.bots.registry import RegistryError
-from thyca.bots.settings import SettingsError
+from thyca.bots.settings import SettingsError, validate_model_id, validate_thinking
+from thyca.configs import REASONING_EFFORTS
 
 if TYPE_CHECKING:
     from thyca.bots.registry import BotRegistry
@@ -30,7 +32,6 @@ def _configured_model(card) -> BotModel:
 
 def _resolve_effective(cfg: Config, card, configured: BotModel) -> dict:
     """Resolved model/provider/effort a turn with these settings would use."""
-    from thyca.app.turn_options import resolve_bot_cfg, resolve_bot_provider
 
     resolved_cfg = resolve_bot_cfg(cfg, card)
     provider = resolve_bot_provider(resolved_cfg, card)
@@ -47,8 +48,6 @@ def get_bot_settings(bots: BotRegistry, cfg: Config, bot_id: str) -> dict:
         raise RegistryError(f"unknown or invalid bot: {bot_id} (unknown bot)")
     doc = bots.get(bot_id)
     if not doc.ok or doc.card is None:
-        # The card exists but cannot be read (corrupt TWIN or settings):
-        # report unavailability, never a silent fallback.
         raise SettingsError("bot settings unavailable")
     card = doc.card
     configured = _configured_model(card)
@@ -70,8 +69,6 @@ def update_bot_settings(
     try:
         card = bots.update_settings(bot_id, model)
     except RegistryError:
-        # The bot existed a moment ago: the card or settings underneath
-        # are unreadable, so report unavailability, not "not found".
         raise SettingsError("bot settings unavailable") from None
     except SettingsError as exc:
         raise SettingsError(str(exc)) from None
@@ -91,7 +88,6 @@ def _clean_payload(payload: object) -> BotModel:
         raise BotSettingsError("invalid body")
     if any(key not in ("id", "thinking") for key in raw):
         raise BotSettingsError("invalid body")
-    from thyca.bots.settings import validate_model_id, validate_thinking
 
     try:
         model_id = validate_model_id(raw["id"])
@@ -118,14 +114,10 @@ def check_model_against_config(cfg: Config, model: BotModel) -> None:
     effective_id = cfg.defaultModel if model.id == "default" else model.id
     registered = cfg.models.get(effective_id)
     own_set = registered.reasoningEfforts if registered is not None else ()
-    from thyca.configs import REASONING_EFFORTS
 
     allowed = own_set or REASONING_EFFORTS
-    # Safe constant only: never echo the raw value or the configured set
-    # (config contents stay server-side).
     if model.thinking not in allowed:
         raise BotSettingsError("invalid thinking")
 
 
-# Private name kept for the settings endpoint caller below.
 _check_against_config = check_model_against_config

@@ -8,12 +8,16 @@ all wiring and callers are untouched.
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any
 
-from thyca.core.protocol import Message
+from thyca.app.turn_event import current_channel_event
+from thyca.bots.private_followups import PrivateFollowupStore
 from thyca.conversations.runtime import ConversationManager
+from thyca.core.channel import WORK_REF_RE
+from thyca.core.protocol import Message
 
 if TYPE_CHECKING:
     from thyca.bots.registry import BotRegistry
@@ -54,8 +58,6 @@ class BotPostingService:
         replays can't double-consume). The stored answer_ref points at
         the real transcript row; the raw body is never copied into the
         pending."""
-        from thyca.app.turn_event import current_channel_event
-        from thyca.bots.private_followups import PrivateFollowupStore
 
         ev = current_channel_event()
         if ev is None or not ev.event_id:
@@ -232,8 +234,6 @@ class BotPostingService:
             store=self._deps.conversations.store,
         )
         room.load(current_room_id)
-        from thyca.app.turn_event import current_channel_event
-        from thyca.core.channel import WORK_REF_RE
 
         _ev = current_channel_event()
         if _ev is not None:

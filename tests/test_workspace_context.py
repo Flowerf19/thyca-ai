@@ -1,24 +1,33 @@
+import json
+import json as _json
+import re
+import re as _re
 from datetime import datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 import pytest
 
-from thyca.core.channel import WindowRef
-from thyca.memories.visibility import MemoryView, bound_memory_view, current_memory_view
-from thyca.conversations.runtime.store import ConversationStore
-from thyca.bots.workspace_context import WorkspaceContextBuilder, _channel_brief
-from thyca.bots.work_items import prioritize_window, project_work_items
+from thyca.bots.card import BotCard, BotMemoryPolicy
 from thyca.bots.tasks import OpenTask
+from thyca.bots.work_items import prioritize_window, project_work_items
+from thyca.bots.workspace_context import WorkspaceContextBuilder, _channel_brief
+from thyca.conversations.runtime import ConversationManager
+from thyca.conversations.runtime.store import ConversationStore
+from thyca.conversations.store.runtime import ensure_runtime_store
+from thyca.core.channel import WindowRef
+from thyca.llms.prompt_manager import PromptManager
+from thyca.memories.active import ActiveMemory, ActiveSnapshot
+from thyca.memories.archived import ArchiveError
+from thyca.memories.facade import MemoryFacade
+from thyca.memories.identity import bind_bot_id, reset_bot_id
+from thyca.memories.visibility import MemoryView, bound_memory_view, current_memory_view
 
 TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 
 
 def _today_str(days_ago: int = 0) -> str:
-    # Seeds must land on the wall-clock day: memory indexes a daily
-    # file into SQLite only after day-close, and same-day entries are
-    # served live from today's file. A fixed seed date rots the day
-    # the wall clock moves past it (the Oct-19 date bomb).
     return (datetime.now(TZ).date() - timedelta(days=days_ago)).isoformat()
 
 
@@ -32,18 +41,13 @@ GRP_BIG = "group-" + "c" * 32
 UNKNOWN_ID = "group-" + "f" * 32
 
 
-
-
 def _at(day: str) -> datetime:
     return datetime.fromisoformat(f"{day}T12:00:00+07:00")
 
 
-# Seed one runtime door: a DM is its bot id, a group is group-<hex32>.
 def _seed_session(
     tmp_path: Path, sid: str, *, bots=(), dm_bot=None
 ) -> None:
-    from thyca.conversations.store.runtime import ensure_runtime_store
-    from thyca.conversations.runtime import ConversationManager
 
     ensure_runtime_store(tmp_path)
     store = ConversationStore(tmp_path / "sessions")
@@ -57,7 +61,6 @@ def _seed_session(
 
 
 def _seed_memory(tmp_path: Path, sid: str, title: str, body: str) -> None:
-    from thyca.memories.facade import MemoryFacade
 
     MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh").remember(
         title, body, now=_at(TODAY), chat=sid
@@ -95,7 +98,6 @@ def test_group_window_denies_other_group_and_unknown(tmp_path: Path) -> None:
     _seed_memory(tmp_path, GRP_OTHER, "OTHER-GRP", "OTHER-BODY")
 
     view = MemoryView(_group_window(GRP), "coder", tmp_path)
-    # participants (thyca,coder) not subset of (thyca,helper) -> denied
     assert not view.can_read_origin(GRP_OTHER)
     assert not view.can_read_origin(UNKNOWN_ID)
 
@@ -104,7 +106,6 @@ def test_group_window_broader_origin_allowed(tmp_path: Path) -> None:
     _seed_session(tmp_path, GRP, bots=["coder"])
     _seed_session(tmp_path, GRP_BIG, bots=["thyca", "coder", "helper"])
     view = MemoryView(_group_window(GRP, ("thyca", "coder")), "coder", tmp_path)
-    # (thyca,coder) subset of origin (thyca,coder,helper) -> allowed
     assert view.can_read_origin(GRP_BIG)
 
 
@@ -113,10 +114,10 @@ def test_dm_view_rules(tmp_path: Path) -> None:
     _seed_session(tmp_path, DM_OTHER, dm_bot="helper")
     _seed_session(tmp_path, GRP, bots=["coder", "helper"])
     view = MemoryView(_dm_window(DM_ID, "coder"), "coder", tmp_path)
-    assert view.can_read_origin(DM_ID)      # own DM
-    assert not view.can_read_origin(DM_OTHER) # other bot's DM
-    assert view.can_read_origin(GRP)           # participant
-    assert view.can_read_origin(UNKNOWN_ID)         # unknown owner-scoped
+    assert view.can_read_origin(DM_ID)
+    assert not view.can_read_origin(DM_OTHER)
+    assert view.can_read_origin(GRP)
+    assert view.can_read_origin(UNKNOWN_ID)
     assert view.can_read_origin(None)
 
 
@@ -127,7 +128,6 @@ def test_team_owner_cannot_override_dm_boundary(tmp_path: Path) -> None:
 
 
 def test_snapshot_filters_private_dm_entries(tmp_path: Path) -> None:
-    from thyca.memories.active import ActiveMemory
 
     _seed_session(tmp_path, DM_ID, dm_bot="coder")
     _seed_session(tmp_path, GRP, bots=["thyca", "coder"])
@@ -146,7 +146,6 @@ def test_snapshot_filters_private_dm_entries(tmp_path: Path) -> None:
 
 
 def test_private_view_still_reads_own_dm(tmp_path: Path) -> None:
-    from thyca.memories.active import ActiveMemory
 
     _seed_session(tmp_path, DM_ID, dm_bot="coder")
     _seed_memory(tmp_path, DM_ID, "PRIVATE-TITLE", "PRIVATE-SUMMARY")
@@ -159,7 +158,6 @@ def test_private_view_still_reads_own_dm(tmp_path: Path) -> None:
 
 
 def test_no_view_is_unchanged(tmp_path: Path) -> None:
-    from thyca.memories.active import ActiveMemory
 
     _seed_memory(tmp_path, DM_ID, "PRIVATE-TITLE", "PRIVATE-SUMMARY")
     memory = ActiveMemory(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
@@ -170,8 +168,6 @@ def test_no_view_is_unchanged(tmp_path: Path) -> None:
 
 
 def test_facade_get_denies_private_in_group(tmp_path: Path) -> None:
-    from thyca.memories.facade import MemoryFacade
-    from thyca.memories.archived import ArchiveError
 
     _seed_session(tmp_path, DM_ID, dm_bot="coder")
     _seed_session(tmp_path, GRP, bots=["thyca", "coder"])
@@ -182,12 +178,10 @@ def test_facade_get_denies_private_in_group(tmp_path: Path) -> None:
     sid = None
     for line in (tmp_path / "memory" / f"{day}.md").read_text().splitlines():
         if "PRIVATE-TITLE" in line and "id" in line:
-            import json, re
 
             meta = json.loads(re.search(r"thyca (\{.*\})", line).group(1))
             sid = f"{day}#{meta['id']}"
     assert sid
-    # Facade reindex picks the entry into SQLite; still denied in group view.
     facade._refresh_index()
     with bound_memory_view(MemoryView(_group_window(GRP), "coder", tmp_path)):
         with pytest.raises(ArchiveError):
@@ -203,13 +197,10 @@ def test_group_search_candidate_limit_still_returns_allowed(
         tmp_path: Path) -> None:
     """Private hits that outrank a public one are filtered BEFORE the
     final limit, so the allowed hit still surfaces."""
-    from thyca.memories.facade import MemoryFacade
 
     _seed_session(tmp_path, DM_ID, dm_bot="coder")
     _seed_session(tmp_path, GRP, bots=["thyca", "coder"])
     facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
-    # Archive search only covers CLOSED days: write yesterday's file so
-    # the candidate pool actually contains these entries.
     yesterday = _at(YESTERDAY)
     for i in range(3):
         facade.remember(f"needle-PRIVATE-{i}", f"needle body {i}",
@@ -224,7 +215,6 @@ def test_group_search_candidate_limit_still_returns_allowed(
 
 
 def test_canonical_get_bypasses_daily_origin_check(tmp_path: Path) -> None:
-    from thyca.memories.facade import MemoryFacade
 
     _seed_session(tmp_path, GRP, bots=["thyca", "coder"])
     facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
@@ -235,7 +225,6 @@ def test_canonical_get_bypasses_daily_origin_check(tmp_path: Path) -> None:
 
 
 def test_memory_tasks_hide_private_title_in_group(tmp_path: Path) -> None:
-    from thyca.memories.facade import MemoryFacade
 
     _seed_session(tmp_path, DM_ID, dm_bot="coder")
     _seed_session(tmp_path, GRP, bots=["thyca", "coder"])
@@ -254,8 +243,6 @@ def test_memory_tasks_hide_private_title_in_group(tmp_path: Path) -> None:
 
 
 def test_channel_brief_text_and_section(tmp_path: Path) -> None:
-    from thyca.memories.active import ActiveSnapshot
-    from thyca.llms.prompt_manager import PromptManager
 
     window = _group_window(GRP)
     hot = WorkspaceContextBuilder(tmp_path).build(
@@ -267,15 +254,10 @@ def test_channel_brief_text_and_section(tmp_path: Path) -> None:
     assert "participants=thyca, coder" in hot.channel_brief
     rendered = PromptManager().build(hot)
     assert "<channel>" in rendered
-    # channel sits before <today>
     assert rendered.index("<channel>") < rendered.index("<today>")
 
 
 def test_builder_memory_read_gate(tmp_path: Path) -> None:
-    from thyca.memories.active import ActiveSnapshot
-    from thyca.bots.card import BotCard
-
-    from thyca.bots.card import BotMemoryPolicy
 
     card = BotCard(bot_id="x", name="x", role="r", description="d",
                    persona="PERSONA-X", memory=BotMemoryPolicy(read=False))
@@ -315,18 +297,11 @@ def test_workitem_projection_links_only_explicit(tmp_path: Path) -> None:
 
 def _owned_sid(facade, title: str, body: str, *, origin: str,
                  day: str, bots=("coder",), **kwargs) -> str:
-    # Seed one owner-held entry and return its session id for get checks.
     return facade.remember(title, body, now=_at(day), chat=origin,
                            bots=list(bots), **kwargs)
 
 
 def test_owner_dm_entry_readable_in_group(tmp_path: Path) -> None:
-    # Owner's own-DM entry opens in a group: get with the flag returns
-    # the body, plain get still denies it, and the tool-path search
-    # (flag set) returns the hit.
-    from thyca.memories.archived import ArchiveError
-    from thyca.memories.facade import MemoryFacade
-    from thyca.memories.identity import bind_bot_id, reset_bot_id
 
     _seed_session(tmp_path, DM_ID, dm_bot="coder")
     _seed_session(tmp_path, GRP, bots=["thyca", "coder"])
@@ -350,10 +325,6 @@ def test_owner_dm_entry_readable_in_group(tmp_path: Path) -> None:
 
 
 def test_delegated_note_readable_in_owner_dm(tmp_path: Path) -> None:
-    # BT-03 repro: a note delegated to coder (origin Thyca DM, owner coder)
-    # opens in coder's own DM.
-    from thyca.memories.facade import MemoryFacade
-    from thyca.memories.identity import bind_bot_id, reset_bot_id
 
     _seed_session(tmp_path, "thyca", dm_bot="thyca")
     _seed_session(tmp_path, DM_ID, dm_bot="coder")
@@ -371,9 +342,6 @@ def test_delegated_note_readable_in_owner_dm(tmp_path: Path) -> None:
 
 
 def test_owner_group_entry_readable_in_other_group(tmp_path: Path) -> None:
-    # Owner's group entry opens in a different group with other members.
-    from thyca.memories.facade import MemoryFacade
-    from thyca.memories.identity import bind_bot_id, reset_bot_id
 
     _seed_session(tmp_path, GRP, bots=["thyca", "coder"])
     _seed_session(tmp_path, GRP_OTHER, bots=["thyca", "helper"])
@@ -397,9 +365,6 @@ def test_owner_group_entry_readable_in_other_group(tmp_path: Path) -> None:
 
 
 def test_owner_group_entry_readable_in_larger_group(tmp_path: Path) -> None:
-    # Owner's small-group entry opens in a larger group that covers it.
-    from thyca.memories.facade import MemoryFacade
-    from thyca.memories.identity import bind_bot_id, reset_bot_id
 
     _seed_session(tmp_path, GRP, bots=["coder"])
     _seed_session(tmp_path, GRP_BIG, bots=["thyca", "coder", "helper"])
@@ -424,9 +389,6 @@ def test_owner_group_entry_readable_in_larger_group(tmp_path: Path) -> None:
 
 
 def test_owner_dm_task_visible_in_group_via_tool_path(tmp_path: Path) -> None:
-    # Tool-path tasks (flag set) shows the owner's DM-origin task in a group.
-    from thyca.memories.facade import MemoryFacade
-    from thyca.memories.identity import bind_bot_id, reset_bot_id
 
     _seed_session(tmp_path, DM_ID, dm_bot="coder")
     _seed_session(tmp_path, GRP, bots=["thyca", "coder"])
@@ -444,10 +406,6 @@ def test_owner_dm_task_visible_in_group_via_tool_path(tmp_path: Path) -> None:
 
 
 def test_other_bot_entry_still_denied_with_flag(tmp_path: Path) -> None:
-    # Another bot's entry stays hidden even when the origin window matches.
-    from thyca.memories.archived import ArchiveError
-    from thyca.memories.facade import MemoryFacade
-    from thyca.memories.identity import bind_bot_id, reset_bot_id
 
     _seed_session(tmp_path, GRP, bots=["thyca", "coder", "helper"])
     facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
@@ -468,10 +426,6 @@ def test_other_bot_entry_still_denied_with_flag(tmp_path: Path) -> None:
 
 
 def test_team_co_owned_entry_still_denied_in_group(tmp_path: Path) -> None:
-    # A team entry never takes the owner exemption, even for a listed bot.
-    from thyca.memories.archived import ArchiveError
-    from thyca.memories.facade import MemoryFacade
-    from thyca.memories.identity import bind_bot_id, reset_bot_id
 
     _seed_session(tmp_path, DM_ID, dm_bot="coder")
     _seed_session(tmp_path, GRP, bots=["thyca", "coder"])
@@ -493,10 +447,6 @@ def test_team_co_owned_entry_still_denied_in_group(tmp_path: Path) -> None:
 
 
 def test_legacy_entry_from_other_dm_still_denied(tmp_path: Path) -> None:
-    # A legacy (bots=None) entry from another bot's DM stays private.
-    from thyca.memories.archived import ArchiveError
-    from thyca.memories.facade import MemoryFacade
-    from thyca.memories.identity import bind_bot_id, reset_bot_id
 
     _seed_session(tmp_path, DM_OTHER, dm_bot="helper")
     _seed_session(tmp_path, DM_ID, dm_bot="coder")
@@ -506,19 +456,18 @@ def test_legacy_entry_from_other_dm_still_denied(tmp_path: Path) -> None:
     facade._refresh_index()
     token = bind_bot_id("coder")
     try:
-        with bound_memory_view(
-                MemoryView(_dm_window(DM_ID, "coder"), "coder", tmp_path)):
-            with pytest.raises(ArchiveError):
-                facade.get(memory_id=sid)
+        with (
+            bound_memory_view(
+                MemoryView(_dm_window(DM_ID, "coder"), "coder", tmp_path)
+            ),
+            pytest.raises(ArchiveError),
+        ):
+            facade.get(memory_id=sid)
     finally:
         reset_bot_id(token)
 
 
 def test_search_without_flag_still_hides_owner_dm_hit(tmp_path: Path) -> None:
-    # The facade default must not drift: without the flag the owner's
-    # DM-origin hit stays hidden in a group.
-    from thyca.memories.facade import MemoryFacade
-    from thyca.memories.identity import bind_bot_id, reset_bot_id
 
     _seed_session(tmp_path, DM_ID, dm_bot="coder")
     _seed_session(tmp_path, GRP, bots=["thyca", "coder"])
@@ -536,9 +485,7 @@ def test_search_without_flag_still_hides_owner_dm_hit(tmp_path: Path) -> None:
 
 
 def test_builder_dm_pending_includes_question(tmp_path: Path) -> None:
-    from types import SimpleNamespace
 
-    from thyca.memories.active import ActiveSnapshot
 
     pending = SimpleNamespace(
         pending_id="pf-1234abcd1234",
@@ -558,11 +505,6 @@ def test_builder_dm_pending_includes_question(tmp_path: Path) -> None:
     assert "question=Mã xác nhận riêng là gì?" in hot.private_followup
 
 def test_denied_origin_matrix_hides_team_but_keeps_explicit_own(tmp_path: Path) -> None:
-    # Pinned denial wins over same-window shortcuts and roster reloads,
-    # while a concrete bot-owned entry keeps its proactive exemption.
-    # Team, mixed-team, foreign, and unowned entries stay hidden.
-    from thyca.memories.facade import MemoryFacade
-    from thyca.memories.archived import ArchiveError
 
     _seed_session(tmp_path, GRP, bots=["thyca", "coder", "helper"])
     facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
@@ -591,11 +533,8 @@ def test_denied_origin_matrix_hides_team_but_keeps_explicit_own(tmp_path: Path) 
             return {h.heading for h in facade.search(
                 query, limit=10, allow_own_cross_window=True).hits}
 
-    # Control: without the pin the member reads team and own entries.
     assert any("TEAMMATRIX1" in h for h in _visible(member, "TEAMMATRIX1"))
     assert any("OWNMATRIX1" in h for h in _visible(member, "OWNMATRIX1"))
-    # Pinned: team, mixed-team, and foreign entries stay hidden; the
-    # concrete own entry is still retrievable through the exemption.
     hidden = _visible(denied, "MATRIX1")
     assert all("TEAMMATRIX1" not in h for h in hidden)
     assert all("MIXEDMATRIX1" not in h for h in hidden)
@@ -619,8 +558,6 @@ def _sid_for(facade, tmp_path: Path, needle: str) -> str:
     day = facade.archive.day(_at(YESTERDAY))
     for line in (tmp_path / "memory" / f"{day}.md").read_text().splitlines():
         if needle in line and "id" in line:
-            import json as _json
-            import re as _re
             meta = _json.loads(_re.search(r"thyca (\{.*\})", line).group(1))
             return f"{day}#{meta['id']}"
     raise AssertionError(f"seed missing: {needle}")

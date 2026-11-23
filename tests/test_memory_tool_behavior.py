@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -15,10 +15,11 @@ from thyca.agents.assemble import Assemble
 from thyca.agents.loop import AgentLoop
 from thyca.agents.observe import Observe
 from thyca.agents.think import ChatReply, Think
-from thyca.core.protocol import Message, ToolCall
+from thyca.bots.timeline import CanonicalConversationStore, WorkspaceTimeline
 from thyca.conversations.runtime import ConversationManager
-from thyca.conversations.runtime.store import ConversationStore
 from thyca.conversations.store.runtime import ensure_runtime_store
+from thyca.core.channel import WindowRef
+from thyca.core.protocol import Message, ToolCall
 from thyca.llms.openai_responses import _to_responses_tools
 from thyca.llms.prompt_manager import PromptManager
 from thyca.memories.active import ActiveMemory
@@ -42,8 +43,6 @@ def _setup_gateway(tmp_path: Path) -> tuple[MemoryFacade, ToolRegistry, ToolGate
 
 
 def _canonical_manager(root: Path) -> ConversationManager:
-    from thyca.bots.timeline import CanonicalConversationStore, WorkspaceTimeline
-    from thyca.core.channel import WindowRef
 
     timeline = WorkspaceTimeline(root, "thyca")
     window = WindowRef(
@@ -98,9 +97,6 @@ def _make_loop(
     )
 
 
-# --- 1. ToolRegistry enum validation ---
-
-
 def test_registry_validates_enum_and_bool_strictness() -> None:
     async def noop(args: dict) -> str:
         return "ok"
@@ -135,7 +131,6 @@ def test_registry_validates_enum_and_bool_strictness() -> None:
     assert "['habit', 'checkpoint']" in kind_err
     assert "'other'" in kind_err
 
-    # Boolean must fail integer type/enum even though bool subclasses int in Python.
     bool_err = registry.validate_args(spec, {"level": True})
     assert bool_err == "argument 'level' must be integer, got boolean"
 
@@ -154,9 +149,6 @@ def test_registry_validates_enum_and_bool_strictness() -> None:
     assert registry.validate_args(untyped_bool_spec, {"n": True}) == (
         "argument 'n' must be one of [1, 2], got True"
     )
-
-
-# --- 2. Schema emission (OpenAI Chat & Responses) ---
 
 
 def test_memory_schemas_emit_enums_and_bounds_on_both_wire_formats(tmp_path: Path) -> None:
@@ -184,9 +176,6 @@ def test_memory_schemas_emit_enums_and_bounds_on_both_wire_formats(tmp_path: Pat
         "checkpoint",
     ]
     assert resp_by_name["memory_reinforce"]["properties"]["importance"]["maximum"] == 5
-
-
-# --- 3. Tool-layer validation & preserved facade warnings ---
 
 
 @pytest.mark.asyncio
@@ -219,16 +208,12 @@ async def test_memory_remember_and_search_tool_validation_contracts(tmp_path: Pa
         assert res.is_error, args
         assert expected_sub in res.content, (args, res.content)
 
-    # limit clamping stays non-error with warning, and direct facade search preserves warnings.
     clamped = await gateway.submit(
         ToolCall(id="lim0", name="memory_search", arguments={"query": "anything", "limit": 0})
     )
     assert not clamped.is_error
     assert json.loads(clamped.content)["warnings"] == ["limit clamped from 0 to 1"]
     assert facade.search("x", status="bogus").warnings == ["invalid status"]
-
-
-# --- 4. Cross-day polarity dedupe ---
 
 
 def test_cross_day_other_journal_respects_polarity_conflict(tmp_path: Path) -> None:
@@ -239,18 +224,13 @@ def test_cross_day_other_journal_respects_polarity_conflict(tmp_path: Path) -> N
     sid_yest = facade.append_other_journal("Python", "Dùng uv để chạy test", now=day1)
     assert sid_yest is not None
 
-    # Opposite polarity ("Đừng uv" vs "Dùng uv") must create a new entry today.
     sid_reversed = facade.append_other_journal("Python", "Đừng uv để chạy test", now=day2)
     assert sid_reversed is not None
     assert sid_reversed != sid_yest
 
-    # Exact repeat on day2 of a third note still dedupes/reinforces without writing a duplicate.
     sid_day1_other = facade.append_other_journal("Docker", "Chạy postgres ở cổng 5432", now=day1)
     sid_day2_repeat = facade.append_other_journal("Docker", "Chạy postgres ở cổng 5432", now=day2)
     assert sid_day2_repeat == sid_day1_other
-
-
-# --- 5. End-to-end scripted AgentLoop behavior tests ---
 
 
 def test_agent_loop_self_recovers_from_search_enum_and_habit_and_update_errors(tmp_path: Path) -> None:
@@ -293,7 +273,6 @@ def test_agent_loop_self_recovers_from_search_enum_and_habit_and_update_errors(t
 
     def habit_and_update_recovery(messages: list[Message], _tools, call_no: int) -> ChatReply:
         if call_no == 1:
-            # Missing required `habit` label with kind='habit'
             return ChatReply(
                 content=None,
                 tool_calls=[
@@ -324,7 +303,6 @@ def test_agent_loop_self_recovers_from_search_enum_and_habit_and_update_errors(t
             )
         if call_no == 3:
             sid = json.loads(messages[-1].content or "{}")["memory_id"]
-            # Try memory_update with `content` only (missing `summary`)
             return ChatReply(
                 content=None,
                 tool_calls=[
@@ -337,7 +315,6 @@ def test_agent_loop_self_recovers_from_search_enum_and_habit_and_update_errors(t
             )
         if call_no == 4:
             assert "content requires summary" in (messages[-1].content or "")
-            # Reuse memory_id from turn's prior tool call
             prev_calls = [
                 tc for m in messages for tc in (m.tool_calls or []) if tc.name == "memory_update"
             ]
@@ -407,7 +384,6 @@ def test_agent_loop_multichunk_search_followed_by_get_and_task_lifecycle(tmp_pat
     ans = asyncio.run(loop.run("OrionX chạy cổng nào và bảo trì mấy giờ?"))
     assert "50443" in ans and "02:30" in ans
 
-    # 3-turn task lifecycle using the same manager & facade.
     state: dict[str, str] = {}
 
     def task_turns(messages: list[Message], _tools, _call_no: int) -> ChatReply:
@@ -463,7 +439,6 @@ def test_agent_loop_multichunk_search_followed_by_get_and_task_lifecycle(tmp_pat
                     )
                 ],
             )
-        # Tool result observed
         res = json.loads(last.content or "{}")
         state["task_id"] = res["task_id"]
         state["memory_id"] = res["memory_id"]
@@ -507,13 +482,12 @@ def test_active_prompt_renders_today_elsewhere_and_memory_tasks(tmp_path: Path) 
     state = active.open_session(now)
     snap = active.refresh(state, now, conversation_id=dm_here.conversation_id)
     pm = PromptManager()
-    from dataclasses import replace
 
     snap = replace(snap, memory_tasks=format_task_catalog(facade.tasks(status="open", now=now)["tasks"]))
     prompt = pm.build(snap)
 
     assert "<today>" in prompt and sid_here in prompt and "6389" in prompt
     assert "<today_elsewhere>" in prompt and sid_else in prompt and "Khách Kestrel" in prompt
-    assert "KST-774" not in snap.today_elsewhere  # body stays out of <today_elsewhere>
+    assert "KST-774" not in snap.today_elsewhere
     assert "<memory_tasks>" in prompt and tid in prompt and sid_task in prompt
     assert "Never persist credentials or secrets." in prompt

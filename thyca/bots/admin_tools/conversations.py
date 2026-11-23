@@ -9,7 +9,6 @@ from thyca.tools.registry import ToolSpec
 from .deps import AdminDeps, _deny_child
 
 
-# Delete one group from its explicit group id.
 def _group_delete_spec(deps: AdminDeps) -> ToolSpec:
     async def handler(args: dict) -> str:
         denied = _deny_child()

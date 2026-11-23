@@ -1,11 +1,31 @@
 from __future__ import annotations
 
 import threading
+import uuid as _uuid
 from dataclasses import replace
 from pathlib import Path
 
 from thyca.configs import DEFAULT_TIMELINE_TIMEZONE, LimitsCfg
+from thyca.conversations.runtime.store import _runtime_conversation_path, _runtime_root_for
+from thyca.conversations.store.admin import AdminStore
+from thyca.conversations.store.contracts import (
+    ConversationStoreError,
+    DMBootstrapIntent,
+)
+from thyca.conversations.store.database import (
+    _ensure_root_ready,
+    _root_instance_id_from_conn,
+    _transaction_context,
+    open_existing_conversation,
+)
+from thyca.conversations.store.runtime import (
+    RuntimeWriteIntent,
+    resolve_ref,
+)
+from thyca.conversations.store.turn_pipeline import record_turn_error
+from thyca.conversations.store.write_adapter import create_group, prepare_retry
 from thyca.core.protocol import Message
+from thyca.core.protocol import Message as _Message
 
 from .compaction import ConversationCompactor
 from .errors import ConversationBusy, ConversationError
@@ -27,24 +47,21 @@ def _last_user_index(messages: list[Message]) -> int | None:
 def _manager_runtime_root(manager) -> Path | None:
     """Runtime store root for this manager, or None for legacy/canonical."""
     try:
-        from thyca.bots.timeline import CanonicalConversationStore
+        from thyca.bots.timeline import CanonicalConversationStore  # noqa: PLC0415 -- reason: break circular import with bots.timeline
 
         if isinstance(getattr(manager, "store", None), CanonicalConversationStore):
             return None
     except Exception:
         pass
     try:
-        from thyca.conversations.runtime.store import _runtime_root_for
-
         return _runtime_root_for(manager.conversations_dir)
     except Exception:
         return None
 
 
-# Report whether this manager wraps the canonical timeline store.
 def _is_canonical_store(manager) -> bool:
     try:
-        from thyca.bots.timeline import CanonicalConversationStore
+        from thyca.bots.timeline import CanonicalConversationStore  # noqa: PLC0415 -- reason: break circular import with bots.timeline
 
         return isinstance(getattr(manager, "store", None), CanonicalConversationStore)
     except Exception:
@@ -54,7 +71,6 @@ def _is_canonical_store(manager) -> bool:
 class ConversationManager:
     """Orchestrate store + compactor behind a single-process lock."""
 
-    # Build a manager over an explicit conversations directory or store.
     def __init__(
         self,
         conversations_dir: Path | None = None,
@@ -84,16 +100,10 @@ class ConversationManager:
         with self._lock:
             return self._current_locked()
 
-    # Create one new group door in the runtime conversation store.
     def create(self, *, make_current: bool = True) -> ConversationRuntime:
         with self._lock:
             runtime_root = _manager_runtime_root(self)
             if runtime_root is not None:
-                # Runtime: new group doors mint group-... ids via the store
-                # (transition: never mint legacy timestamps for new rooms).
-                from thyca.conversations.store.admin import AdminStore
-                from thyca.conversations.store.runtime import RuntimeWriteIntent
-                from thyca.conversations.store.write_adapter import create_group
 
                 self.store.ensure_dir()
                 conversation = None
@@ -106,16 +116,12 @@ class ConversationManager:
                         )
                         break
                     except Exception as exc:
-                        from thyca.conversations.store.contracts import (
-                            ConversationStoreError,
-                        )
 
                         if isinstance(exc, ConversationStoreError):
                             continue
                         raise
                 else:
                     raise ConversationError("conversation filename collision")
-                from thyca.conversations.runtime.store import _runtime_conversation_path
 
                 path = _runtime_conversation_path(self.conversations_dir, conv.ref.id)
                 conversation = ConversationRuntime(
@@ -150,7 +156,6 @@ class ConversationManager:
                     continue
             return conversations
 
-    # Find or create one bot's fixed DM in the runtime store.
     def ensure_dm(self, bot_id: str) -> ConversationRuntime:
         """Find-or-create one bot's fixed DM (phase 2B shared helper).
 
@@ -161,22 +166,12 @@ class ConversationManager:
         one-DM guarantee."""
         runtime_root = _manager_runtime_root(self)
         if runtime_root is not None:
-            # Runtime: DM doors bootstrap via AdminStore (tombstone-safe).
-            import uuid as _uuid
 
-            from thyca.conversations.store.admin import AdminStore
-            from thyca.conversations.store.contracts import (
-                ConversationStoreError,
-                DMBootstrapIntent,
-            )
 
-            # Fast path: existing DM in the store listing.
             try:
                 items, _ = AdminStore(runtime_root).list(limit=5000)
                 for row in items:
                     if row.ref.kind == "dm" and row.ref.id == bot_id:
-                        # load() takes its own lock; do not hold self._lock
-                        # across it (same pattern as the legacy path below).
                         return self.load(row.ref.id)
             except ConversationStoreError:
                 pass
@@ -186,10 +181,6 @@ class ConversationManager:
                     bot_id, intent=DMBootstrapIntent(bot_id, attempt)
                 )
             except ConversationStoreError:
-                # Lost a concurrent bootstrap race, or a tombstoned DM
-                # re-bootstrap attempt: re-list and adopt the winner when
-                # present so concurrent first lookups still mint exactly
-                # one DM id (the CBE-5 guarantee).
                 try:
                     items, _ = AdminStore(runtime_root).list(limit=5000)
                     for row in items:
@@ -230,14 +221,12 @@ class ConversationManager:
                 removed.append(conversation.conversation_id)
             return removed
 
-    # Append one row to the current conversation as the acting bot.
     def append(self, msg: Message, *, actor: str | None = None) -> None:
         with self._lock:
             conversation = self._current_locked()
             self.store.append(conversation.path, msg, actor=actor)
             conversation.messages.append(msg)
 
-    # Check retry readiness for the acting bot without rewriting history.
     def truncate_to_last_user(self, *, actor: str | None = None) -> bool:
         """Drop messages after the last user. No-op if the tail is already a user.
 
@@ -245,23 +234,12 @@ class ConversationManager:
         starts clean, and re-marks itself only if it fails again.
         Returns False when the transcript has no ``role=user`` message.
         """
-        # Runtime store is append-only: retry never rewrites history.
-        # Readiness (last-user position) comes from the no-mutation
-        # prepare_retry path; the trailing system error marker stays on
-        # disk and is filtered from the model feed by Assemble.
         runtime_root = _manager_runtime_root(self)
         if runtime_root is not None:
             with self._lock:
                 conversation = self._current_locked()
-                from thyca.conversations.store.runtime import (
-                    RuntimeWriteIntent,
-                    resolve_ref,
-                )
-                from thyca.conversations.store.write_adapter import prepare_retry
 
                 ref = resolve_ref(runtime_root, conversation.conversation_id)
-                # Read-only readiness: the acting bot when known, else a
-                # stored member reader. No write is authorized here.
                 reader = actor or (ref.id if ref.kind == "dm" else None)
                 if reader is None:
                     reader = (conversation.bots or ["thyca"])[0]
@@ -300,7 +278,6 @@ class ConversationManager:
             conversation.messages[:] = kept
             return True
 
-    # Record one turn failure for the acting bot without rewriting rows.
     def mark_turn_error(self, code: str, message: str, *, actor: str | None = None) -> bool:
         """Stamp the turn's user message with the failure and persist it.
 
@@ -309,25 +286,12 @@ class ConversationManager:
         message to mark. Disk failures raise ConversationError — callers that must
         not mask the original error guard this call.
         """
-        # Runtime store is append-only: failures append a trailing system
-        # marker (meta.error) instead of stamping the user row in place.
-        # Trace projects the marker back onto its turn's user message in
-        # memory, so failed turns still read as failed without rewriting
-        # stored bytes.
         runtime_root = _manager_runtime_root(self)
         if runtime_root is not None:
             with self._lock:
                 conversation = self._current_locked()
-                from thyca.conversations.store.runtime import (
-                    RuntimeWriteIntent,
-                    resolve_ref,
-                )
-                from thyca.conversations.store.turn_pipeline import record_turn_error
-                from thyca.conversations.store.write_adapter import prepare_retry
 
                 ref = resolve_ref(runtime_root, conversation.conversation_id)
-                # The acting bot records its own failure; membership is
-                # checked inside the store transactions below.
                 acting = actor or (ref.id if ref.kind == "dm" else None)
                 if acting is None:
                     acting = (conversation.bots or ["thyca"])[0]
@@ -343,9 +307,6 @@ class ConversationManager:
                     intent=RuntimeWriteIntent("runtime-record-error"),
                     actor=acting, code=code, message=message,
                 )
-                # Keep the in-memory view consistent with the store: the
-                # marker row is a system message carrying meta.error.
-                from thyca.core.protocol import Message as _Message
 
                 conversation.messages.append(
                     _Message(
@@ -421,15 +382,9 @@ class ConversationManager:
         pending_user_tokens: int,
         calibration: float = 1.0,
     ) -> dict:
-        # Runtime store compaction is append-only: the prefix is replaced
-        # by one system summary row via compact_through_seq (no rewrite).
-        # Summaries reuse the legacy "[compaction: ...; excerpt: ...]"
-        # shape so Assemble still hoists them as compaction markers.
         runtime_root = _manager_runtime_root(self)
         if runtime_root is not None:
             conversation = self._current_locked()
-            # Rescan from the store so a concurrent append cannot be lost:
-            # scan() reassembles via cursor-paged reads with bounded resync.
             on_disk = self.store.scan(conversation.path)
             conversation.messages[:] = on_disk
             before = len(on_disk)
@@ -452,14 +407,6 @@ class ConversationManager:
             summary_text = (
                 f"[compaction: omitted {plan.total_messages} messages/"
                 f"{plan.total_turns} turns; excerpt: {body}]"
-            )
-            from thyca.conversations.store.admin import AdminStore
-            from thyca.conversations.store.runtime import resolve_ref
-            from thyca.conversations.store.database import (
-                _ensure_root_ready,
-                _root_instance_id_from_conn,
-                _transaction_context,
-                open_existing_conversation,
             )
 
             ref = resolve_ref(runtime_root, conversation.conversation_id)
@@ -489,7 +436,6 @@ class ConversationManager:
                     ref, through_seq, lambda _old, _text=summary_text: _text,
                 )
             except Exception as exc:
-                from thyca.conversations.store.contracts import ConversationStoreError
 
                 if isinstance(exc, ConversationStoreError):
                     raise ConversationError("compaction failed") from exc
@@ -559,14 +505,6 @@ class ConversationManager:
                     return False
                 summary_text = compacted[0].content or ""
                 tail_len = len(compacted) - 1
-                from thyca.conversations.store.admin import AdminStore
-                from thyca.conversations.store.runtime import resolve_ref
-                from thyca.conversations.store.database import (
-                    _ensure_root_ready,
-                    _root_instance_id_from_conn,
-                    _transaction_context,
-                    open_existing_conversation,
-                )
 
                 ref = resolve_ref(runtime_root, conversation.conversation_id)
                 conn = open_existing_conversation(runtime_root, lock_mode="shared")

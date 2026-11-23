@@ -18,6 +18,9 @@ build/
 .env
 .env.*
 
+# Ephemeral verification artifacts
+.agents/artifacts/
+
 # Editors and OS
 .vscode/
 .idea/

@@ -5,19 +5,19 @@ config file path, so this module never imports the handler class.
 """
 from __future__ import annotations
 
+import hashlib
+import hmac
+import os
+import secrets as _secrets
 import sys
 import traceback
 from pathlib import Path
 
 from thyca import __version__
-from thyca.app.onboarding import (
-    ProviderProbeError,
-    provider_ready,
-    test_provider_api,
-    validate_provider,
-)
+from thyca.bots.registry import BotRegistry
 from thyca.configs import (
     ConfigError,
+    _parse_dict,
     atomic_write_text,
     config_path,
     config_schema,
@@ -26,6 +26,8 @@ from thyca.configs import (
     resolve_model_base_url,
     save,
 )
+from thyca.configs.auth import auth_path_for
+from thyca.configs.coordination import CoordinationError, hold
 from thyca.serve.errors import _with_json
 
 
@@ -48,9 +50,6 @@ def _config_meta(cfg) -> dict:
 
 
 def _parse_config_payload(payload: dict, cfg):
-    # Lazy: _parse_dict is M3-private; keep the import local (no top-level
-    # edge toward config internals) until M3 offers a public API (TASK-015).
-    from thyca.configs import _parse_dict
 
     return _parse_dict(merge_saved_keys(payload, cfg))
 
@@ -63,6 +62,8 @@ def _load_config(config_file: Path | None):
 
 
 def config_status(handler, config_file: Path | None) -> None:
+    from thyca.app.onboarding import provider_ready  # noqa: PLC0415 -- reason: serve/ lazy app import boundary
+
     cfg = _load_config(config_file)
     ready = cfg is not None and provider_ready(cfg)
     handler._json(200, {"ready": ready, "version": __version__})
@@ -78,7 +79,6 @@ def config_get(handler, config_file: Path | None) -> None:
     fails closed instead of sending values clients would then save back
     unconditionally.
     """
-    from thyca.configs.coordination import CoordinationError, hold
 
     root = _config_root(config_file)
     try:
@@ -131,7 +131,6 @@ def _revision_key(root: Path) -> bytes | None:
     recover — rather than weakening the scheme. Reads/writes of this
     file never take other locks; callers hold coordination across use.
     """
-    import secrets as _secrets
 
     path = root / "config_revision.key"
     try:
@@ -146,7 +145,7 @@ def _revision_key(root: Path) -> bytes | None:
     try:
         atomic_write_text(path, _secrets.token_hex(32), mode=0o600)
     except FileExistsError:
-        pass  # lost the creation race; read the winner below
+        pass
     except OSError:
         return None
     try:
@@ -181,10 +180,7 @@ def _config_revision(config_file: Path | None, root: Path) -> str | None:
     unusable key) yields ``None`` so callers fail closed. Callers must
     hold the coordination lock across the snapshot this feeds.
     """
-    import hashlib
-    import hmac
 
-    from thyca.configs.auth import auth_path_for
 
     key = _revision_key(root)
     if key is None:
@@ -209,17 +205,10 @@ def _model_references(root: Path, removed: list[str]) -> tuple[dict[str, list[st
     “unused”. Paused and system bots count like any other bot; only real
     bot directories are scanned (registry semantics via ``list()``).
     """
-    import os
 
-    from thyca.bots.registry import BotRegistry
 
     wanted = set(removed)
     refs = {model: [] for model in removed}
-    # A genuinely absent inventory (fresh data dir) authorizes; an
-    # inaccessible one must not. ``isdir`` is False for both, so probe
-    # explicitly: only a true missing path means "no bots". Anything
-    # else abnormal (permissions, a non-directory entry) fails closed.
-    # Symlinked roots keep today's follow-the-link read behavior.
     if not os.path.isdir(Path(root) / "bots"):
         try:
             os.stat(Path(root) / "bots")
@@ -277,12 +266,6 @@ def _check_model_removal(root: Path, removed: list[str]) -> tuple[int, dict] | N
 
 
 def _apply_config_post(handler, config_file: Path | None, root: Path, payload: dict) -> None:
-    # Opt-in conditional write: callers that merged onto a fresh GET send
-    # its revision back. A mismatch means a newer config landed in
-    # between — report 409 with no values/keys echoed instead of
-    # silently replacing it. Callers without a revision keep the legacy
-    # unconditional replace (residual: unprotected external POSTs are not
-    # safe against each other and must not be assumed so).
     base_revision = payload.pop("baseRevision", None)
     if base_revision is not None:
         current = _config_revision(config_file, root)
@@ -314,14 +297,6 @@ def _apply_config_post(handler, config_file: Path | None, root: Path, payload: d
             status, body = verdict
             handler._json(status, body)
             return
-    # Default-deletion rule (checked live under the same lock, so
-    # concurrent default switches serialize): the currently registered
-    # default cannot be removed via any config replacement — not by
-    # abandoning it, not by switching to another default in the same
-    # transaction, and not by keeping its name as an unregistered legacy
-    # fallback. Switch the default in a separate operation first, then
-    # delete. An unregistered legacy default is not a registry entry, so
-    # keeping it never triggers this rule.
     old_default = cfg.defaultModel or ""
     if old_default and old_default in removed:
         handler._json(422, {
@@ -340,17 +315,18 @@ def _apply_config_post(handler, config_file: Path | None, root: Path, payload: d
         traceback.print_exc(file=sys.stderr)
         handler._json(503, {"error": "config unavailable"})
         return
+    from thyca.app.onboarding import provider_ready  # noqa: PLC0415 -- reason: serve/ lazy app import boundary
+
     handler._json(200, {"ok": True, "ready": provider_ready(updated)})
 
 
 def config_post(handler, config_file: Path | None) -> None:
     """Full config replacement, guarded against unsafe model removal.
 
-    The whole load–check–save runs under the model coordination lock so a
+    The whole load-check-save runs under the model coordination lock so a
     bot model assignment cannot slip in between the reference check and
     the save (lock order: coordination → config file → per-bot).
     """
-    from thyca.configs.coordination import CoordinationError, hold
 
     def run(payload: dict) -> None:
         root = _config_root(config_file)
@@ -393,6 +369,8 @@ def onboarding_verify(handler, config_file: Path | None) -> None:
             except ConfigError:
                 handler._json(422, {"error": "chưa có API key"})
                 return
+        from thyca.app.onboarding import ProviderProbeError, validate_provider  # noqa: PLC0415 -- reason: serve/ lazy app import boundary
+
         try:
             models = validate_provider(base_url.strip(), api_key)
         except ProviderProbeError as exc:
@@ -419,13 +397,11 @@ def providers_test(handler, config_file: Path | None) -> None:
             handler._json(404, {"error": "provider not found"})
             return
         raw_model = payload.get("model")
-        # Missing model falls back to the default; an explicit "" is a 400.
         model = cfg.defaultModel if raw_model is None else raw_model
         if not isinstance(model, str) or not model.strip():
             handler._json(400, {"error": "invalid model"})
             return
         model = model.strip()
-        # Legacy per-model endpoint wins, exactly like the turn path.
         base_url = resolve_model_base_url(entry.baseUrl, cfg.models.get(model))
         try:
             key = entry.api_key()
@@ -438,6 +414,8 @@ def providers_test(handler, config_file: Path | None) -> None:
             )
             handler._json(422, {"error": "chưa có API key"})
             return
+        from thyca.app.onboarding import ProviderProbeError, test_provider_api  # noqa: PLC0415 -- reason: serve/ lazy app import boundary
+
         try:
             result = test_provider_api(entry.api, base_url, key, model)
         except ProviderProbeError as exc:

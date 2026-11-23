@@ -11,15 +11,15 @@ from thyca.agents.compacting import SummaryOutcome, compact_with_llm
 from thyca.agents.loop import AgentLoop
 from thyca.agents.observe import Observe
 from thyca.agents.think import Think
+from thyca.bots.timeline import CanonicalConversationStore, WorkspaceTimeline
 from thyca.configs import LimitsCfg
+from thyca.conversations.runtime import ConversationManager
+from thyca.core.channel import WindowRef
 from thyca.core.protocol import Message, ToolResult
 from thyca.llms.llm_base import ChatReply
-from thyca.conversations.runtime import ConversationManager
 
-# Build a canonical-timeline manager holding one execution conversation.
+
 def _canonical_manager(root: Path, limits=None) -> ConversationManager:
-    from thyca.bots.timeline import CanonicalConversationStore, WorkspaceTimeline
-    from thyca.core.channel import WindowRef
 
     timeline = WorkspaceTimeline(root, "thyca")
     window = WindowRef(
@@ -31,7 +31,6 @@ def _canonical_manager(root: Path, limits=None) -> ConversationManager:
     manager = ConversationManager(store=store, limits=limits)
     manager.load(conversation_id)
     return manager
-
 
 
 @dataclass

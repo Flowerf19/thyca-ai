@@ -2,23 +2,25 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 
-from thyca.core.protocol import Message, ToolCall
-from thyca.llms.llm_base import ChatReply
 from thyca.conversations.runtime.summary import (
     SUMMARY_INPUT_MAX_CHARS,
     SUMMARY_MAX_CHARS,
     accept_summary,
     omitted_text,
     propose_summary,
+    summary_instruction,
     summary_messages,
 )
+from thyca.core.protocol import Message, ToolCall
+from thyca.llms.llm_base import ChatReply
 
 _TS = "2026-10-13T00:00:00Z"
 
 
 def _msg(role: str, content: str | None) -> Message:
-    return Message(role=role, content=content, ts=_TS)  # type: ignore[arg-type]
+    return Message(role=role, content=content, ts=_TS)  # type: ignore[arg-type] -- reason: intentional invalid-type or test-double argument
 
 
 def test_omitted_text_skips_tool_bodies_keeps_names_and_paths() -> None:
@@ -85,9 +87,7 @@ def test_propose_summary_uses_instruction_and_focus() -> None:
 
 
 def test_compaction_instruction_is_packaged_seed() -> None:
-    from pathlib import Path
 
-    from thyca.conversations.runtime.summary import summary_instruction
 
     prompts_dir = Path(__file__).resolve().parents[1] / "thyca" / "seeds" / "prompts"
     text = (prompts_dir / "compaction.md").read_text(encoding="utf-8").strip()

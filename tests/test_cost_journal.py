@@ -24,9 +24,6 @@ from test_team_frontend import _unit_factory_source
 ROOT = Path(__file__).resolve().parents[1]
 DASH_JS = ROOT / "thyca" / "webui" / "ui" / "dashboard" / "js" / "dashboard.js"
 
-# Same stub surface as test_request_chart.py: real util.js semantics for
-# $/$$/escapeHTML/icon, a per-id element registry, and the data-layer
-# globals dashboard.js expects.
 STUBS = r"""
 class El {
   constructor(tag = 'div') {
@@ -124,10 +121,10 @@ def test_share_denominator_and_vi_format(node: str) -> None:
     )
     big, small, frac, empty_den, null_num, almost = result
     assert big == "75%" and small == "25%"
-    assert frac == "5,6%"          # vi-VN decimal comma, one decimal
-    assert empty_den == "0%"       # known zero total stays distinct
-    assert null_num == "—"          # unknown is not a zero share
-    assert almost == "100%"        # rounded, not "99,99%" noise
+    assert frac == "5,6%"
+    assert empty_den == "0%"
+    assert null_num == "—"
+    assert almost == "100%"
 
 
 def test_hero_cards_carry_the_cost_and_token_split(node: str) -> None:
@@ -145,13 +142,10 @@ def test_hero_cards_carry_the_cost_and_token_split(node: str) -> None:
         "console.log(JSON.stringify(document.querySelector('#stat-grid').innerHTML));",
     )
     assert ">Token</p>" in html
-    # Cache is a subset of prompt: "in" is the uncached input (150 − 30), so
-    # the parts sum to the server total (120 + 30 + 15 = 165), never
-    # 150 + 30 + 15.
     assert "Input 120 · Cache 30 · Output 15" in html
     assert ">165</p>" in html
     assert ">Chi phí</p>" in html and "$0.0300" in html
-    assert "TB $0.006000 / req" in html  # 0.03 / 5 requests
+    assert "TB $0.006000 / req" in html
     assert ">Gọi model</p>" in html and ">5</p>" in html
     assert "7 tool · 4 lượt" in html
     assert ">Độ trễ p50</p>" in html
@@ -187,7 +181,7 @@ def test_multi_model_turn_tokens_split_not_double_counted(node: str) -> None:
         "console.log(JSON.stringify(document.querySelector('#stat-grid').innerHTML));",
     )
     assert "Input 0 · Cache 200 · Output 5" in html
-    assert ">205</p>" in html  # prompt + completion, cache not re-added
+    assert ">205</p>" in html
 
 
 def test_daily_costs_zero_fill_missing_days(node: str) -> None:
@@ -296,10 +290,9 @@ def test_paging_multiple_pages_and_midway_failure(node: str) -> None:
     )
     assert out["ok"]["rows"] == 65
     assert out["ok"]["total"] == 100
-    assert out["ok"]["more"] is False  # still more to fetch
+    assert out["ok"]["more"] is False
     assert out["ok"]["urls"][0].endswith("limit=15&offset=0")
     assert out["ok"]["urls"][1].endswith("limit=50&offset=15")
-    # Midway failure: explicit error, rows kept — nothing silently partial.
     assert out["afterError"]["error"] == "backend died"
     assert out["afterError"]["rows"] == 65
     assert "Không tải được danh sách lượt" in out["afterError"]["status"]
@@ -362,7 +355,6 @@ def test_cost_bot_rows_have_avatar_slots(node: str) -> None:
         "renderBotRows();\n"
         "console.log(JSON.stringify(document.querySelector('#rows-bot').innerHTML));",
     )
-    # Both rows keep an aligned slot; only the known bot gets a seal.
     assert html.count('<span class="row-avatar') == 2
     assert "<ava:coder/>" in html
     assert '<span class="row-avatar id-chip" title="unknown">?</span>' in html

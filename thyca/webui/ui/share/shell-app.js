@@ -1,12 +1,5 @@
-// Shared shell wiring for every Thyca page: mobile menu, splitter, dialogs,
-// motion toggle, blink/idle timers, roster sync. Load AFTER sidebar.js and
-// studio.js (which bind DOM at load), BEFORE the page's own script.
-//
-// The shared sidebar dispatches to the active page controller. The defaults
-// below are only compatibility fallbacks for harnesses without the router.
 'use strict';
 
-/* The persistent sidebar dispatches to the active screen controller. */
 function selectBot(id) {
   if (window.ThycaRouter) return ThycaRouter.dispatch('selectBot', id);
   return false;
@@ -40,8 +33,6 @@ function syncSidebarChrome() {
   if (!sidebar) return;
   const collapsed = !narrow && shell?.dataset.sidebarCollapsed === 'true';
   const open = !locked && (narrow ? sidebar.classList.contains('mobile-open') : !collapsed);
-  /* Desktop collapsed renders the avatar rail which stays interactive;
-     only narrow closed drawer and the setup lock keep the sidebar inert. */
   sidebar.inert = locked || (narrow && !open);
   const railList = $('#rail-avatar-list');
   if (railList) railList.inert = locked;
@@ -74,8 +65,6 @@ function rebuildExpressionBots() {
 function toggleMotion(value) {
   motionPaused = value;
   document.body.classList.toggle('motion-paused', value);
-  // The footer motion button is gone (its job moved to the reduce-motion
-  // preference in the Settings dialog); guard for markup that still has it.
   const btn = $('#motion-toggle');
   if (!btn) return;
   btn.setAttribute('aria-pressed', String(value));
@@ -84,9 +73,6 @@ function toggleMotion(value) {
   btn.innerHTML = icon(value ? 'play' : 'pause');
 }
 
-/* Stream/lifecycle events → shared bot-card states. The chat NDJSON reader
-   calls handleStreamEvent (a different, turn-scoped mapping); this surface is
-   for any page that wants to drive states externally. */
 function handleEvent(id, type, payload = {}) {
   const b = getBot(id); if (!b) return false;
   if (b.state === 'offline' && type !== 'connection.restored') return false;
@@ -100,11 +86,9 @@ function handleEvent(id, type, payload = {}) {
 }
 
 function initShellApp() {
-  /* Dialogs — shared close button + backdrop click. */
   $$('.dialog-close').forEach(btn => btn.onclick = () => btn.closest('dialog').close());
   $$('dialog').forEach(d => d.addEventListener('click', e => { if (e.target === d) { const r = d.getBoundingClientRect(); if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) d.close(); } }));
 
-  /* Sidebar toggle: .menu-button (narrow only). Wordmark is static. */
   const sidebarBand = () => matchMedia('(max-width:850px)').matches ? 'narrow' : matchMedia('(max-width:1150px)').matches ? 'medium' : 'wide';
   let currentBand = sidebarBand();
   const shellEl = $('.notebook-shell');
@@ -151,9 +135,6 @@ function initShellApp() {
   document.addEventListener('keydown', e => { if (e.key === 'Escape') { closeMobile(); closePageMenu(); } });
   syncSidebarChrome();
 
-  /* Motion toggle + ambient timers. */
-  /* The footer motion button was removed in favor of the reduce-motion
-     preference; keep the wiring if markup still carries it. */
   if ($('#motion-toggle')) $('#motion-toggle').onclick = () => toggleMotion(!motionPaused);
   if (reduced.matches) toggleMotion(true);
 
@@ -170,9 +151,6 @@ function initShellApp() {
   setInterval(idleTick, 400);
   document.addEventListener('visibilitychange', () => { bots.forEach(b => { clearIdle(b, true); b.idle.nextAt = Date.now() + between(4000, 9000); }); });
 
-  /* Sidebar has two desktop modes: full (--sidebar-full) and rail (--rail-width).
-     On narrow screens (<=850px) the splitter is hidden and only the overlay
-     drawer (opened by .menu-button) shows full cards. */
   const FULL_WIDTH_VAR = 'var(--sidebar-full)';
   const RAIL_WIDTH_VAR = 'var(--rail-width)';
   const separator = $('.splitter');
@@ -222,13 +200,10 @@ function initShellApp() {
     syncSidebarModeFromState();
   });
 
-  /* Bots created/deleted outside this page (other client, CLI, a turn in
-     another tab) don't reach any stream — refocus + a slow poll catch them. */
   document.addEventListener('visibilitychange', () => { if (!document.hidden) scheduleRosterSync(); });
   addEventListener('focus', () => scheduleRosterSync());
   setInterval(() => scheduleRosterSync(), 45000);
 
-  /* Public adapter shared by all pages (chat adds sendTurn/stop itself). */
   window.ThycaShell = {
     setState, mention: mentionBot, notifyText, handleEvent, setGroupActivity,
     playIdle: (id, key = null) => beginIdle(id, key, true), setIdleOptions, getIdleOptions: () => ({ ...idleOptions }),
@@ -241,9 +216,6 @@ function initShellApp() {
       if ($('#expressions-dialog').open) buildExpressions();
       return true;
     },
-    /* Browser-only shape override, mirroring setBotColor. Patches every
-       existing avatar instance in place: updates data-drop-shape and re-renders
-       the medallion character markup inside .base while preserving className and state. */
     setBotShape(id, shape) {
       if (typeof DROP_NAMES === 'undefined' || !DROP_NAMES.includes(shape) || !getBot(id)) return false;
       const b = getBot(id); b.shape = shape; localStorage.setItem('thyca.shape.' + id, shape);

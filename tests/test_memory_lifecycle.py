@@ -1,6 +1,8 @@
 """remember / forget / reinforce / TTL — GOAL-006."""
 from __future__ import annotations
 
+import re
+import stat
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -9,8 +11,9 @@ from threading import Event, Lock, Thread
 import pytest
 
 import thyca.memories.writer as writer_module
-from thyca.memories.heading import TTL_DAYS, parse_heading
+from thyca.memories.archived import ArchiveError
 from thyca.memories.facade import MemoryFacade
+from thyca.memories.heading import TTL_DAYS, parse_heading
 
 
 def test_facade_indexes_existing_sources_on_open(tmp_path: Path) -> None:
@@ -140,7 +143,7 @@ def test_public_map_heading_serializes_concurrent_append(
             writer.map_heading(
                 daily, "aaaaaaaa", lambda meta: replace(meta, title="updated")
             )
-        except Exception as exc:  # pragma: no cover - assertion below reports it
+        except Exception as exc:  # pragma: no cover -- reason: assertion below reports it
             errors.append(exc)
 
     def append() -> None:
@@ -152,7 +155,7 @@ def test_public_map_heading_serializes_concurrent_append(
                 "- appended-token\n",
             )
             append_finished.set()
-        except Exception as exc:  # pragma: no cover - assertion below reports it
+        except Exception as exc:  # pragma: no cover -- reason: assertion below reports it
             errors.append(exc)
 
     monkeypatch.setattr(writer_module, "_atomic_write", blocked_atomic_write)
@@ -221,16 +224,23 @@ def test_two_facades_serialize_write_and_archive_refresh(
 
     if kind == "daily":
         sid = "2026-08-13#aaaaaaaa"
-        first_write = lambda: first.update(sid, summary="first-token", now=now)
-        second_write = lambda: second.update(sid, summary="second-token", now=now)
+
+        def first_write():
+            return first.update(sid, summary="first-token", now=now)
+
+        def second_write():
+            return second.update(sid, summary="second-token", now=now)
     else:
-        first_write = lambda: first.write_canonical("SOUL.md", "# Soul\nfirst-token\n")
-        second_write = lambda: second.write_canonical("SOUL.md", "# Soul\nsecond-token\n")
+        def first_write():
+            return first.write_canonical("SOUL.md", "# Soul\nfirst-token\n")
+
+        def second_write():
+            return second.write_canonical("SOUL.md", "# Soul\nsecond-token\n")
 
     def run(operation, errors):
         try:
             operation()
-        except Exception as exc:  # pragma: no cover - assertion below reports it
+        except Exception as exc:  # pragma: no cover -- reason: assertion below reports it
             errors.append(exc)
 
     first_thread = Thread(target=run, args=(first_write, first_error))
@@ -239,8 +249,6 @@ def test_two_facades_serialize_write_and_archive_refresh(
 
     second_thread = Thread(target=run, args=(second_write, second_error))
     second_thread.start()
-    # A second facade must not mutate or refresh this source while the first
-    # facade is between its source read and archive replacement.
     assert not second_reindex_started.wait(timeout=1)
 
     release_refresh.set()
@@ -297,22 +305,17 @@ def test_reject_forget_soul(tmp_path: Path) -> None:
         raise AssertionError("expected reject")
 
 
-
-
 def test_update_keeps_entry_id_and_reindexes(tmp_path: Path) -> None:
-    from thyca.memories.facade import MemoryFacade
 
     facade = MemoryFacade(tmp_path)
     sid = facade.remember("Chủ đề cũ", "nội dung cũ", now=None)
     before = facade.get(memory_id=sid)
     facade.update(sid, topic="Chủ đề mới", summary="nội dung mới", content="dòng chi tiết")
     after = facade.get(memory_id=sid)
-    # id nhúng trong heading giữ nguyên — memory_id không đổi
     assert 'Chủ đề cũ' not in after
     assert "Chủ đề mới" in after
     assert "nội dung mới" in after
     assert "dòng chi tiết" in after
-    import re
 
     id_before = re.search(r'"id":"([0-9a-f]{8})"', before)
     id_after = re.search(r'"id":"([0-9a-f]{8})"', after)
@@ -320,10 +323,7 @@ def test_update_keeps_entry_id_and_reindexes(tmp_path: Path) -> None:
 
 
 def test_update_not_found(tmp_path: Path) -> None:
-    import pytest
 
-    from thyca.memories.archived import ArchiveError
-    from thyca.memories.facade import MemoryFacade
 
     facade = MemoryFacade(tmp_path)
     with pytest.raises(ArchiveError):
@@ -394,9 +394,6 @@ def test_canonical_heading_session_roundtrips(tmp_path: Path) -> None:
     assert hit.chunk_id in {leaf.chunk_id for leaf in facade.stats().leaves}
 
 
-# --- F23/X13: writer owns per-file locking; no facade pre-locate ---
-
-
 def _facade(tmp_path: Path) -> MemoryFacade:
     return MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
 
@@ -414,7 +411,7 @@ def test_f23_mutations_locate_once_under_mutation_lock(tmp_path: Path) -> None:
         assert writer.mutation_lock()._is_owned(), "locate must run under mutation_lock"
         return real_locate(memory_id)
 
-    writer.locate = spy  # type: ignore[method-assign]
+    writer.locate = spy  # type: ignore[method-assign] -- reason: test spy method replacement
     try:
         facade.reinforce(sid, now=now)
         assert calls == [sid]
@@ -441,7 +438,7 @@ def test_f23_concurrent_mutations_stay_consistent(tmp_path: Path) -> None:
                 sid = facade.remember(f"topic-{n}-{i}", "summary body", now=now)
                 with sids_lock:
                     sids.append(sid)
-        except BaseException as exc:  # noqa: BLE001 — collected, asserted below
+        except BaseException as exc:
             errors.append(exc)
 
     threads = [Thread(target=remember_many, args=(n,)) for n in range(4)]
@@ -458,7 +455,7 @@ def test_f23_concurrent_mutations_stay_consistent(tmp_path: Path) -> None:
             facade.update(sid, topic="renamed", now=now)
             if drop:
                 facade.forget(sid, now=now)
-        except BaseException as exc:  # noqa: BLE001 — collected, asserted below
+        except BaseException as exc:
             errors.append(exc)
 
     workers = [
@@ -473,12 +470,7 @@ def test_f23_concurrent_mutations_stay_consistent(tmp_path: Path) -> None:
     assert facade.stats(now=now).total == 10
 
 
-# Moved from test_b4_unification.py / test_b4_p2.py (B4 batch).
-import stat
-import pytest
-
 def test_x7_memory_writes_flow_through_it(tmp_path: Path) -> None:
-    from thyca.memories.facade import MemoryFacade
 
     facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
     facade.write_canonical("SOUL.md", "# Soul\n")
@@ -488,30 +480,26 @@ def test_x7_memory_writes_flow_through_it(tmp_path: Path) -> None:
 
 
 def test_x7_write_canonical_reports_reindex_failure_itself(tmp_path: Path) -> None:
-    from thyca.memories.archived import ArchiveError
-    from thyca.memories.facade import MemoryFacade
 
     facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
 
     def boom(now=None):
         raise ArchiveError("boom")
 
-    facade._refresh_index = boom  # type: ignore[method-assign]
+    facade._refresh_index = boom  # type: ignore[method-assign] -- reason: test spy method replacement
     with pytest.raises(ArchiveError, match="boom"):
         facade.write_canonical("SOUL.md", "# Soul\n")
 
     def oserr(now=None):
         raise OSError("disk gone")
 
-    facade._refresh_index = oserr  # type: ignore[method-assign]
+    facade._refresh_index = oserr  # type: ignore[method-assign] -- reason: test spy method replacement
     with pytest.raises(OSError, match="disk gone"):
         facade.write_canonical("SOUL.md", "# Soul\n")
     assert (tmp_path / "SOUL.md").read_text(encoding="utf-8") == "# Soul\n"
 
 
 def test_x14_facade_proj_is_normalized(tmp_path: Path) -> None:
-    from thyca.memories.facade import MemoryFacade
-    from thyca.memories.heading import parse_heading
 
     facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
     proj = f"{tmp_path}/sub/../proj"

@@ -12,13 +12,14 @@ import json
 import unicodedata
 from pathlib import Path
 
+import yaml
+
 from thyca.bots.card import BotModel
 from thyca.configs import atomic_write_text
-from thyca.skills.store import _NAME_RE, NAME_MAX
+from thyca.skills.store import _FM_RE, _NAME_RE, NAME_MAX
 
 SETTINGS_FILENAME = "settings.json"
 
-#: Same shape bounds as per-turn model options (turn_options.MODEL_MAX).
 MODEL_ID_MAX = 200
 
 __all__ = [
@@ -119,8 +120,6 @@ def _real_bot_dir(root: Path, bot_id: str) -> Path:
     try:
         if bot_dir.is_symlink() or not bot_dir.is_dir():
             raise SettingsError("unknown bot")
-        # Grammar already pins [a-z0-9-], but resolve anyway so a
-        # non-canonical spelling can never escape the bots root.
         if bots_root.resolve() not in bot_dir.resolve().parents:
             raise SettingsError("unknown bot")
     except OSError:
@@ -141,9 +140,6 @@ def read_settings(root: Path, bot_id: str) -> BotModel | None:
         if target.is_symlink():
             raise SettingsError("bot settings unavailable")
         if not target.exists():
-            # Only a truly absent entry falls back to the legacy card
-            # model. A directory (or any other non-regular entry) at this
-            # path is corruption, never a fallback.
             return None
         if not target.is_file():
             raise SettingsError("bot settings unavailable")
@@ -213,9 +209,7 @@ def strip_card_model_text(text: str) -> str:
     caller must leave the card file untouched then, so a legacy model is
     never erased by a failed migration).
     """
-    from thyca.skills.store import _FM_RE
 
-    import yaml
 
     match = _FM_RE.match(text)
     if match is None:

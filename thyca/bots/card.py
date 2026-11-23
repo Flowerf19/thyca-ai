@@ -21,33 +21,21 @@ from thyca.skills.store import _FM_RE, _NAME_RE, DESCRIPTION_MAX, NAME_MAX
 
 VERSION = 1
 
-#: Card file names. ``TWIN.md`` is canonical (user decision 2026-10-13:
-#: every bot in the team is a twin of Thyca); ``BOT.md`` is the legacy
-#: name kept readable for directories created before the rename.
 CARD_FILENAME = "TWIN.md"
 LEGACY_CARD_FILENAME = "BOT.md"
 CARD_FILENAMES = (CARD_FILENAME, LEGACY_CARD_FILENAME)
 
 BASH_MODES = frozenset({"ask", "allow", "deny"})
 
-#: Tint is a theme-token name, never a hex literal (contract §6/FE-6).
 _TINT_RE = re.compile(r"^[a-z][a-z0-9]*(-[a-z0-9]+)*$")
 
-#: The team palette (mirrors BOT_TINTS in team-data.js — the tokens the
-#: webui resolves through var(--color-…)). Used only to suggest a
-#: distinct tint at creation time; any other token-shaped value in a
-#: card stays valid and wins.
 TEAM_TINTS: tuple[str, ...] = ("accent", "botanical", "success-ink", "ink", "accent-deep")
 
-#: Avatar note variants (design "Bot Avatar System" v1.1). The shape is
-#: a card property; the colour stays the card's ``tint``. ``star`` is
-#: reserved for the Thyca manager; child bots use the other six.
 AVATAR_VARIANTS: tuple[str, ...] = (
     "star", "hollow", "single-flag", "double-flag", "dotted", "fermata", "plain",
 )
 CHILD_AVATAR_VARIANTS: tuple[str, ...] = AVATAR_VARIANTS[1:]
 
-#: Exact legacy ids from the design registry (plus their thyca- forms).
 _AVATAR_BY_ID: dict[str, str] = {
     "designer": "hollow",
     "thyca-designer": "hollow",
@@ -63,11 +51,6 @@ _AVATAR_BY_ID: dict[str, str] = {
     "thyca-generic": "plain",
 }
 
-#: Tools every newly created bot receives so it can immediately talk to
-#: peers and use its own memory (peer send + remember/search/get/propose +
-#: open task catalog). Creation paths union these with explicitly requested
-#: tools; the card's ``hidden_tools`` and memory/bash policies still win
-#: at filter time.
 BASELINE_BOT_TOOLS: tuple[str, ...] = (
     "bot_send",
     "bot_fetch",

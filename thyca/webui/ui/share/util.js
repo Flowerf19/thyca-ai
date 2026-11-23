@@ -1,4 +1,3 @@
-// Shared DOM + color helpers.
 'use strict';
 'use strict';
 const $ = (s, root=document) => root.querySelector(s);
@@ -19,8 +18,6 @@ function derivePalette(color) {
 const paletteStyle=b=>Object.entries(b.palette).map(([k,v])=>`--bot-${k}:${v}`).join(';');
 function paint(el,b){if(el)Object.entries(b.palette).forEach(([k,v])=>el.style.setProperty('--bot-'+k,v));}
 
-/* The single page registry — every page's header nav renders from this
-   (emitShell on shell pages, [data-page-nav] hydration elsewhere). */
 const SHELL_PAGES = [
   ['chat', 'Trò chuyện', '../chat/index.html'],
   ['memories', 'Nhật ký', '../memories/index.html'],
@@ -31,7 +28,4 @@ const SHELL_PAGES = [
 const pageLinksMarkup = current => SHELL_PAGES.map(([id, label, href]) =>
   `<a href="${href}" data-page-link="${id}"${id === current ? ' class="is-current" aria-current="page"' : ''}>${label}</a>`).join('');
 
-/* Pages with static markup (chat) carry empty
-   <nav ... data-page-nav="<id>"> containers — fill each the moment the
-   registry exists; emitShell pages embed the links already. */
 $$('[data-page-nav]').forEach(el => { el.innerHTML = pageLinksMarkup(el.dataset.pageNav); });

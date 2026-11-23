@@ -9,10 +9,15 @@ semantics (follow/cancel/409 unchanged).
 """
 from __future__ import annotations
 
+import uuid
 from zoneinfo import ZoneInfo
 
 from thyca.agents.events import EventSink, TurnEvent
 from thyca.app.loop_turns import TurnCancelled
+from thyca.app.turn_event import (
+    bind_channel_event,
+    reset_channel_event,
+)
 from thyca.app.turn_options import (
     SYSTEM_TEXT_MAX,
     TEXT_MAX,
@@ -21,7 +26,11 @@ from thyca.app.turn_options import (
     resolve_bot_cfg,
 )
 from thyca.bots.workspace import WorkspaceRegistry
-from thyca.core.channel import ChannelEvent
+from thyca.conversations.runtime import ConversationBusy
+from thyca.conversations.runtime.errors import NoLiveResponder
+from thyca.core.channel import ActorRef, ChannelEvent
+from thyca.core.protocol import utc_now_ts
+from thyca.memories.visibility import MemoryView, bound_memory_view
 
 
 class WorkspaceTurnService:
@@ -33,27 +42,16 @@ class WorkspaceTurnService:
 
     async def _leased(self, bot_id: str, window, factory, event=None,
                       skip_busy: bool = False):
-        from thyca.memories.visibility import MemoryView, bound_memory_view
 
         if skip_busy and self._workspaces.busy(bot_id):
-            from thyca.conversations.runtime import ConversationBusy
             raise ConversationBusy(f"{bot_id} turn lease held")
         async with self._workspaces.lease(bot_id):
-            # Deletion may have removed this card while the turn waited for
-            # its lease. Validate before binding, which creates workspace state.
             self._app._bots.require(bot_id)
-            # Re-derive the window AFTER the queue wait: the conversation may
-            # have changed while this turn was queued, so the view and the
-            # registry binding must reflect the fresh state.
             if window is not None:
                 window = self._app._webui.window_for(
                     self._app._conversations.store.load(window.window_id)
                 )
                 self._workspaces.store.bind_window(bot_id, window)
-            from thyca.app.turn_event import (
-                bind_channel_event,
-                reset_channel_event,
-            )
 
             _ev_token = bind_channel_event(event)
             try:
@@ -80,8 +78,6 @@ class WorkspaceTurnService:
     ) -> dict:
         app = self._app
         conversation_id = event.window_id
-        # System actors (scheduler, curation) inject data into the prompt,
-        # so they use the system cap instead of the user-message cap.
         system = getattr(event.actor, "kind", None) == "system"
         cleaned = _clean_turn_text(
             event.text,
@@ -89,8 +85,6 @@ class WorkspaceTurnService:
             text_max=SYSTEM_TEXT_MAX if system else TEXT_MAX,
         )
         base_cfg = app._current_cfg()
-        # Resolve the responder before model-dependent settings and provider
-        # synchronization are applied.
         bots = app.room_bots(conversation_id)
         live_ids = {
             doc.card.bot_id
@@ -102,7 +96,6 @@ class WorkspaceTurnService:
             for doc in app._bots.list()
             if doc.ok and doc.card is not None and doc.card.paused
         }
-        # A deleted bot is unavailable like a paused one.
         unavailable = paused | {bot_id for bot_id in bots if bot_id not in live_ids}
         routing_text = cleaned
         if retry:
@@ -116,9 +109,7 @@ class WorkspaceTurnService:
                 "",
             )
         responder = app._resolve_responder(bots, routing_text, paused=unavailable)
-        # No live participant can answer this room.
         if responder in unavailable:
-            from thyca.conversations.runtime.errors import NoLiveResponder
 
             raise NoLiveResponder(conversation_id)
         card = app._bots.require(responder)
@@ -131,8 +122,6 @@ class WorkspaceTurnService:
             requested_cfg, card, model_override=model
         )
         resolved_cfg = overlay_turn_cfg(resolved_cfg, None, effort)
-        # Shared mutable services retain global settings; per-model hot limits
-        # are passed with each read/refresh below the service boundary.
         app._gateway.set_soft_timeout_s(
             resolved_cfg.effective_limits().softTimeoutS
         )
@@ -144,9 +133,6 @@ class WorkspaceTurnService:
             hub = app._turns.claim(conversation_id)
             job = app._loop_turns.begin(conversation_id)
         if not retry:
-            # A fresh user message answers any waiting/error card in
-            # this room; a retry replays the same message and must not.
-            # Only after the claim: a refused (busy) turn posted nothing.
             app._agent_status.note_user_message(conversation_id)
         try:
 
@@ -155,17 +141,18 @@ class WorkspaceTurnService:
                 if event_sink is not None:
                     event_sink(turn_event)
 
-            executor = lambda: app._run_bot_turn(
-                conversation_id,
-                cleaned,
-                sink,
-                turn_cfg=requested_cfg,
-                effort=effort,
-                retry=retry,
-                bot_id=responder,
-                model_override=model,
-                diagnostic_sink=diagnostic_sink,
-            )
+            def executor():
+                return app._run_bot_turn(
+                    conversation_id,
+                    cleaned,
+                    sink,
+                    turn_cfg=requested_cfg,
+                    effort=effort,
+                    retry=retry,
+                    bot_id=responder,
+                    model_override=model,
+                    diagnostic_sink=diagnostic_sink,
+                )
             coro = self._leased(
                 responder, window, executor, event=event,
                 skip_busy=skip_busy)
@@ -191,10 +178,7 @@ class WorkspaceTurnService:
         *,
         event_id: str | None = None,
     ) -> dict:
-        import uuid
 
-        from thyca.core.channel import ActorRef
-        from thyca.core.protocol import utc_now_ts
 
         dm = self._app.bot_dm(bot_id)
         conversation = self._app._conversations.store.load(dm["conversation_id"])

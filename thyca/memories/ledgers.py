@@ -385,7 +385,7 @@ def record_habit_entry(
             )
             obs_text = clean_habit if cross_window else summary_clean
             new_body = (
-                body_lines + [f"  - {today_str}: {obs_text}"]
+                [*body_lines, f"  - {today_str}: {obs_text}"]
                 if today_str not in existing_days
                 else None
             )
@@ -451,7 +451,6 @@ def _entries_match(inc_raw: str, inc_norm: str, cand_raw: str, cand_norm: str) -
     """True when incoming entry duplicates candidate without clobbering updates/reversals."""
     if not inc_norm or not cand_norm:
         return False
-    # Check raw polarity before norm equality: đừng/dùng both fold to "dung".
     if _polarity_conflict(inc_raw, cand_raw):
         return False
     if inc_norm == cand_norm:

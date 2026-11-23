@@ -6,12 +6,13 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from test_serve_trace import _chat, _json, _start, _stop
 
+from thyca.conversations.runtime import ConversationManager, ConversationRuntime
+from thyca.core.conversation import ConversationRef
 from thyca.core.protocol import Message
 from thyca.serve import trace_api
 from thyca.serve.trace import aggregate, turns_from_conversation
-from thyca.conversations.runtime import ConversationRuntime
-
 
 TS = "2026-10-24T10:00:00Z"
 
@@ -60,7 +61,7 @@ def test_bot_scope_uses_child_parts_and_never_membership(monkeypatch):
     before = [row.to_payload() for row in rows]
     monkeypatch.setattr(trace_api, "collect_turns", lambda _chat: rows)
     own = trace_api.trace_list_payload(None, "bot_id=coder")
-    assert own["total"] == 2  # one shared turn, one private turn
+    assert own["total"] == 2
     shared, private = own["traces"]
     assert (shared["group_id"], shared["turn_index"]) == ("group", 0)
     assert shared["bot_id"] == "coder"
@@ -70,7 +71,7 @@ def test_bot_scope_uses_child_parts_and_never_membership(monkeypatch):
     assert shared["cached_tokens"] == 7
     assert shared["completion_tokens"] == 10
     assert shared["total_tokens"] == 60
-    assert shared["cost_usd"] == 0.0  # known zero, despite another unpriced round
+    assert shared["cost_usd"] == 0.0
     assert shared["latency_ms"] == 50
     assert shared["rounds"] == 3
     assert shared["model"] == "coder-model"
@@ -96,7 +97,7 @@ def test_stats_and_list_share_exact_scoping_and_paging(monkeypatch):
     assert total["cached_tokens"] == 8
     assert total["completion_tokens"] == 12
     assert total["cost_usd"] == 0
-    assert total["priced_turns"] == 1  # recorded-known, not full pricing coverage
+    assert total["priced_turns"] == 1
     assert {entry["bot_id"] for entry in own["by_bot"]} == {"coder"}
     assert own["by_bot"][0]["turns"] == 2
     assert own["by_bot"][0]["conversations"] == 2
@@ -149,7 +150,6 @@ def test_legacy_unattributed_dm_is_not_guessed_from_owner(monkeypatch):
     monkeypatch.setattr(trace_api, "collect_turns", lambda _chat: [turn])
     assert trace_api.trace_list_payload(None, "bot_id=coder")["total"] == 0
     assert trace_api.trace_stats_payload(None, "")["by_bot"][0]["bot_id"] == "unknown"
-    # A summary explicitly attributed to one bot but with no breakdown is usable.
     explicit = replace(turn, bot_id="coder", bot_breakdown=[])
     monkeypatch.setattr(trace_api, "collect_turns", lambda _chat: [explicit])
     assert trace_api.trace_list_payload(None, "bot_id=coder")["traces"][0]["total_tokens"] == 3
@@ -160,22 +160,20 @@ def test_scope_does_not_change_full_detail_or_shared_status(monkeypatch):
     failed = replace(row, status="failed", error={"message": "shared turn failed"})
     monkeypatch.setattr(trace_api, "collect_turns", lambda _chat: [failed])
     own = trace_api.trace_list_payload(None, "bot_id=coder")["traces"][0]
-    assert own["status"] == "failed"  # outcome remains full-turn context
+    assert own["status"] == "failed"
     monkeypatch.setattr(trace_api, "cached_turns_for_ref", lambda _store, _ref: [failed])
     chat = SimpleNamespace(trace_store=lambda: object(), skills_root=Path("/tmp"))
-    from thyca.core.conversation import ConversationRef
 
     detail = trace_api.trace_detail_payload_ref(chat, ConversationRef.group("group-" + "0" * 32), 0)
-    assert detail["requests"] == 5  # full turn, not the scoped 3
-    assert detail["total_tokens"] == 170  # full turn, not the scoped 60
+    assert detail["requests"] == 5
+    assert detail["total_tokens"] == 170
     assert detail["messages"][1]["content"] == "reply from thyca"
     assert own["total_tokens"] == 60
 
 
 def test_source_http_scopes_shared_and_private_work_without_writes(tmp_path):
     """Exercise store doors -> scan -> HTTP stats/list -> full detail."""
-    from test_serve_trace import _chat, _json, _start, _stop
-    from thyca.conversations.runtime import ConversationManager
+
 
     chat = _chat(tmp_path)
     manager = ConversationManager(tmp_path / "sessions")
@@ -185,7 +183,6 @@ def test_source_http_scopes_shared_and_private_work_without_writes(tmp_path):
         for source_id in ("group", "private", "unattributed"):
             source_turns = [row for row in expected if row.conversation_id == source_id]
             if source_id == "private":
-                # The coder DM door (door id is the bot id itself).
                 conversation = manager.ensure_dm("coder")
             else:
                 conversation = manager.create()
@@ -195,16 +192,11 @@ def test_source_http_scopes_shared_and_private_work_without_writes(tmp_path):
             ids[source_id] = conversation.conversation_id
             for turn in source_turns:
                 for message in turn.messages:
-                    # Assistant rows are recorded by their bot (an
-                    # unattributed row is recorded by a member writer;
-                    # its meta still names no bot). User rows use the
-                    # server-side append (no bot actor is claimed).
                     _bot = (message.meta or {}).get("bot_id") or "thyca"
                     manager.append(
                         message,
                         actor=_bot if message.role == "assistant" else None,
                     )
-        # Logical no-write proof: door contents before the HTTP reads.
         baseline = {
             door_id: [(m.role, m.content) for m in manager.store.load(door_id).messages]
             for door_id in ids.values()

@@ -23,10 +23,10 @@ from .paths import (
 )
 
 __all__ = [
-    "FsCapabilities",
     "MAX_ANCESTOR_SYMLINKS",
     "OVERFLOW_UID",
     "STICKY_TMP_ANCESTORS",
+    "FsCapabilities",
     "TrustedParent",
     "TrustedParentError",
     "default_thyca_dir",

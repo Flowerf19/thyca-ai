@@ -1,6 +1,4 @@
-// Idle layer: ambient gestures + short comments for resting bots. Never changes work state.
 'use strict';
-// Ambient gestures never change the semantic work state or write chat messages.
 const idleCatalog={
  look:{label:'Nhìn quanh',hint:'Trái, phải, lên, xuống',detail:'Liếc nhìn quanh, dừng ở mỗi hướng rồi trở lại. Mắt và đầu chuyển động nhẹ, không cùng nhịp với bot khác.',duration:5800,weight:30,quiet:0,lines:['Mình vẫn ở đây, cạnh ô chat này.','Để mình ngó quanh một chút nhé.','Một khoảng lặng cũng có giai điệu.']},
  peek:{label:'Tò mò',hint:'Nghiêng sang ô chat',detail:'Hơi nghiêng người, mắt ngó sang ô chat như muốn biết bạn đang nghĩ gì.',duration:4600,weight:15,quiet:0,lines:['Bạn đang nghĩ gì thế?','Mình tò mò một chút thôi.','Chỗ này còn đủ cho một ý tưởng.']},

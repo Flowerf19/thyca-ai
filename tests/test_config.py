@@ -6,49 +6,55 @@ import json
 import os
 import re
 import stat
+import warnings
 from dataclasses import replace
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pytest
 
+import thyca
+import thyca.configs as cfgmod
 from thyca.configs import (
     Config,
     ConfigError,
     LimitsCfg,
+    McpServerCfg,
     ModelCfg,
     PricingCfg,
     ProviderCfg,
     ProviderEntry,
     _model_to_dict,
+    _parse_dict,
+    config_schema,
     default_config,
     load,
+    resolve_model_base_url,
     save,
+    store,
 )
+from thyca.configs.defaults import DEFAULT_MODEL_MAX_TOKENS, LIMIT_RANGES
+from thyca.configs.store import _atomic_write_json, atomic_write_text
+from thyca.configs.validation import _optional_int
 
 
 def test_default_config_valid(tmp_path: Path) -> None:
     p = tmp_path / "config.json"
     cfg = load(p)
-    # load creates default when missing
     assert p.exists()
-    # a fresh config is truly empty: no provider, no OpenAI seed
     assert cfg.providers == {}
     assert cfg.defaultProvider == ""
     assert cfg.defaultModel == ""
     raw_text = p.read_text(encoding="utf-8")
     assert "openai" not in raw_text
     assert "gpt-4o-mini" not in raw_text
-    # timezone follows the host system (fallback Asia/Ho_Chi_Minh)
     ZoneInfo(cfg.timeline.timezone)
-    # round-trip
     cfg2 = load(p)
     assert cfg2.to_dict() == cfg.to_dict()
 
 
 def test_non_empty_providers_with_empty_defaults_roundtrip(tmp_path: Path) -> None:
     """save→load never breaks when defaults stay empty (partial setups)."""
-    from thyca.configs import _parse_dict
 
     cfg = Config(providers={"a": ProviderEntry(baseUrl="https://a.example/v1")})
     assert cfg.defaultProvider == "" and cfg.defaultModel == ""
@@ -59,7 +65,6 @@ def test_non_empty_providers_with_empty_defaults_roundtrip(tmp_path: Path) -> No
     p = tmp_path / "config.json"
     p.write_text(json.dumps(raw), encoding="utf-8")
     assert load(p) == cfg
-    # ...but naming a provider that does not exist is still rejected.
     bad = dict(raw, defaultProvider="ghost")
     with pytest.raises(ConfigError, match="defaultProvider 'ghost' is not in providers"):
         _parse_dict(bad)
@@ -73,8 +78,6 @@ def test_empty_dict_loads_as_empty_config(tmp_path: Path) -> None:
         assert cfg.providers == {}
         assert cfg.defaultProvider == ""
         assert cfg.defaultModel == ""
-    # A named default with no providers key at all is rejected too — the
-    # legacy-absent branch must not swallow it.
     p = tmp_path / "ghost.json"
     p.write_text(json.dumps({"defaultProvider": "ghost"}), encoding="utf-8")
     with pytest.raises(ConfigError, match="defaultProvider 'ghost' is not in providers"):
@@ -359,13 +362,10 @@ def test_model_reasoning_efforts_thinking_map(tmp_path: Path) -> None:
     assert cfg.reasoningEfforts == ("minimal", "low", "medium", "high", "max")
     data = _model_to_dict(cfg)
     assert data["reasoningEfforts"] == ["minimal", "low", "medium", "high", "max"]
-    # effort outside the declared map is rejected
     with pytest.raises(ConfigError, match="not in"):
         ModelCfg(input=0, cache=0, output=0, reasoningEffort="ultra", reasoningEfforts=("low", "max"))
-    # no map declared → effort must be one of REASONING_EFFORTS
     with pytest.raises(ConfigError, match="reasoningEffort must be one of"):
         ModelCfg(input=0, cache=0, output=0, reasoningEffort="ultra")
-    # duplicate levels are rejected
     with pytest.raises(ConfigError, match="duplicates"):
         ModelCfg(input=0, cache=0, output=0, reasoningEfforts=("low", "low"))
 
@@ -428,7 +428,6 @@ def test_pricing_rejects_negative_and_missing(tmp_path: Path) -> None:
 
 def test_cli_help_and_default_creation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Bare load creates ~/.thyca — verify via tmp home."""
-    # Simulate fresh home by using tmp_path as THYCA dir directly
     p = tmp_path / "fresh.json"
     assert not p.exists()
     cfg = load(p)
@@ -441,10 +440,7 @@ def test_cli_help_and_default_creation(tmp_path: Path, monkeypatch: pytest.Monke
 def test_config_guide_written_on_ensure_default(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import os
 
-    import thyca
-    import thyca.configs as cfgmod
 
     monkeypatch.setenv("HOME", str(tmp_path))
     guide = cfgmod.write_config_guide()
@@ -455,7 +451,6 @@ def test_config_guide_written_on_ensure_default(
     assert mode == 0o600
     packaged = Path(thyca.__file__).parent / "seeds" / "guides" / "read_before_config.md"
     assert target.read_text(encoding="utf-8") == packaged.read_text(encoding="utf-8")
-    # idempotent
     before = target.read_text(encoding="utf-8")
     assert cfgmod.write_config_guide() == target
     assert target.read_text(encoding="utf-8") == before
@@ -465,13 +460,15 @@ def test_config_guide_written_on_ensure_default(
 def test_ensure_default_writes_guide(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import thyca.configs as cfgmod
 
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.chdir(tmp_path)
-    p = tmp_path / "newhome.json"
-    cfgmod.ensure_default(p)
-    # guide lands in ~/.thyca even when config path is custom
+    custom = tmp_path / "custom" / "newhome.json"
+    cfgmod.ensure_default(custom)
+    assert (custom.parent / "read_before_config.md").exists()
+    assert not (tmp_path / ".thyca").exists()
+
+    cfgmod.ensure_default()
     assert (tmp_path / ".thyca" / "read_before_config.md").exists()
 
 
@@ -505,13 +502,11 @@ def test_legacy_single_provider_migrates_to_default(tmp_path: Path) -> None:
     assert cfg.defaultModel == "legacy-model"
     assert cfg.providers["default"].baseUrl == "https://legacy.example/v1"
     assert cfg.providers["default"].api_key() == "legacy-secret"
-    # save writes the new shape; legacy block is gone
     save(cfg, p)
     raw = json.loads(p.read_text(encoding="utf-8"))
     assert "provider" not in raw
     assert raw["providers"]["default"]["baseUrl"] == "https://legacy.example/v1"
     assert raw["defaultModel"] == "legacy-model"
-    # per-model baseUrl escape hatch still wins after migration
     assert cfg.effective_provider_for("other-host").baseUrl == "https://other.example/v1"
     assert cfg.effective_provider().baseUrl == "https://legacy.example/v1"
 
@@ -550,7 +545,6 @@ def test_model_resolves_through_its_own_provider() -> None:
         "key-b",
         "model-b",
     )
-    # unregistered model falls back to the default provider (never 500s)
     assert cfg.effective_provider_for("ghost").baseUrl == "https://a.example/v1"
 
 
@@ -581,8 +575,6 @@ def test_providers_reject_bad_shape(tmp_path: Path) -> None:
 
 
 def test_provider_id_for_dangling_ref_falls_back_to_default() -> None:
-    # Unreachable via load (rejected), but hand-built configs must not
-    # label a provider the request would never go to.
     cfg = Config(
         providers={"default": ProviderEntry(baseUrl="https://d.example/v1")},
         defaultProvider="default",
@@ -598,7 +590,7 @@ def test_empty_config_resolution_fails_clearly() -> None:
     with pytest.raises(ConfigError, match="chưa cấu hình provider"):
         cfg.effective_provider_for("m")
     with pytest.raises(ConfigError, match="chưa cấu hình provider"):
-        cfg.provider
+        _ = cfg.provider
 
 
 def test_save_splits_keys_to_auth_json(tmp_path: Path) -> None:
@@ -740,7 +732,6 @@ def test_provider_api_field_roundtrip(tmp_path: Path) -> None:
     p.write_text(json.dumps(raw), encoding="utf-8")
     cfg = load(p)
     assert cfg.providers["default"].api == "openai_responses"
-    # missing api → default chat (zero behavior change for old configs)
     assert cfg.providers["second"].api == "openai_chat"
     saved = cfg.to_dict()
     assert saved["providers"]["default"]["api"] == "openai_responses"
@@ -811,9 +802,8 @@ def test_atomic_write_temp_created_0600(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """F4: the .tmp file is 0600 at creation, never world-readable."""
-    from thyca.configs.store import _atomic_write_json
 
-    old_umask = os.umask(0)  # fully permissive: creation mode is fully visible
+    old_umask = os.umask(0)
     try:
         temporary = tmp_path / "config.json.tmp"
         target = tmp_path / "config.json"
@@ -821,7 +811,7 @@ def test_atomic_write_temp_created_0600(
         real_os_open = os.open
 
         def spy_os_open(path: object, flags: int, *args: object) -> int:
-            fd = real_os_open(path, flags, *args)  # type: ignore[arg-type]
+            fd = real_os_open(path, flags, *args)  # type: ignore[arg-type] -- reason: intentional invalid-type or test-double argument
             if os.fspath(path) == os.fspath(temporary) and flags & os.O_CREAT:
                 creations.append(stat.S_IMODE(os.fstat(fd).st_mode))
             return fd
@@ -829,7 +819,7 @@ def test_atomic_write_temp_created_0600(
         real_write_text = Path.write_text
 
         def spy_write_text(self: Path, *args: object, **kwargs: object) -> object:
-            result = real_write_text(self, *args, **kwargs)  # type: ignore[arg-type]
+            result = real_write_text(self, *args, **kwargs)  # type: ignore[arg-type] -- reason: intentional invalid-type or test-double argument
             if self == temporary:
                 creations.append(stat.S_IMODE(self.stat().st_mode))
             return result
@@ -845,14 +835,7 @@ def test_atomic_write_temp_created_0600(
         os.umask(old_umask)
 
 
-# Moved from test_b4_unification.py / test_b4_p2.py (B4 batch).
-import os
-import stat
-import pytest
-from pathlib import Path
-
 def test_x7_atomic_write_is_0600_and_self_cleaning(tmp_path: Path) -> None:
-    from thyca.configs.store import atomic_write_text
 
     old_umask = os.umask(0)
     try:
@@ -870,10 +853,6 @@ def test_x7_atomic_write_is_0600_and_self_cleaning(tmp_path: Path) -> None:
 
 
 def test_x25_single_range_table() -> None:
-    from thyca.configs import config_schema
-    from thyca.configs.defaults import LIMIT_RANGES
-    from thyca.configs.limits import LimitsCfg
-
     assert LIMIT_RANGES["loopMax"] == (1, 200)
     schema = config_schema()
     limits = {f["key"]: f for f in schema["sections"][1]["fields"]}
@@ -883,14 +862,11 @@ def test_x25_single_range_table() -> None:
 
 
 def test_x25_lock_path_single_home() -> None:
-    from thyca.configs import store
 
     assert store._lock_path(Path("/x/config.json")) == Path("/x/config.json.lock")
 
 
 def test_x25_optional_int_strict() -> None:
-    from thyca.configs import ConfigError
-    from thyca.configs.validation import _optional_int
 
     assert _optional_int(None, "n") is None
     assert _optional_int("", "n") is None
@@ -902,9 +878,6 @@ def test_x25_optional_int_strict() -> None:
 
 
 def test_x26_model_base_url_rule() -> None:
-    from thyca.configs import default_config, resolve_model_base_url
-    from thyca.configs.models import ModelCfg
-
     assert resolve_model_base_url("http://p", None) == "http://p"
     assert resolve_model_base_url("http://p", ModelCfg()) == "http://p"
     assert (
@@ -915,7 +888,6 @@ def test_x26_model_base_url_rule() -> None:
 
 
 def test_m1_falsy_model_fields_raise_not_coerce() -> None:
-    from thyca.configs import ConfigError, _parse_dict
 
     with pytest.raises(ConfigError, match="provider must be a string"):
         _parse_dict({"models": {"m": {"provider": 0}}})
@@ -924,20 +896,16 @@ def test_m1_falsy_model_fields_raise_not_coerce() -> None:
 
 
 def test_m1_mcp_server_command_is_required() -> None:
-    from thyca.configs import McpServerCfg
 
     with pytest.raises(TypeError):
-        McpServerCfg()  # type: ignore[call-arg]
+        McpServerCfg()  # type: ignore[call-arg] -- reason: intentional invalid-type or test-double argument
     assert McpServerCfg(command="x").command == "x"
 
 
 def test_m1_symlink_config_path_gets_tightened_dir(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import os
-    import stat
 
-    from thyca.configs import default_config, save
 
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     real = tmp_path / ".thyca" / "config.json"
@@ -948,18 +916,6 @@ def test_m1_symlink_config_path_gets_tightened_dir(
     save(default_config(), link)
     assert stat.S_IMODE((tmp_path / ".thyca").stat().st_mode) == 0o700
 
-
-# Moved from tests/test_b2_contracts.py (B2 batch).
-import warnings
-from thyca.configs import (
-    Config,
-    ConfigError,
-    ModelCfg,
-    ProviderCfg,
-    ProviderEntry,
-    default_config,
-    load,
-)
 
 def test_f5_provider_entry_rejects_non_http_base_url() -> None:
     """Fails pre-fix: ftp baseUrl was accepted until the HTTP layer."""
@@ -1016,7 +972,6 @@ def test_model_without_own_effort_inherits_provider_effort() -> None:
 
 def test_model_max_tokens_default_resolve_and_own_wins() -> None:
     """Unset → default cap; a model's own maxTokens wins on resolve."""
-    from thyca.configs.defaults import DEFAULT_MODEL_MAX_TOKENS
 
     assert DEFAULT_MODEL_MAX_TOKENS == 16384
     cfg = Config(
@@ -1027,7 +982,6 @@ def test_model_max_tokens_default_resolve_and_own_wins() -> None:
     )
     assert cfg.effective_provider_for("m").maxTokens == 16384
     assert cfg.effective_provider_for("n").maxTokens == 4096
-    # Sparse wire form: an unset key stays absent from the saved dict.
     assert "maxTokens" not in cfg.to_dict()["models"]["m"]
     assert cfg.to_dict()["models"]["n"]["maxTokens"] == 4096
     with pytest.raises(ConfigError, match="maxTokens"):
@@ -1071,8 +1025,6 @@ def test_f5_global_check_skipped_only_for_declared_own_set() -> None:
     resolved = cfg.effective_provider_for("m")
     assert resolved.reasoningEffort == "medium"
     assert resolved.reasoningEfforts == ("minimal", "medium")
-    # An own-set level outside the global five still resolves (custom
-    # levels live on models; the global check is skipped for their set).
     minimal = Config(
         providers={"p": ProviderEntry()},
         defaultModel="mini",
@@ -1085,9 +1037,7 @@ def test_f5_global_check_skipped_only_for_declared_own_set() -> None:
     ).effective_provider_for("mini")
     assert minimal.reasoningEffort == "minimal"
     assert minimal.reasoningEfforts == ("minimal", "medium")
-    # medium is now a global level: no own set needed.
     assert ProviderCfg(reasoningEffort="medium").reasoningEffort == "medium"
-    # No own set anywhere: the global check still bites (junk stays junk).
     with pytest.raises(ConfigError, match="must be one of low/medium/high/xhigh/max"):
         ProviderCfg(reasoningEffort="ultra")
 
@@ -1108,7 +1058,6 @@ def test_f6_unknown_keys_warn_listing_keys_but_load(tmp_path: Path) -> None:
     assert "futureTop" in message
     assert "limits.loopMaxX" in message
     assert "providers.default.basUrl" in message
-    # NEVER reject: newer-config-on-older-binary must not break.
     assert cfg.limits.loopMax == default_config().limits.loopMax
     assert cfg.providers["default"].baseUrl == "https://api.openai.com/v1"
 

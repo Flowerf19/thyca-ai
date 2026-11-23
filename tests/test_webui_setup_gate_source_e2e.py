@@ -11,12 +11,14 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import ClassVar
 from urllib.parse import quote, urlsplit
 from urllib.request import Request, urlopen
 
 import pytest
-
+from conftest import chromium_binary, chromium_env, cleanup_chromium_profile
 from test_webui_spa_frontend import CDP_REQUEST_TIMEOUT, _cdp_frame, _cdp_recv, _wait_cdp_ready
+
 from thyca.configs import Config, ProviderEntry, save
 from thyca.conversations.store.admin import AdminStore
 
@@ -26,7 +28,7 @@ ROOT = Path(__file__).resolve().parents[1]
 class LocalModelStub(BaseHTTPRequestHandler):
     requests = 0
     post_requests = 0
-    post_paths: list[str] = []
+    post_paths: ClassVar[list[str]] = []
     auth_present = False
     auth_matched = False
     expected_key = "synthetic-e2e-only-key"
@@ -113,7 +115,7 @@ def _browser_e2e(chrome: str, url: str, user_data: Path, script: str, screenshot
          "--no-first-run", "--no-default-browser-check", "--no-proxy-server",
          f"--remote-debugging-port={debug_port}", f"--user-data-dir={user_data}", "about:blank"],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        env=dict(os.environ, HOME="/tmp/sandbox-home"),
+        env=chromium_env(chrome),
     )
     sock = None
     try:
@@ -164,13 +166,24 @@ def _browser_e2e(chrome: str, url: str, user_data: Path, script: str, screenshot
         raise TimeoutError(f"source E2E browser did not finish: {state}")
     finally:
         if sock is not None:
+            try:
+                _cdp_frame(
+                    sock,
+                    json.dumps({"id": 999999, "method": "Browser.close", "params": {}}).encode(),
+                )
+            except OSError:
+                pass
             sock.close()
-        process.terminate()
         try:
             process.wait(timeout=5)
         except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait(timeout=5)
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=5)
+        cleanup_chromium_profile(chrome, user_data)
 
 
 E2E_SCRIPT = r"""
@@ -232,7 +245,7 @@ E2E_SCRIPT = r"""
 """
 
 
-@pytest.mark.skipif(not shutil.which("google-chrome"), reason="Google Chrome is required for the actual-source onboarding E2E")
+@pytest.mark.skipif(not chromium_binary(), reason="Chromium/Chrome is required for the actual-source onboarding E2E")
 def test_source_cli_first_run_gate_and_environment_key_readiness(tmp_path: Path) -> None:
     LocalModelStub.requests = 0
     LocalModelStub.auth_present = False
@@ -268,7 +281,8 @@ def test_source_cli_first_run_gate_and_environment_key_readiness(tmp_path: Path)
         initial_conversations, _ = AdminStore(source_root).list()
         assert not initial_conversations
         assert not list((source_root / "sessions").glob("*.jsonl"))
-        chrome = shutil.which("google-chrome")
+        chrome = chromium_binary()
+        assert chrome is not None
         page_url = f"http://127.0.0.1:{source_port}/?e2eMode=first-run"
         browser_script = E2E_SCRIPT.replace("__STUB_URL__", json.dumps(f"http://127.0.0.1:{stub_port}/v1"))
         browser = _browser_e2e(chrome, page_url, tmp_path / "chrome-first-run", browser_script, screenshot)
@@ -330,6 +344,8 @@ def test_source_cli_first_run_gate_and_environment_key_readiness(tmp_path: Path)
     finally:
         if process.poll() is None:
             _stop_source_cli(process, log, source_port, stops)
-        stub.shutdown(); stub.server_close(); stub_thread.join(timeout=3)
+        stub.shutdown()
+        stub.server_close()
+        stub_thread.join(timeout=3)
         Path("/tmp/thyca-setup-gate-source-e2e-stop.log").write_text(json.dumps({"cliProcesses": stops, "stubPort": stub_port, "stubStopped": not stub_thread.is_alive()}, indent=2) + "\n", encoding="utf-8")
         shutil.rmtree(tmp_path, ignore_errors=True)

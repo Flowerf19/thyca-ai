@@ -15,9 +15,27 @@ Thyca is a personal assistant that runs on your own Linux machine. It is a **tea
 - **Give each bot its own model.** Choose a per-bot model and reasoning level in Settings; leave it empty to follow the shared default.
 - **Let Thyca remember.** Bots write memories to a daily journal you can browse, search, and filter on the Journal screen.
 
+## Screens
+
+![Journal: daily memories and search](docs/images/webui-memories-readme.png)
+
+*Journal (`Nhật ký`): browse, filter, reinforce, edit, or forget daily memory leaves.*
+
+![Profile: shared user, soul, and identity files](docs/images/webui-profile-readme.png)
+
+*Profile (`Hồ sơ`): edit `USER.md`, `SOUL.md`, and `IDENTITY.md`, or inspect each bot's dossier.*
+
+![Provider: connections, models, pricing, and reasoning levels](docs/images/webui-provider-readme.png)
+
+*Provider: configure OpenAI-compatible endpoints, models, token pricing, and reasoning levels.*
+
+![Usage: token, cost, latency, and trace dashboard](docs/images/webui-usage-readme.png)
+
+*Usage (`Sử dụng`): track tokens, estimated cost, latency, and per-turn traces.*
+
 ![Settings: per-bot model and app preferences](docs/images/webui-settings-readme.png)
 
-*Settings: per-bot companion settings, appearance, and run limits in one dialog.*
+*Settings (`Cài đặt`): per-bot companion settings, appearance, and run limits in one dialog.*
 
 ## Quick start
 

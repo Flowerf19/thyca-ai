@@ -33,22 +33,21 @@ from .contracts import (
 )
 from .read_adapter import trace_turns_for
 from .runtime import RuntimeWriteIntent
+from .runtime import is_runtime_ready as _is_runtime_ready
 from .write_adapter import (
     append_turn_error,
 )
 
 __all__ = [
-    'record_turn_error',
     'project_for_trace',
+    'record_turn_error',
     'trace_turns_projected',
 ]
 
 
-# Require an initialized runtime store root before any write.
 def _require_enabled_root(root: Path, intent=None) -> Path:
     if not isinstance(root, Path):
         raise ValueError('root must be a Path')
-    from .runtime import is_runtime_ready as _is_runtime_ready
 
     if isinstance(intent, RuntimeWriteIntent):
         if not _is_runtime_ready(root):
@@ -57,14 +56,12 @@ def _require_enabled_root(root: Path, intent=None) -> Path:
     raise ValueError('explicit runtime write intent required')
 
 
-# Require an explicit runtime write intent before any store I/O.
 def _require_write_intent(intent: object):
     if isinstance(intent, RuntimeWriteIntent):
         return intent
     raise ValueError('explicit runtime write intent required')
 
 
-# Record one turn failure as a trailing store marker.
 def record_turn_error(
     root: Path,
     ref: ConversationRef,
@@ -87,7 +84,6 @@ def record_turn_error(
     )
 
 
-# Project stored error markers onto their turns for trace views.
 def project_for_trace(conversation: Conversation) -> Conversation:
     """In-memory trace projection: stamp system error markers onto users.
 
@@ -112,8 +108,6 @@ def project_for_trace(conversation: Conversation) -> Conversation:
     last_user_pos: int | None = None
     for index, item in enumerate(messages):
         if item.role == 'system' and isinstance((item.meta or {}).get('error'), dict):
-            # A later assistant reply means the turn recovered (retry):
-            # the failure is history, not the turn's current outcome.
             if any(later.role == 'assistant' for later in messages[index + 1:]):
                 continue
             error = dict((item.meta or {})['error'])
@@ -134,7 +128,6 @@ def project_for_trace(conversation: Conversation) -> Conversation:
     return _view(conversation.ref, _metadata(list(conversation.participants), conversation.title), tuple(stamped))
 
 
-# Build projected trace turns over one assembled conversation.
 def trace_turns_projected(conversation: Conversation):
     """Trace turns over a conversation, with error projection."""
     return trace_turns_for(project_for_trace(conversation))

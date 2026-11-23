@@ -9,12 +9,12 @@ rows), and flush-before-compact over the canonical transcript.
 from __future__ import annotations
 
 import json
-import stat
 import threading
 from dataclasses import replace
 from pathlib import Path
 
 import pytest
+from seeded_config import seeded_config
 
 from thyca.app.chat_app import ChatApp
 from thyca.bots.card import BotCard
@@ -26,11 +26,12 @@ from thyca.bots.timeline import (
 )
 from thyca.bots.workspace_store import WorkspaceStore
 from thyca.configs import load, save
-from seeded_config import seeded_config
+from thyca.conversations.runtime import ConversationError, ConversationManager, ConversationNotFound
+from thyca.conversations.runtime.store import ConversationStore
+from thyca.conversations.store.runtime import ensure_runtime_store
 from thyca.core.channel import WindowRef
 from thyca.core.protocol import Message
 from thyca.llms.llm_base import ChatReply
-from thyca.conversations.runtime import ConversationManager
 
 
 def _chat(tmp_path: Path, connect, context_tokens: int | None = None) -> ChatApp:
@@ -72,26 +73,23 @@ def _store(tmp_path: Path, bot_id: str, window: WindowRef,
 SESSION_ID = "2026-10-20T09-00-00_cafe"
 
 
-# Check that canonical timestamp ids bind as paths while public doors reject them.
 def test_canonical_timestamp_id_binds_but_is_not_a_public_door(tmp_path: Path) -> None:
-    from thyca.conversations.store.runtime import ensure_runtime_store
-    from thyca.conversations.runtime.store import ConversationStore
 
     store = _store(tmp_path, "coder", WindowRef(
         window_id="coder", channel_id="webui", kind="dm",
         participants=("coder",)), SESSION_ID)
     assert store.path_for(SESSION_ID).name == f"{SESSION_ID}.jsonl"
-    with pytest.raises(Exception):
+    with pytest.raises(ConversationNotFound):
         store.path_for("coder")
-    with pytest.raises(Exception):
+    with pytest.raises(ConversationNotFound):
         store.path_for("../2026-10-20T09-00-00_cafe")
     ensure_runtime_store(tmp_path)
     public = ConversationStore(tmp_path / "sessions")
-    with pytest.raises(Exception):
+    with pytest.raises(ConversationNotFound):
         public.path_for(SESSION_ID)
-    with pytest.raises(Exception):
+    with pytest.raises(ConversationError, match="cannot create conversation"):
         public.create(SESSION_ID)
-    with pytest.raises(Exception):
+    with pytest.raises(ConversationNotFound):
         public.load(SESSION_ID)
 
 
@@ -99,8 +97,6 @@ def _row(text: str, **meta) -> Message:
     return Message(role="user", content=text,
                    meta=dict(meta) if meta else None)
 
-
-# --- journal strictness ---------------------------------------------------
 
 def test_journal_file_permissions(tmp_path: Path) -> None:
     _timeline(tmp_path)
@@ -144,7 +140,7 @@ def _raw_event(window_id: str, seq: int, kind: str, event_id: str,
 def test_journal_rejects_torn_tail(tmp_path: Path) -> None:
     _timeline(tmp_path)
     path = tmp_path / "bots" / "coder" / "workspace" / "timeline.jsonl"
-    path.write_bytes(b'{"v": 1, "seq": 1, "event_id": "a"')  # no newline
+    path.write_bytes(b'{"v": 1, "seq": 1, "event_id": "a"')
     with pytest.raises(TimelineError):
         WorkspaceTimeline(tmp_path, "coder")
 
@@ -153,10 +149,6 @@ def test_journal_rejects_torn_tail(tmp_path: Path) -> None:
 def test_journal_survives_unicode_line_separators_in_content(
     tmp_path: Path, separator: str
 ) -> None:
-    # Web content can carry U+2028/U+2029/U+0085 inside a JSON string.
-    # json.dumps leaves them raw (valid JSON), so the reader must split
-    # records on LF only — str.splitlines() also cuts at these chars and
-    # bricks the journal with a phantom "malformed line".
     timeline = _timeline(tmp_path)
     window = _window("w", "dm", ("coder",))
     text = f"Email:{separator}thyca@thyca.org"
@@ -174,7 +166,6 @@ def test_journal_rejects_seq_gap_and_unknown_kind(tmp_path: Path) -> None:
         + _raw_event("w", 3, "message", "b") + "\n", encoding="utf-8")
     with pytest.raises(TimelineError):
         WorkspaceTimeline(tmp_path, "coder")
-    # Shadow-era kinds are unknown now: an old journal fails loud.
     path.write_text(
         _raw_event("w", 1, "bootstrap", "a") + "\n", encoding="utf-8")
     with pytest.raises(TimelineError):
@@ -280,8 +271,6 @@ def test_messages_for_span_is_window_scoped_and_survives_view_reset(
     assert all(row.content != "DM tool sentinel" for row in group_rows)
 
 
-# --- canonical write -> project -------------------------------------------
-
 @pytest.mark.parametrize(
     ("initial", "basis"),
     [
@@ -364,7 +353,6 @@ def test_view_reset_is_compaction_basis_with_meta(tmp_path: Path) -> None:
     projected = store.load(SESSION_ID)
     assert [m.content for m in projected.messages] == ["m3-summary"]
     assert projected.bots == ["thyca", "coder"]
-    # Writes after the reset replay on top of the new basis.
     manager.load(SESSION_ID)
     manager.append(_row("m4"))
     assert [m.content for m in store.load(SESSION_ID).messages] == [
@@ -432,15 +420,12 @@ def test_participant_ops_journal_view_reset(tmp_path: Path) -> None:
     manager.load(SESSION_ID)
     manager.append(_row("hello"))
     store.append_bots(store.path_for(SESSION_ID), ["coder"])
-    # A second participant rewrite overwrites through the same journaled reset.
     store.append_dm(store.path_for(SESSION_ID), "coder")
     projected = store.load(SESSION_ID)
     assert projected.bots == ["coder"]
     assert projected.dm_bot == "coder"
     assert [m.content for m in projected.messages] == ["hello"]
 
-
-# --- registry cursor delta contract ---------------------------------------
 
 def test_cursor_full_once_then_delta(tmp_path: Path) -> None:
     llm = _SpyLLM()
@@ -449,8 +434,6 @@ def test_cursor_full_once_then_delta(tmp_path: Path) -> None:
         app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
                                  description="Codes.", persona=""))
         room = app.create(bots=["thyca", "coder"])["conversation_id"]
-        # Seed public room history with a root turn before coder's first
-        # turn; coder should receive the complete unread history once.
         app.turn(room, "root seed history")
 
         def deltas(since: int) -> list[str]:
@@ -466,8 +449,6 @@ def test_cursor_full_once_then_delta(tmp_path: Path) -> None:
 
         seen = len(llm.prompts)
         app.turn(room, "@coder second hello")
-        # Nothing new for the bot: no second delta on the wire, and no
-        # synthetic rows were persisted anywhere.
         assert deltas(seen) == []
         internal = app._runtime.internal_conversation("coder", room)
         store = app._runtime._canonical_store(
@@ -478,8 +459,6 @@ def test_cursor_full_once_then_delta(tmp_path: Path) -> None:
     finally:
         app.shutdown()
 
-
-# --- flush-before-compact over the canonical transcript --------------------
 
 def test_flush_sees_intact_canonical_transcript(tmp_path: Path) -> None:
     llm = _SpyLLM()
@@ -518,18 +497,14 @@ def test_flush_sees_intact_canonical_transcript(tmp_path: Path) -> None:
             (m.content or "").startswith("[compaction: ")
             for m in store.load(binding.conversation_id).messages
         ), "canonical transcript compacted after the flush"
-        # Purge is journal-scoped: the room conversation is untouched.
         assert WorkspaceStore(tmp_path).get_binding(
             "coder", room).internal_conversation_id == binding.conversation_id
     finally:
         app.shutdown()
-# --- Option B private-execution version protocol -------------------------
 
 def test_private_v2_message_validates_and_projects_current_span_only(
     tmp_path: Path,
 ) -> None:
-    # v2 carries exactly the existing span; default projections exclude it,
-    # private projections select only the current span and ignore resets.
     timeline = _timeline(tmp_path)
     group = _window("room1", "group", ("coder", "thyca"))
     timeline.append_message(group, _row("group hi"), event_id="g1")
@@ -551,9 +526,6 @@ def test_private_v2_message_validates_and_projects_current_span_only(
 def test_private_v2_shape_rejected_and_old_reader_fails_closed(
     tmp_path: Path,
 ) -> None:
-    # Malformed v2 markers fail closed on write and on read; a v1-only
-    # reader (v != 1) rejects a v2 journal as unknown. Proves the old
-    # projector cannot silently ignore private records.
     timeline = _timeline(tmp_path)
     group = _window("room1", "group", ("coder", "thyca"))
     with pytest.raises(TimelineError):
@@ -571,9 +543,7 @@ def test_private_v2_shape_rejected_and_old_reader_fails_closed(
     raw = json.loads(path.read_text(encoding="utf-8").splitlines()[-1])
     assert raw["v"] == 2 and raw["priv"] == {"span": "sp_A"}
     assert raw["window"]["kind"] == "group"
-    # v1-only validation rejects the v2 record, exactly as old code did.
     assert raw["v"] != 1
-    # A hand-rolled v1-only scan raises unknown version on the v2 line.
     def _v1_only_scan(path: Path) -> None:
         for line in path.read_text(encoding="utf-8").split("\n"):
             if not line:
@@ -583,9 +553,6 @@ def test_private_v2_shape_rejected_and_old_reader_fails_closed(
                 raise TimelineError(f"unknown version {ev.get('v')}")
     with pytest.raises(TimelineError):
         _v1_only_scan(path)
-    # Malformed markers fail closed on read with their specific error.
-    # Every record below uses the valid next sequence so the marker check
-    # itself is what rejects the file.
     def _append_raw(record: dict) -> None:
         path.write_text(
             path.read_text(encoding="utf-8") + json.dumps(record) + "\n",
@@ -621,7 +588,6 @@ def test_private_v2_shape_rejected_and_old_reader_fails_closed(
     with pytest.raises(TimelineError, match="priv marker must carry only span"):
         WorkspaceTimeline(tmp_path, "coder")
     _restore_one_line()
-    # Unknown versions fail closed on read.
     _append_raw({"v": 99, "seq": 2, "event_id": "z",
                  "kind": "message", "bot_id": "coder",
                  "window": group.to_dict(),
@@ -634,9 +600,6 @@ def test_private_v2_shape_rejected_and_old_reader_fails_closed(
 def test_private_reset_never_becomes_group_basis_and_spans_isolate(
     tmp_path: Path,
 ) -> None:
-    # Approved Option B: a private reset of the SAME span is that span's
-    # basis (suffix replays after it); it never moves the group basis,
-    # and other spans stay isolated.
     timeline = _timeline(tmp_path)
     group = _window("room1", "group", ("coder", "thyca"))
     timeline.append_message(group, _row("g1"), event_id="g1")
@@ -660,9 +623,6 @@ def test_private_reset_never_becomes_group_basis_and_spans_isolate(
 def test_private_event_id_conflict_covers_scope_and_window(
     tmp_path: Path,
 ) -> None:
-    # Same id with a different span, window, or version conflicts;
-    # identical v2 replays stay idempotent.
-    from thyca.bots.timeline import TimelineConflict
     timeline = _timeline(tmp_path)
     group = _window("room1", "group", ("coder", "thyca"))
     other = _window("room1", "group", ("coder",))
@@ -674,8 +634,6 @@ def test_private_event_id_conflict_covers_scope_and_window(
     with pytest.raises(TimelineConflict):
         timeline.append_message(group, _row("same"), event_id="e1",
                                 priv={"span": "sp_B"})
-    # Approved drift compatibility: participants alone never conflict;
-    # identity is (window_id, channel_id, kind) plus version/span/payload.
     again_drift = timeline.append_message(other, _row("same"), event_id="e1",
                                           priv={"span": "sp_A"})
     assert again_drift["seq"] == first["seq"]

@@ -1,6 +1,3 @@
-/* Shared markdown renderer (GFM) — exposes window.formatMarkdown.
-   Same contract as the old UI: raw HTML is escaped, links/images only
-   allow http(s)/mailto, tables get a scroll wrapper. */
 import { Marked } from './vendor/marked.esm.js';
 'use strict';
 

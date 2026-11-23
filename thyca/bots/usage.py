@@ -12,10 +12,6 @@ from thyca.core.protocol import Message
 
 _TOKEN_FIELDS = ("prompt_tokens", "cached_tokens", "completion_tokens", "total_tokens")
 
-#: Stop-marker statuses: a stamped context/loop limit means the row made
-#: no provider call. Shared primitive (runtime turn aggregates and serve
-#: trace reuse it); each consumer keeps its own total semantics and any
-#: extra gates (e.g. trace additionally requires kind != "message").
 STOP_STATUSES = frozenset({"context_limit", "loop_limit"})
 
 

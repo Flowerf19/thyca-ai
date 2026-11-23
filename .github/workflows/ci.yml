@@ -32,11 +32,11 @@ jobs:
       - name: Install dependencies
         run: uv sync --locked
 
+      - name: Run Tier 1 guardrails (ruff, JS syntax, boundaries, test integrity)
+        run: bash scripts/checks/check-tier1.sh
+
       - name: Run full test suite
         run: uv run pytest -q
-
-      - name: Check trailing whitespace and conflict markers
-        run: git diff --check
 
   linux-distro-matrix:
     name: Linux Distro Matrix (${{ matrix.name }})

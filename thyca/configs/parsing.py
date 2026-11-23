@@ -5,7 +5,7 @@ import re
 from dataclasses import replace
 from typing import Any
 
-from .defaults import DEFAULT_PROVIDER_ID, DEFAULT_PROVIDER_MODEL
+from .defaults import DEFAULT_PROVIDER_ID
 from .errors import ConfigError
 from .limits import LimitsCfg
 from .mcp import McpServerCfg
@@ -14,11 +14,8 @@ from .pricing import PricingCfg
 from .providers import ProviderCfg, ProviderEntry
 from .root import Config
 from .timeline import TimelineCfg
-from .validation import _integer, _number, _optional_int, _text
+from .validation import _number, _optional_int, _text
 
-
-# Known-key sets, shared by _fields parsing and _unknown_keys collection so
-# the warn list cannot drift from what parsing accepts.
 _TOP_LEVEL_KEYS = (
     "providers",
     "provider",
@@ -31,7 +28,7 @@ _TOP_LEVEL_KEYS = (
     "pricing",
 )
 _PROVIDER_ENTRY_KEYS = ("baseUrl", "apiKeyEnv", "reasoningEffort", "apiKey", "api")
-_LEGACY_PROVIDER_KEYS = _PROVIDER_ENTRY_KEYS + ("model",)
+_LEGACY_PROVIDER_KEYS = (*_PROVIDER_ENTRY_KEYS, "model")
 _TIMELINE_KEYS = ("timezone",)
 _LIMITS_KEYS = ("loopMax", "hotTailKB", "contextTokens", "softTimeoutS")
 _MODEL_KEYS = (
@@ -135,7 +132,6 @@ def _parse_pricing(raw: Any) -> dict[str, PricingCfg]:
             raise ConfigError("pricing keys must be non-empty strings")
         if not isinstance(value, dict):
             raise ConfigError(f"pricing[{name!r}] must be an object")
-        # support alias cached_input -> cache
         raw_input = value.get("input")
         raw_cache = value.get("cache")
         if raw_cache is None and "cached_input" in value:
@@ -166,8 +162,6 @@ def _parse_models(raw: Any) -> dict[str, ModelCfg]:
             raise ConfigError("models keys must be non-empty strings")
         if not isinstance(value, dict):
             raise ConfigError(f"models[{name!r}] must be an object")
-        # Falsy-but-present provider/reasoningEffort (0, False) must fail
-        # type validation, not silently become "": only missing/None default.
         provider = value.get("provider")
         effort = value.get("reasoningEffort")
         result[name] = ModelCfg(
@@ -241,10 +235,6 @@ def _parse_provider_block(raw: dict[str, Any]) -> tuple[dict[str, ProviderEntry]
                 f"providers must be an object, got {type(providers_raw).__name__}"
             )
         if not providers_raw:
-            # Empty providers (fresh config, none added yet): defaults must
-            # stay empty too. A non-empty defaultProvider here names a
-            # provider that does not exist, so it is rejected like the
-            # non-empty path below.
             default_provider = raw.get("defaultProvider", "")
             _text(default_provider, "defaultProvider", non_empty=False)
             if default_provider != "":
@@ -255,10 +245,6 @@ def _parse_provider_block(raw: dict[str, Any]) -> tuple[dict[str, ProviderEntry]
             _text(default_model, "defaultModel", non_empty=False)
             return {}, default_provider, default_model
         providers = _parse_providers(providers_raw)
-        # Defaults may stay empty (fresh config, or a payload that only
-        # manages providers): membership is checked only when one is named.
-        # Missing keys stay "", so save→load round-trips instead of
-        # re-seeding legacy OpenAI defaults.
         default_provider = raw.get("defaultProvider", "")
         _text(default_provider, "defaultProvider", non_empty=False)
         if default_provider != "" and default_provider not in providers:
@@ -270,11 +256,6 @@ def _parse_provider_block(raw: dict[str, Any]) -> tuple[dict[str, ProviderEntry]
         return providers, default_provider, default_model
     legacy_raw = raw.get("provider")
     if legacy_raw is None:
-        # Neither the new ``providers`` shape nor a legacy ``provider``
-        # block: a truly empty config (no OpenAI seed). Like the empty
-        # providers branch above, a named defaultProvider here names a
-        # provider that does not exist, so it is rejected instead of
-        # silently swallowed.
         default_provider = raw.get("defaultProvider", "")
         _text(default_provider, "defaultProvider", non_empty=False)
         if default_provider != "":
@@ -349,6 +330,4 @@ def _parse_dict(raw: dict[str, Any]) -> Config:
         models=models,
         pricing=_parse_pricing(raw.get("pricing")),
     )
-    # Legacy migration: pricing-only entries become registered models so the
-    # settings UI can edit them. pricing stays for older consumers.
     return _migrate_pricing_to_models(config)

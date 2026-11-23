@@ -6,6 +6,7 @@ import re
 import sqlite3
 import threading
 from dataclasses import dataclass, field
+from itertools import pairwise
 from pathlib import Path
 
 from rapidfuzz import fuzz
@@ -13,7 +14,7 @@ from rapidfuzz import fuzz
 from thyca.memories.chunk import Chunk, Chunker
 from thyca.memories.heading import VISIBLE_SQL, format_ts
 from thyca.memories.schema import (
-    SCHEMA_VERSION,  # noqa: F401 — re-exported
+    SCHEMA_VERSION,  # noqa: F401 -- reason: re-exported
     init_schema,
 )
 from thyca.memories.usage import LeafUsage, guarded
@@ -48,17 +49,13 @@ class Hit:
     has_more: bool = False
     line_start: int = 1
     line_end: int = 1
-    # Team owners (BE-4): None = legacy team entry.
     bots: tuple[str, ...] | None = None
-    # Task + habits (phase 1A): None = legacy entry without the key.
     task: str | None = None
     cont: str | None = None
     kind: str | None = None
     status: str | None = None
     habit: str | None = None
-    # Phase 1E: user explicitly stated the habit.
     habit_explicit: bool = False
-    # WS-3: origin window (window provenance) — additive, end of fields.
     chat_session: str | None = None
 
 
@@ -151,8 +148,6 @@ class ArchiveStore:
             str(row["chunk_id"])
             for row in self._db.execute("SELECT chunk_id FROM chunks WHERE path = ?", (path,))
         ]
-        # One transaction: the cascade delete and the usage deletes commit
-        # together, so a crash between them cannot orphan usage rows.
         self._db.execute("BEGIN IMMEDIATE")
         try:
             self._db.execute("DELETE FROM source_files WHERE path = ?", (path,))
@@ -532,8 +527,6 @@ class ArchiveStore:
 
     @guarded
     def recent_rows(self, limit: int, now: str, *, reader: str | None = None) -> list[sqlite3.Row]:
-        # Daily recency only: canonical profile leaves live in stats, not in
-        # the "recently updated notes" feed.
         clause, clause_params = _reader_clause("c.bots", reader)
         return list(
             self._db.execute(
@@ -710,7 +703,8 @@ def _bigram_match(query: str) -> str | None:
         return None
     terms: list[str] = []
     seen: set[str] = set()
-    for a, b in zip(raw_terms, raw_terms[1:]):
+
+    for a, b in pairwise(raw_terms):
         key = f"{a.casefold()} {b.casefold()}"
         if key in seen:
             continue
@@ -771,5 +765,4 @@ def hit_from_row(
     )
 
 
-# Private alias kept for backward compatibility (tests / older imports).
 _hit_from_row = hit_from_row

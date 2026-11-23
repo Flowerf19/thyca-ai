@@ -36,19 +36,22 @@ def default_config() -> Config:
     return Config(timeline=TimelineCfg(timezone=_system_timezone()))
 
 
-def write_config_guide() -> Path | None:
-    """Copy the packaged agent config guide into ~/.thyca (best effort).
+def write_config_guide(directory: Path | None = None) -> Path | None:
+    """Copy the packaged agent config guide into the config directory (best effort).
 
     Returns the written path, or None when the guide is not packaged
     (source checkout) or cannot be written.
     """
-    # The guide ships in the factory seeds box (thyca/seeds/guides/).
     packaged = Path(__file__).resolve().parents[1] / "seeds" / "guides" / GUIDE_NAME
     if not packaged.is_file():
         return None
     try:
-        directory = ensure_thyca_dir()
-        target = directory / GUIDE_NAME
+        if directory is None or directory.resolve() == config_path().parent.resolve():
+            target_dir = ensure_thyca_dir()
+        else:
+            directory.mkdir(parents=True, exist_ok=True)
+            target_dir = directory
+        target = target_dir / GUIDE_NAME
         if not target.exists():
             target.write_text(packaged.read_text(encoding="utf-8"), encoding="utf-8")
             target.chmod(0o600)
@@ -86,8 +89,6 @@ def load(path: Path | None = None) -> Config:
     if not isinstance(raw, dict):
         raise ConfigError(f"config.json must be a JSON object, got {type(raw).__name__}")
     config = _parse_dict(raw)
-    # Forward-compat: unknown keys stay ignored (never reject), but warn once
-    # per load so typos surface. warnings.warn dedups repeats for free.
     unknown = _unknown_keys(raw)
     if unknown:
         warnings.warn(
@@ -103,7 +104,7 @@ def ensure_default(path: Path | None = None) -> Config:
         return load(target)
     config = default_config()
     save(config, target)
-    write_config_guide()
+    write_config_guide(target.parent)
     return config
 
 
@@ -116,7 +117,6 @@ def save(
     ``temporary`` cleanup is intentionally outside the lock so the stale
     ``.tmp`` is removed even when the lock cannot be acquired.
     """
-    # Backward-compat alias: old signature was save(cfg, path)
     if "cfg" in kwargs:
         if config is not None:
             raise TypeError("save() got multiple values for config/cfg")
@@ -133,16 +133,11 @@ def save(
     lock_path = _lock_path(target)
 
     try:
-        # Compare resolved: a symlink or non-canonical spelling of the live
-        # config must still get the 0700 tightening, not a plain mkdir.
         if target.resolve() == config_path().resolve():
             ensure_thyca_dir()
         else:
             target.parent.mkdir(parents=True, exist_ok=True)
         with FileLock(str(lock_path), timeout=5):
-            # Auth first: a crash between the two writes still leaves the new
-            # keys durable (auth wins on load). Keyless entries keep the live
-            # key on disk: a save that never saw the secret must not wipe it.
             live = load_auth_keys(auth_target)
             providers = {}
             for pid, entry in config.providers.items():
@@ -158,7 +153,6 @@ def save(
     except OSError as error:
         raise ConfigError(f"cannot write {target}: {error}") from error
     except RuntimeError as error:
-        # FileLock acquire failures surface as RuntimeError (e.g. flock unsupported)
         raise ConfigError(f"cannot lock {target}: {error}") from error
     finally:
         for stale in (temporary, auth_temporary):
@@ -184,14 +178,12 @@ def atomic_write_text(target: Path, text: str, *, mode: int = 0o600) -> None:
     try:
         fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            os.fchmod(handle.fileno(), mode)  # defeat exotic umasks too
+            os.fchmod(handle.fileno(), mode)
             handle.write(text)
             handle.flush()
             os.fsync(handle.fileno())
         temporary.replace(target)
     except BaseException:
-        # A failed write never leaves a partial tmp behind; the next write
-        # would unlink it first anyway, but cleanup belongs to the failure.
         try:
             temporary.unlink(missing_ok=True)
         except OSError:

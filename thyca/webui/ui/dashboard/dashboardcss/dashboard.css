@@ -1,21 +1,10 @@
-/* Dashboard "Sử dụng & chi phí" — page styles on top of share/app-shell.css.
-   Everything is scoped to .dashboard-shell so the shared chrome stays untouched. */
-
-/* Workspace = fixed page-nav + scrolling content (app-shell's .page-scroll). */
 .dashboard-shell .workspace{display:flex;flex-direction:column}
 .dashboard-shell .page-scroll{flex:1;min-height:0}
-/* app-shell's .section-stack is a single implicit "auto" column — a wide child
-   (the stat grid's max-content) would stretch it past the container. Pin the
-   column to the container so children always fit the workspace width. */
 .dashboard-shell .section-stack{grid-template-columns:minmax(0,1fr)}
 .dashboard-shell #usage-overview{display:grid;grid-template-columns:minmax(0,1fr);gap:12px;min-width:0}
 .dashboard-shell #usage-overview[hidden]{display:none!important}
 .dashboard-shell .paper-card{min-width:0;padding:clamp(12px,1.4vw,18px) clamp(14px,1.6vw,20px)}
 
-/* ---- range picker in the filter row under the bot scope card ---- */
-/* The view tabs (Sử dụng · Chi phí · Trace) and the date-range controls
-   now share one row directly under #usage-scope-card; when a bot scope is
-   active the row carries that bot's --bot-* palette (set inline). */
 .dashboard-shell .page-nav{flex-wrap:wrap;gap:8px 14px;padding:8px 20px 2px;min-height:0;border-bottom:0}
 .dashboard-shell .page-title{flex:0 0 auto}
 @media(max-width:850px){.dashboard-shell .page-title{flex:0 1 auto}}
@@ -40,7 +29,6 @@
 .dashboard-shell #range-apply{padding:4px 10px;font-size:var(--fs-xs);white-space:nowrap}
 .range-note{margin:8px 0 0;font-size:var(--fs-xs);color:#a08e70;letter-spacing:.2px}
 
-/* ---- hero stat strip (4 KPIs, shared warm surface + hairline dividers) ---- */
 .stat-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));border:1px solid #dfd3bc;border-radius:12px;background:linear-gradient(125deg,#fffaf0,#f8f0df);overflow:hidden}
 .stat{padding:10px 14px;min-width:0;border-right:1px dashed #e2d7c0}
 .stat:last-child{border-right:0}
@@ -49,7 +37,6 @@
 .stat-value small{font:italic var(--fs-md) var(--serif);color:#8d7d63}
 .stat-hint{margin:3px 0 0;font-size:var(--fs-xs);color:var(--muted);line-height:1.35;overflow-wrap:anywhere}
 
-/* ---- card head + metric toggle ---- */
 .card-head{display:flex;align-items:center;justify-content:space-between;gap:10px 14px;flex-wrap:wrap}
 .card-head .card-title{margin-bottom:0}
 .card-head .card-copy{margin:3px 0 0}
@@ -59,7 +46,6 @@
 .card-note{margin:8px 0 0;font-size:var(--fs-xs);color:#a08e70;line-height:1.45}
 .empty-note{margin-top:4px}
 
-/* ---- by_day charts (divs, no library) ---- */
 .day-chart{display:flex;align-items:stretch;gap:6px;height:clamp(112px,15dvh,172px);margin-top:10px}
 .dc-col{flex:1;min-width:0;display:flex;flex-direction:column;gap:6px}
 .dashboard-shell .dc-track{position:relative;flex:1;min-height:0;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;border-bottom:1px solid #e0d3bc}
@@ -80,7 +66,6 @@
 .dashboard-shell .legend-input{background:var(--forest)}.dashboard-shell .legend-cache{background:#b7a57f}.dashboard-shell .legend-output{background:var(--rust)}
 .dashboard-shell .cost-day-chart .dc-bar{width:min(36px,74%)}
 
-/* ---- by_hour strip ---- */
 .hour-chart{display:flex;align-items:stretch;gap:3px;height:clamp(68px,10dvh,112px);margin-top:12px}
 .hc-col{flex:1;min-width:0;display:flex;flex-direction:column;gap:5px}
 .hc-track{flex:1;min-height:0;display:flex;align-items:flex-end;justify-content:center;border-bottom:1px solid #e0d3bc}
@@ -89,7 +74,6 @@
 .hc-hour{display:block;height:12px;font-size:var(--fs-2xs);color:#b3a48a;text-align:center;white-space:nowrap;overflow:hidden}
 .hc-col:hover .hc-bar{filter:brightness(.94)}
 
-/* ---- by_bot rows ---- */
 .bot-rows{list-style:none;margin:10px 0 0;padding:0;display:grid;gap:7px}
 .dashboard-shell .bot-row{display:grid;width:100%;grid-template-columns:36px minmax(0,1fr) auto;gap:10px;align-items:center;padding:8px 10px;border:1px solid #e4d8c1;border-radius:10px;background:#fffaf040;color:inherit;text-align:left;font:inherit}
 .dashboard-shell .bot-row-scope{cursor:pointer}
@@ -105,7 +89,6 @@
 .bot-row-share{font:600 var(--fs-sm) var(--sans);color:#6d5d42;font-variant-numeric:tabular-nums;text-align:right}
 .bot-row-share small{display:block;font:400 var(--fs-2xs) var(--sans);color:#a08e70;letter-spacing:.4px}
 
-/* ---- by_model rows ---- */
 .model-rows{list-style:none;margin:10px 0 0;padding:0;display:grid;gap:0}
 .model-row{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,2fr) auto;gap:10px;align-items:baseline;padding:8px 4px;border-bottom:1px dashed #e2d7c0}
 .model-row:last-child{border-bottom:0}
@@ -113,7 +96,6 @@
 .model-meta{font-size:var(--fs-xs);color:var(--muted);line-height:1.55}
 .model-cost{font:600 var(--fs-md) var(--sans);color:#6d5d42;font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
 
-/* ---- recent turns table ---- */
 .list-head{display:flex;align-items:flex-end;justify-content:space-between;gap:14px;flex-wrap:wrap}
 .list-head .card-title{margin-bottom:0}
 .list-filters{display:inline-flex;gap:8px;align-items:center;flex-wrap:wrap}
@@ -155,7 +137,6 @@ tr.trace-row:hover td,tr.trace-row:focus-visible td{background:#fff7e4}
  .day-chart{gap:4px}
 }
 
-/* Usage, cost, and the flat turn history. */
 .dashboard-shell .analysis-panel>summary{cursor:pointer;font:500 var(--fs-lg)/1.3 var(--serif);color:#554732}
 .dashboard-shell .analysis-panels{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-top:12px}
 .dashboard-shell .analysis-panels>section{min-width:0;padding:10px 12px;border:1px solid #e4d8c1;border-radius:11px;background:#fffaf040}

@@ -1,5 +1,3 @@
-/* Turn-detail HTML renderer shared by the Usage workspace. Loaded once by
-   the root SPA; it owns no page, route, request, list, or controller state. */
 (function () {
   const STATUS_META = {
     completed: ['Thành công', 's-ok'],
@@ -179,7 +177,6 @@
     }
     return out.join('') || `<div class="empty-note"><strong>Lượt này không ghi message nào.</strong></div>`;
   }
-  // Render the detail header with the typed door label, never a conversation id.
   function detailHeadHtml(d) {
     const ids = turnBotIds(d);
     const byId = new Map((d.bot_breakdown || []).map(e => [e.bot_id, e]));

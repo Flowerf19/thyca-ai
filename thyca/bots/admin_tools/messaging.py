@@ -5,7 +5,7 @@ import json
 
 from thyca.bots.bus import new_span_id
 from thyca.bots.context import current_bot_turn_context
-from thyca.core.channel import ChannelAction
+from thyca.core.channel import WORK_REF_RE, ChannelAction
 from thyca.memories.identity import current_bot_id
 from thyca.tools.registry import ToolSpec
 
@@ -14,8 +14,6 @@ from .deps import AdminDeps
 
 def _message_user_spec(deps: AdminDeps) -> ToolSpec:
     async def handler(args: dict) -> str:
-        # Identity from the in-flight turn only: a bot can post solely
-        # into its own DM, under its own name (no bot_id argument).
         ctx = current_bot_turn_context()
         sender = ctx.sender_id if ctx is not None else current_bot_id()
         if sender is None:
@@ -68,7 +66,7 @@ def _message_user_spec(deps: AdminDeps) -> ToolSpec:
 
 
 def _clean_card_choices(raw) -> list[str] | None:
-    """2–5 short, unique chip labels (FE contract for question cards).
+    """2-5 short, unique chip labels (FE contract for question cards).
 
     Accepts plain strings or {id,label} objects; only the visible label
     is kept because a chip click returns the label as the user's next
@@ -264,22 +262,11 @@ def _task_open_spec(deps: AdminDeps) -> ToolSpec:
         title = args.get("title") or args.get("task")
         if not isinstance(title, str) or not title.strip():
             return "missing argument: title"
-        # The event is this tool call itself, recorded in the bot's
-        # internal transcript: the task view (thyca.bots.tasks) derives
-        # the open task from it. No mutable task store is written. The
-        # returned key (a fresh span id, echoed as ``span_id``/``key``/
-        # ``task_key``) links the task: the ack result in the transcript
-        # carries it, and a later result/error event whose
-        # ``parent_span_id`` is this key closes the task (a status/step
-        # event with the same parent updates its status instead).
         memory_task_id = args.get("memory_task_id")
-        if memory_task_id is not None:
-            from thyca.core.channel import WORK_REF_RE
-
-            if not isinstance(memory_task_id, str) or not WORK_REF_RE.fullmatch(
-                memory_task_id
-            ):
-                return "invalid argument: memory_task_id (need task-<8 hex>)"
+        if memory_task_id is not None and (
+            not isinstance(memory_task_id, str) or not WORK_REF_RE.fullmatch(memory_task_id)
+        ):
+            return "invalid argument: memory_task_id (need task-<8 hex>)"
         key = new_span_id()
         ack = {"ok": True, "task": title.strip(), "status": "open",
                "key": key, "span_id": key, "task_key": key,

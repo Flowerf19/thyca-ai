@@ -107,7 +107,6 @@ def test_chat_boundary_filters_native_reasoning_only() -> None:
     )
     assert payload["reasoning_details"] == chat_shapes
     assert payload["reasoning_details"] is not chat_shapes
-    # Chat shapes ride through byte-identical; native-only leaves no key.
     lone = _to_openai_message(
         Message(role="assistant", content="hi", reasoning_details=[native])
     )
@@ -170,7 +169,6 @@ async def test_two_round_empty_summary_jsonl_roundtrip() -> None:
             "encrypted_content": "enc-blob",
         }
     ]
-    # JSONL persistence roundtrip, like the conversation store.
     stored = Message(
         role="assistant",
         content=first.content,
@@ -229,7 +227,6 @@ async def test_two_round_missing_and_invalid_id_never_sent() -> None:
         {"role": "assistant", "content": "prior"},
         {"role": "user", "content": "q1"},
     ]
-    # JSONL persistence roundtrip, like the conversation store.
     revived_history = Message.from_json_line(history.to_json_line())
     stored = Message(
         role="assistant",

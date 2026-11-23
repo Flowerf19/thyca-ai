@@ -93,18 +93,19 @@ def _validate_args(schema: dict, arguments: dict) -> str | None:
                 continue
             expected = subschema.get("type")
             if expected is not None:
-                # Untyped properties (some MCP schemas) skip type checks;
-                # handlers keep their domain validation.
                 error = _type_error(name, value, expected)
                 if error is not None:
                     return error
             allowed_enum = subschema.get("enum")
-            if isinstance(allowed_enum, list) and allowed_enum:
-                if not _matches_enum(value, allowed_enum):
-                    return (
-                        f"argument {name!r} must be one of {allowed_enum}, "
-                        f"got {value!r}"
-                    )
+            if (
+                isinstance(allowed_enum, list)
+                and allowed_enum
+                and not _matches_enum(value, allowed_enum)
+            ):
+                return (
+                    f"argument {name!r} must be one of {allowed_enum}, "
+                    f"got {value!r}"
+                )
     return None
 
 
@@ -132,7 +133,6 @@ def _matches_type(value: object, expected: str) -> bool:
     if expected == "boolean":
         return isinstance(value, bool)
     if expected == "integer":
-        # JSON-Schema parity: integral floats are integers; bools are not.
         if isinstance(value, bool):
             return False
         if isinstance(value, int):
@@ -146,7 +146,6 @@ def _matches_type(value: object, expected: str) -> bool:
         return isinstance(value, dict)
     if expected == "null":
         return value is None
-    # Unknown type names stay forward-compatible: never reject on them.
     return True
 
 
@@ -164,7 +163,6 @@ def _type_error(name: str, value: object, expected: object) -> str | None:
         if isinstance(candidate, str)
     ]
     if not allowed:
-        # Malformed schema: skip like unknown-type (forward-compatible).
         return None
     for candidate in allowed:
         if _matches_type(value, candidate):

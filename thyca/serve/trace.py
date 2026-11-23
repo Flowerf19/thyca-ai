@@ -5,9 +5,10 @@ from collections import defaultdict
 from dataclasses import dataclass, field, replace
 
 from thyca.bots.usage import is_stop_status
-from thyca.core.protocol import Message
 from thyca.conversations.runtime import ConversationRuntime
 from thyca.conversations.runtime.wire import is_sidecar_message, turn_slices
+from thyca.core.channel import WORK_REF_RE
+from thyca.core.protocol import Message
 
 
 @dataclass
@@ -15,10 +16,10 @@ class TurnSummary:
     conversation_id: str
     turn_index: int
     title: str
-    started_at: str  # ISO of first message
+    started_at: str
     ended_at: str
     model: str | None
-    status: str  # completed | failed | loop_limit | context_limit
+    status: str
     rounds: int | None
     requests: int
     prompt_tokens: int | None
@@ -27,29 +28,19 @@ class TurnSummary:
     total_tokens: int | None
     cost_usd: float | None
     latency_ms: int | None
-    # raw slice for detail endpoint
     messages: list[Message]
     error: dict | None = None
-    # Team attribution (BE-6): bot that ran this turn + delegation trace.
     bot_id: str | None = None
     trace_id: str | None = None
-    # Per-bot subtotals inside this turn slice (assistant rows grouped by
-    # their meta bot_id). Empty for manually built summaries; aggregate()
-    # and the FE fall back to the single bot_id/turn totals then.
     bot_breakdown: list[dict] = field(default_factory=list)
-    # Owning conversation's channel shape (phase: trace-per-agent filter).
-    # Copied from the ConversationRuntime so the FE can filter/group without a join.
     conversation_kind: str = "group"
     conversation_dm: str | None = None
     conversation_bots: list[str] = field(default_factory=list)
-    # Real tool calls behind this turn (sum of _row_tool_calls). Last so
-    # older kwarg constructors keep working.
     tool_calls: int = 0
     channel: str | None = None
     window_id: str | None = None
     work_id: str | None = None
 
-    # Render this turn in the public trace shape (no legacy conversation id).
     def to_payload(self) -> dict:
         """Public JSON shape for /api/traces* — the single source of the field list."""
         payload = {
@@ -91,17 +82,10 @@ def _is_synthetic_stop(message: Message) -> bool:
 
 
 def _turn_status(slice_msgs: list[Message]) -> str:
-    # A stamped failure marker wins: a turn that died mid-loop may still end
-    # on an assistant/tool message, which must not read as completed.
     if any(isinstance((m.meta or {}).get("error"), dict) for m in slice_msgs):
         return "failed"
-    # The context guard's synthetic stop is not a success: it made no
-    # provider call, so it must not count as a completed turn or a
-    # request (trace totals). Already persisted rows carry the same
-    # meta, so they are handled too.
     if any((m.meta or {}).get("status") == "context_limit" for m in slice_msgs):
         return "context_limit"
-    # sidecar meta-messages are not turn outcomes — skip them, keep old semantics
     last = next(
         (m for m in reversed(slice_msgs) if not is_sidecar_message(m)),
         None,
@@ -145,7 +129,6 @@ def _sum_tokens(turn_msgs: list[Message]) -> tuple[int | None, int | None, int |
                 completion = (completion or 0) + cot
             if isinstance(tt, int):
                 total = (total or 0) + tt
-            # if no prompt but total present, keep as is; already summed
         c = meta.get("cost_usd")
         if isinstance(c, (int, float)):
             cost = (cost or 0.0) + float(c)
@@ -154,23 +137,18 @@ def _sum_tokens(turn_msgs: list[Message]) -> tuple[int | None, int | None, int |
             latency = (latency or 0) + lat
         m = meta.get("model")
         if isinstance(m, str) and m.strip():
-            model = m.strip()  # last wins
+            model = m.strip()
         rounds += 1
-    # Normalize zero-means-none: if no token found, keep None
     if prompt == 0 and all((m.meta or {}).get("usage") is None for m in turn_msgs if m.role == "assistant"):
-        # actually if we summed zero because of missing usage but we initialized 0, we need to check
-        # we used (prompt or 0) pattern — if first addition was 0 we set to 0, but we need to know if any usage existed
         has_any = any(isinstance((m.meta or {}).get("usage"), dict) for m in turn_msgs if m.role == "assistant")
         if not has_any:
             prompt = None
             cached = None
             completion = None
             total = None
-    # cached defaults to 0 when prompt exists but cached missing? keep 0
     if prompt is not None and cached is None:
         cached = 0
     if cost == 0.0:
-        # if no cost found, keep None unless at least one assistant had cost
         has_cost = any(isinstance((m.meta or {}).get("cost_usd"), (int, float)) for m in turn_msgs if m.role == "assistant")
         if not has_cost:
             cost = None
@@ -178,14 +156,11 @@ def _sum_tokens(turn_msgs: list[Message]) -> tuple[int | None, int | None, int |
         has_lat = any(isinstance((m.meta or {}).get("latency_ms"), int) for m in turn_msgs if m.role == "assistant")
         if not has_lat:
             latency = None
-    # if total missing but prompt+completion present, derive
     if total is None and prompt is not None and completion is not None:
         total = prompt + completion
     return prompt, cached, completion, total, cost, latency, model
 
 
-#: Bus envelope kinds from before the bus_event marker existed; such rows
-#: carry no model call of their own.
 _BUS_KINDS = frozenset({"delegate", "step", "status", "help_request"})
 
 
@@ -293,8 +268,6 @@ def _bot_breakdown(turn_msgs: list[Message]) -> list[dict]:
 
 
 def turns_from_conversation(conversation: ConversationRuntime) -> list[TurnSummary]:
-    # Grouping shared with the wire turns count (turn_slices): system
-    # compaction markers excluded, one slice per user message.
     bots = list(conversation.bots) if conversation.bots else ["thyca"]
     kind = "dm" if conversation.dm_bot else "group"
     slices = turn_slices(conversation.messages)
@@ -325,7 +298,6 @@ def turns_from_conversation(conversation: ConversationRuntime) -> list[TurnSumma
              if isinstance((m.meta or {}).get("trace_id"), str) and (m.meta or {}).get("trace_id")),
             None,
         )
-        from thyca.core.channel import WORK_REF_RE
 
         work_id = next(
             (str((m.meta or {}).get("work_id")) for m in sl
@@ -391,8 +363,6 @@ def scope_turn_to_bot(turn: TurnSummary, bot_id: str) -> TurnSummary | None:
     messages = [message for message in turn.messages
                 if message.role == "assistant"
                 and (message.meta or {}).get("bot_id") == bot_id]
-    # The last model for this bot, not another participant's last model. As
-    # with the existing turn/model contract, this is a turn-level model label.
     model = _sum_tokens(messages)[6] if messages else turn.model
     return replace(
         turn,
@@ -423,7 +393,6 @@ def _record_counts(group: list[TurnSummary]) -> dict:
 def _percentile(sorted_vals: list[int], p: float) -> int | None:
     if not sorted_vals:
         return None
-    # nearest-rank method
     k = int((len(sorted_vals) - 1) * p + 0.5)
     k = max(0, min(k, len(sorted_vals) - 1))
     return sorted_vals[k]
@@ -466,7 +435,6 @@ def aggregate(turns: list[TurnSummary]) -> dict:
     latencies = sorted([t.latency_ms for t in turns if isinstance(t.latency_ms, int)])
     totals["latency_ms_p50"] = _percentile(latencies, 0.5)
     totals["latency_ms_p90"] = _percentile(latencies, 0.9)
-    # by_model
     by: dict[str, list[TurnSummary]] = defaultdict(list)
     for t in turns:
         key = t.model or "unknown"
@@ -485,17 +453,13 @@ def aggregate(turns: list[TurnSummary]) -> dict:
             "total_tokens": sum(x.total_tokens or 0 for x in group),
             "cost_usd": cost,
             "latency_ms_p50": _percentile(lat, 0.5),
-            # Newest turn per model, so the UI can sort by "gần nhất" without
-            # rescanning conversations.
             "last_started_at": max((x.started_at for x in group if x.started_at), default=""),
         }
         by_model.append(entry)
-    # by_day
     by_day_map: dict[str, list[TurnSummary]] = defaultdict(list)
     for t in turns:
         day = ""
         try:
-            # started_at is ISO UTC YYYY-MM-DDTHH:MM:SSZ
             day = t.started_at.split("T")[0] if "T" in t.started_at else t.started_at[:10]
         except Exception:
             day = ""
@@ -520,12 +484,6 @@ def aggregate(turns: list[TurnSummary]) -> dict:
         {"status": status, "requests": sum(x.requests for x in group)}
         for status, group in sorted(by_status_map.items())
     ]
-    # by_bot (BE-6): same rollup shape as by_model, but summed from each
-    # turn's per-bot breakdown so delegated child work is credited to the
-    # child, not the turn's first bot. Turns without a breakdown (manually
-    # built summaries) fall back to their single bot_id + turn totals.
-    # Turns without attribution count as "unknown" (legacy single-bot
-    # transcripts) so old data never breaks the shape.
     by_bot_acc: dict[str, dict] = {}
     for t in turns:
         entries = [e for e in (t.bot_breakdown or []) if isinstance(e, dict)]

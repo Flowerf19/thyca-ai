@@ -209,13 +209,13 @@ def test_completion_settles_state_and_cleans_live_calls(status: dict) -> None:
 
 def test_live_tool_skill_preview_groups_calls_not_events(status: dict) -> None:
     preview = status["livePreview"]
-    assert len(preview["calls"]) == 5  # duplicate replay of bash-tool-1 is idempotent
+    assert len(preview["calls"]) == 5
     assert preview["groups"] == {
         "shown": [["tool", "bash", 2], ["skill", "bash", 1]],
         "extra": 2,
         "total": 4,
     }
-    assert preview["preview"] == "bash ×2, skill bash"  # same name, distinct kinds
+    assert preview["preview"] == "bash ×2, skill bash"
     assert preview["extraCount"] == 2
     assert preview["moreText"] == "+2"
     assert preview["moreLabel"] == "Xem toàn bộ 4 việc đang chạy của Thyca"

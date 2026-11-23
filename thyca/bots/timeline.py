@@ -32,20 +32,19 @@ from __future__ import annotations
 
 import json
 import os
+import uuid
 from pathlib import Path
 
 from filelock import FileLock
 
 from thyca.bots.workspace_store import _INTERNAL_CONVERSATION_ID_RE, _check_bot_id
-from thyca.core.channel import WindowRef
-from thyca.core.protocol import Message, utc_now_ts
 from thyca.conversations.runtime import ConversationRuntime, ConversationStore
 from thyca.conversations.runtime.errors import ConversationError, ConversationNotFound
+from thyca.core.channel import WindowRef
+from thyca.core.protocol import Message, utc_now_ts
 
 EVENT_KINDS = frozenset({"message", "view_reset"})
 
-# Private-execution record version (option B): v2 carries the existing
-# turn span so private rows stay addressable without another identity.
 EVENT_V1 = 1
 EVENT_V2 = 2
 
@@ -62,7 +61,6 @@ class TraceExecutionError(RuntimeError):
     """Canonical execution detail is unavailable for a trace span."""
 
 
-# Validate the private-execution marker: exactly the existing turn span.
 def _validate_priv(priv) -> dict:
     """Checked v2 marker or raise; never silently accept a bad scope."""
     if not isinstance(priv, dict):
@@ -75,7 +73,6 @@ def _validate_priv(priv) -> dict:
     return {"span": span}
 
 
-# Resolve one canonical internal id to its binding path without touching disk.
 def _canonical_binding_path(conversations_dir: Path, conversation_id: str) -> Path:
     if not isinstance(conversation_id, str) or not _INTERNAL_CONVERSATION_ID_RE.fullmatch(conversation_id):
         raise ConversationNotFound(conversation_id, f"invalid canonical conversation id: {conversation_id!r}")
@@ -86,7 +83,6 @@ def _canonical_binding_path(conversations_dir: Path, conversation_id: str) -> Pa
     return Path(conversations_dir) / f"{conversation_id}.jsonl"
 
 
-# Resolve the on-disk workspace directory for one bot.
 def _dir_for(root: Path, bot_id: str) -> Path:
     _check_bot_id(bot_id)
     path = root / "bots" / bot_id / "workspace"
@@ -122,7 +118,6 @@ class WorkspaceTimeline:
         self._size = 0
         self._seq = self._scan()
 
-    # ---------- internal ----------
 
     def _iter_events(self):
         """Strictly validate and yield every event in the file.
@@ -140,11 +135,6 @@ class WorkspaceTimeline:
             raise TimelineError("torn timeline tail (no newline)")
         seq = 0
         seen: set[str] = set()
-        # Records are LF-terminated only. Do not use splitlines(): it
-        # also cuts at U+2028/U+2029/U+0085, which json.dumps leaves raw
-        # inside strings (valid JSON, e.g. pasted web content), so one
-        # record would be read as two malformed fragments. The trailing
-        # LF checked above leaves one empty tail fragment; drop it.
         lines = raw.decode("utf-8").split("\n")
         if lines and lines[-1] == "":
             lines.pop()
@@ -170,8 +160,6 @@ class WorkspaceTimeline:
                 raise TimelineError("window missing")
             if not isinstance(ev.get("payload"), dict):
                 raise TimelineError("payload must be a dict")
-            # v2 private records carry the existing turn span; anything
-            # else is malformed and fails closed like any torn record.
             if ev.get("v") == EVENT_V2:
                 _validate_priv(ev.get("priv"))
             elif "priv" in ev:
@@ -193,12 +181,9 @@ class WorkspaceTimeline:
             self._size = 0
         return seq
 
-    # Append one journal event with the next sequence number.
     def _append_locked(self, kind: str, window: WindowRef,
                        payload: dict, event_id: str,
                        priv: dict | None = None) -> dict:
-        # Private execution writes v2 with the existing turn span; the
-        # journal keeps the real group window (no synthetic identity).
         if priv is None:
             version = EVENT_V1
             marker: dict[str, object] = {}
@@ -236,9 +221,6 @@ class WorkspaceTimeline:
         return ev
 
     def _events(self) -> list[dict]:
-        # Strictly re-validated on every read (same rules as _scan).
-        # This scans the complete append-only journal so trace reads can
-        # recover original message events across view_reset boundaries.
         return list(self._iter_events())
 
     def messages_for_window(self, window: WindowRef,
@@ -289,9 +271,7 @@ class WorkspaceTimeline:
                 return ev
         return None
 
-    # ---------- writers ----------
 
-    # Record one canonical message row for an exact window.
     def append_message(self, window: WindowRef, message,
                        event_id: str, priv: dict | None = None) -> dict:
         payload = {
@@ -301,7 +281,6 @@ class WorkspaceTimeline:
         }
         return self._record("message", window, payload, event_id, priv=priv)
 
-    # Record a view_reset compaction or error basis for one window.
     def replace_view(self, window: WindowRef, messages, *,
                      event_id: str,
                      bots=None, dm=None, priv: dict | None = None) -> dict:
@@ -316,7 +295,6 @@ class WorkspaceTimeline:
         return self._record("view_reset", window, payload, event_id,
                             priv=priv)
 
-    # Validate and append one journal record with idempotency checks.
     def _record(self, kind: str, window: WindowRef, payload: dict,
                 event_id: str, priv: dict | None = None) -> dict:
         if not isinstance(event_id, str) or not event_id:
@@ -325,22 +303,12 @@ class WorkspaceTimeline:
         with self._lock:
             try:
                 if self.path.stat().st_size != self._size:
-                    # Another live instance appended since this object's
-                    # last scan; re-validate now rather than appending a
-                    # conflicting seq that bricks the log on next read.
                     self._seq = self._scan()
             except OSError:
                 pass
             existing = self._find(event_id)
             if existing is not None:
-                # v1 idempotency compares window_id only — participants
-                # can legitimately drift for the same window across a
-                # room's life. Any v2 involvement compares the exact
-                # execution scope: version, full window, payload, priv.
                 if existing.get("v") == EVENT_V2 or clean_priv is not None:
-                    # Execution scope: version, window identity triple,
-                    # kind, payload, private span. Participants alone
-                    # never conflict (approved drift compatibility).
                     _old_win = existing.get("window") if isinstance(existing.get("window"), dict) else {}
                     _new_win = window.to_dict()
                     if (
@@ -364,7 +332,6 @@ class WorkspaceTimeline:
             return self._append_locked(kind, window, payload, event_id,
                                        priv=clean_priv)
 
-    # ---------- projector ----------
 
     def project(self, window: WindowRef, *,
                 conversation_id: str | None = None,
@@ -385,9 +352,6 @@ class WorkspaceTimeline:
             raise TimelineError("priv_span must be a non-empty string")
         events = self._events()
         if priv_span is not None:
-            # Same-span reset is this invocation's basis; later same-span
-            # messages replay after it. Other spans, v1 records, and all
-            # group bases stay out.
             basis_msgs: list[Message] = []
             basis_idx = -1
             for i, ev in enumerate(events):
@@ -480,13 +444,9 @@ land as ``message``/``view_reset`` journal events only. An address to any
 other conversation fails instead of falling back to a file-backed store.
     """
 
-    # Bind one canonical conversation with an optional private span selector.
     def __init__(self, conversations_dir: Path, *,
                  timeline: WorkspaceTimeline, window: WindowRef,
                  conversation_id: str, priv_span: str | None = None) -> None:
-        # A private execution binds the real group window for persistence
-        # and selects only its own span; the visible DM-like window lives
-        # only in the turn and is never journaled.
         if priv_span is not None and (
                 not isinstance(priv_span, str) or not priv_span):
             raise TimelineError("priv_span must be a non-empty string")
@@ -496,17 +456,13 @@ other conversation fails instead of falling back to a file-backed store.
         self._conversation_id = conversation_id
         self._priv_span = priv_span
 
-    # Execution marker for this store: none shared, span only when private.
     def _priv(self) -> dict | None:
         return None if self._priv_span is None else {"span": self._priv_span}
 
-    # Resolve one canonical internal id to its binding path without touching disk.
     def path_for(self, conversation_id: str) -> Path:
         return _canonical_binding_path(self.conversations_dir, conversation_id)
 
-    # ---------- projection helpers ----------
 
-    # Require the requested id to be this store's bound canonical conversation.
     def _require_conversation(self, conversation_id: str) -> None:
         if conversation_id != self._conversation_id:
             raise TimelineError(
@@ -522,14 +478,12 @@ other conversation fails instead of falling back to a file-backed store.
 
     def _reset(self, messages, *,
                bots, dm) -> None:
-        import uuid
 
         self._timeline.replace_view(
             self._window, messages, event_id=f"reset-{uuid.uuid4().hex}",
             bots=bots, dm=dm,
             priv=self._priv())
 
-    # ---------- reads ----------
 
     def load(self, conversation_id: str) -> ConversationRuntime:
         self._require_conversation(conversation_id)
@@ -549,25 +503,17 @@ other conversation fails instead of falling back to a file-backed store.
         return self._projected().bots
 
     def list_paths(self) -> list:
-        # Honest empty: the bound conversation has no file on disk. ConversationRuntime
-        # discovery (discard_empty/list_conversations/continue_last) runs on
-        # the USER store, never through this wrapper — verified callers.
         return []
 
     def latest(self) -> ConversationRuntime:
         raise ConversationNotFound(self.conversations_dir)
 
-    # ---------- writes ----------
 
     def create(self, conversation_id: str):
         self._require_conversation(conversation_id)
-        # No file: the canonical conversation's content lives in the
-        # timeline; the path is only a binding for ConversationRuntime.path.
         return self.path_for(conversation_id)
 
-    # Append one canonical row (actor accepted for interface parity).
     def append(self, path, row, *, actor=None) -> None:
-        import uuid
 
         self._require_path(path)
         self._timeline.append_message(
@@ -579,9 +525,6 @@ other conversation fails instead of falling back to a file-backed store.
                 dm=None) -> None:
         self._require_conversation(conversation_id)
         self._require_path(target)
-        # Preserve metadata and record the reset as one journal transaction.
-        # The caller owns the workspace lease across any earlier async
-        # compaction work; this lock only makes the final RMW atomic.
         with self._timeline._lock:
             projected = self._projected()
             self._reset(
@@ -591,8 +534,6 @@ other conversation fails instead of falling back to a file-backed store.
 
     def delete(self, conversation_id: str) -> None:
         self._require_conversation(conversation_id)
-        # Tombstone-by-reset: internal conversations aren't user-facing, so
-        # deleting one clears the canonical view instead of unlinking.
         self._reset([], bots=None, dm=None)
 
     def append_bots(self, path, bots) -> None:

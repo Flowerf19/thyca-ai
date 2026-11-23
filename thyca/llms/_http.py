@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import AsyncIterator, Callable
 from typing import TYPE_CHECKING, Any
@@ -79,7 +80,6 @@ async def _sleep_retry_after(response: httpx.Response) -> None:
         except ValueError:
             delay = 0.0
     if delay > 0:
-        import asyncio
 
         await asyncio.sleep(delay)
 
@@ -95,9 +95,7 @@ class BaseConnect(Connect):
     plus the parse functions, so retry/timeout/error semantics cannot drift.
     """
 
-    #: Payload key dropped + retried once on a 400 naming it.
     DROP_PARAM = ""
-    #: Body substring that triggers the drop (empty = never drop).
     DROP_MARKER = ""
 
     def __init__(
@@ -138,8 +136,6 @@ class BaseConnect(Connect):
         on_reasoning: Callable[[str], None] | None,
         on_content: Callable[[str], None] | None = None,
     ) -> ChatReply:
-        # Exactly 3 transient attempts; each failure emits retry status
-        # (1/3, 2/3, 3/3) before the final provider error.
         max_attempts = 3
         last_error: LLMError | None = None
         transient = 0

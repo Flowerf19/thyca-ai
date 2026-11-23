@@ -6,6 +6,7 @@ from pathlib import Path
 
 from thyca.configs import atomic_write_text
 from thyca.memories.active import ActiveMemory
+from thyca.memories.archive_store import DATE_RE, decode_bots, encode_bots
 from thyca.memories.archived import (
     GET_MEMORY_CAP,
     NO_FALLBACK_PREFIXES,
@@ -16,8 +17,10 @@ from thyca.memories.archived import (
 )
 from thyca.memories.chunk import Chunk
 from thyca.memories.fallback import read_unindexed_chunk
+from thyca.memories.habits import strip_auto_habits
 from thyca.memories.heading import (
     DEFAULT_IMPORTANCE,
+    TASK_STATUSES,
     TTL_DAYS,
     HeadingMeta,
     expiry_ts,
@@ -40,7 +43,7 @@ from thyca.memories.ledgers import (
 from thyca.memories.ledgers import (
     extract_task_updated_day,
     first_summary_line,
-    format_task_catalog,  # noqa: F401 — re-exported
+    format_task_catalog,  # noqa: F401 -- reason: re-exported
     locate_visible_block,
     resolve_owners,
     validate_entry_fields,
@@ -57,6 +60,7 @@ from thyca.memories.ledgers import (
 from thyca.memories.search import _absolute_proj, lexical_search
 from thyca.memories.search import recent as _recent_search
 from thyca.memories.stats import CanonicalFile, MemoryStatsResult, build_stats
+from thyca.memories.visibility import current_memory_view
 from thyca.memories.writer import MemoryWriter
 
 
@@ -141,7 +145,6 @@ class MemoryFacade:
                 return candidate
         raise ArchiveError("could not mint a unique task id")
 
-    # Group visible task entries into a task catalog for tool reads.
     def tasks(
         self,
         *,
@@ -157,8 +160,6 @@ class MemoryFacade:
         Returns ``{"tasks": [...], "warnings": [...]}``. A child bot
         only sees entries it may read, so a task made solely of another
         bot's entries never appears for it."""
-        from thyca.memories.archive_store import DATE_RE, decode_bots, encode_bots
-        from thyca.memories.heading import TASK_STATUSES
 
         warnings: list[str] = []
         if status is not None and status not in TASK_STATUSES:
@@ -212,12 +213,6 @@ class MemoryFacade:
             if row_text is not None:
                 member["summary"] = first_summary_line(row_text)
             members_by_session[str(row["memory_id"])] = member
-        # A task opened today is not indexed yet (today's daily file only
-        # enters SQLite after day-close), but the catalog must show it so
-        # "check memory_tasks before opening a task" works same-day.
-        # Same visibility rule as the store reader clause / _check_read:
-        # no reader (user) and Thyca see everything; a child bot sees
-        # legacy (None), team, and its own entries only.
         today = self.archive.day(now)
         try:
             today_text = read_text_file(self.thyca_dir / "memory" / f"{today}.md")
@@ -245,9 +240,14 @@ class MemoryFacade:
                 if not is_visible(first.expires_at, now):
                     continue
                 owners = first.bots
-                if reader is not None and reader != "thyca":
-                    if owners is not None and "team" not in owners and reader not in owners:
-                        continue
+                if (
+                    reader is not None
+                    and reader != "thyca"
+                    and owners is not None
+                    and "team" not in owners
+                    and reader not in owners
+                ):
+                    continue
                 today_body = "\n".join(leaf.text_raw for leaf in leaves)
                 updated_day = extract_task_updated_day(today_body)
                 member_last_day = max(today, updated_day) if updated_day else today
@@ -260,8 +260,6 @@ class MemoryFacade:
                     "last_line": max(leaf.line_start for leaf in leaves),
                     "title": first.memory_title,
                     "status": first.status,
-                    # Same JSON-string shape as the store rows so the
-                    # shared grouping below decodes both uniformly.
                     "bots": encode_bots(first.bots),
                     "chat": getattr(first, "chat_session", None),
                     "summary": first_summary_line(first.text_raw),
@@ -438,8 +436,6 @@ class MemoryFacade:
 
     def forget(self, memory_id: str, now: datetime | None = None) -> None:
         self._check_mutate(memory_id, "forget", now)
-        # The writer owns per-file locking and locates under mutation_lock:
-        # no facade-side pre-locate (TOCTOU + double locate).
         with self.writer.mutation_lock():
             self.writer.forget(memory_id, now)
             self._refresh_index(now)
@@ -491,7 +487,6 @@ class MemoryFacade:
         keep_details = False
         if summary is not None:
             if content is None:
-                # Summary-only: the caller did not pass details, so keep them.
                 keep_details = True
                 body_lines = format_body(summary)
             else:
@@ -503,7 +498,7 @@ class MemoryFacade:
                 proj=normalized_proj, keep_details=keep_details,
                 task=task, cont=cont, kind=kind, status=status,
                 habit=habit.strip() if habit is not None else None,
-                habit_explicit=habit_explicit if habit_explicit else None,
+                habit_explicit=habit_explicit or None,
             )
             self._refresh_index(now)
 
@@ -521,7 +516,6 @@ class MemoryFacade:
             self._refresh_index(now)
             return exp
 
-    # Read one entry by id; the tool layer opts into the owner exemption.
     def get(
         self,
         *,
@@ -579,9 +573,6 @@ class MemoryFacade:
                 if "chat_session" in keys:
                     origin_chat = origin_rows[0]["chat_session"]
             if origin_chat is None and isinstance(text, str):
-                # Provenance comes only from the REAL first session
-                # heading's metadata comment — never a body token.
-                from thyca.memories.heading import parse_heading
 
                 for line in text.splitlines():
                     if not line.startswith("## "):
@@ -597,21 +588,12 @@ class MemoryFacade:
                 raise ArchiveError("entry is not readable in this window")
         if chunk_ids and sid:
             self.archive.store.usage.record_gets(chunk_ids, sid, now_ts)
-        # sid is always a validated non-empty id here (blank selectors raise
-        # above; lookup raises on miss), so no empty-sid early return.
         if sid.startswith("canonical#"):
-            # Canonical reads are profile content, not daily memory: return
-            # the fetched text without TTL renewal or profile-file mutation.
-            # Under a group window the auto-generated habits block (which
-            # can carry private DM labels) is projected out, same as the
-            # hot snapshot — raw profile files are already PathGuard-denied.
-            from thyca.memories.visibility import current_memory_view
 
             _view = current_memory_view()
             if _view is not None and getattr(
                 _view.window, "kind", None
             ) == "group" and isinstance(text, str):
-                from thyca.memories.habits import strip_auto_habits
 
                 return strip_auto_habits(text)
             return text
@@ -630,8 +612,6 @@ class MemoryFacade:
                     )
                     return leaf
                 return self.writer.read_memory(sid, now=now)
-        # A bot reading outside its own entries (team/legacy) must not
-        # extend their TTL: return the already-fetched text as-is.
         return text
 
     def stats(
@@ -661,8 +641,6 @@ class MemoryFacade:
         allow_own_cross_window: bool = False,
     ) -> SearchResult:
         self._ensure_rollover_indexed(now)
-        # Keyword search over archived leaves; the tool layer opts into
-        # the owner exemption for proactive reads, other callers keep it.
         return lexical_search(
             self.archive,
             query,
@@ -683,7 +661,6 @@ class MemoryFacade:
         allow_own_cross_window: bool = False,
     ) -> list[Hit]:
         self._ensure_rollover_indexed(now)
-        # Most-recent archived hits; same opt-in owner exemption as search.
         return _recent_search(
             self.archive, limit, now, reader=current_bot_id(),
             allow_own_cross_window=allow_own_cross_window,
@@ -694,15 +671,12 @@ class MemoryFacade:
         chat: str | None, bots,
         allow_own_cross_window: bool = False,
     ) -> bool:
-        # Task-catalog visibility for one entry under the bound view.
-        from thyca.memories.visibility import current_memory_view
 
         view = current_memory_view()
         if view is None:
             return True
         if bots is not None and not isinstance(bots, tuple):
             try:
-                from thyca.memories.archive_store import decode_bots
 
                 bots = decode_bots(bots)
             except Exception:
@@ -715,9 +689,6 @@ class MemoryFacade:
         chat: str | None, bots: tuple | None = None,
         allow_own_cross_window: bool = False,
     ) -> bool:
-        # Single-entry origin check for get; the tool layer opts into
-        # the owner exemption for proactive reads, others keep it off.
-        from thyca.memories.visibility import current_memory_view
 
         view = current_memory_view()
         if view is None:
@@ -743,7 +714,6 @@ class MemoryFacade:
             self.archive.store.usage.keep_gets(live)
             self.archive.store.usage.keep_searches(live)
 
-    # -- Team ownership (BE-4) -------------------------------------------
     def forget_bot_entries(self, bot_id: str, now: datetime | None = None) -> int:
         """Drop one bot's private entries on bot deletion (BE-5).
 
@@ -827,9 +797,6 @@ class MemoryFacade:
                 atomic_write_text(path, text)
         except OSError as exc:
             raise ArchiveError(f"write failed: {name}") from exc
-        # Outside the write guard: the file already landed, so a reindex
-        # failure must surface as itself, not as "write failed".
-        # Raw OSError propagates (HTTP 503); only write-phase failures wrap.
         with self.writer.mutation_lock():
             self._refresh_index()
 

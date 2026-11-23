@@ -32,7 +32,6 @@ _LABELS: dict[str, str] = {
 }
 
 def _is_secret(name: str) -> bool:
-    # Exact match: apiKeyEnv holds a variable *name*, not a secret.
     return name.lower() == "apikey"
 
 
@@ -58,8 +57,6 @@ def _field_entry(prefix: str, field: dataclasses.Field) -> dict[str, Any]:
     if field.name == "reasoningEffort":
         entry["choices"] = list(REASONING_EFFORTS)
     if field.name in ("timezone", "apiKeyEnv"):
-        # timezone follows the host system; apiKeyEnv is plumbing, not user-facing.
-        # Both stay in the config file, the panel just skips them.
         entry["hidden"] = True
     if field.name in LIMIT_RANGES:
         entry["min"], entry["max"] = LIMIT_RANGES[field.name]
@@ -78,11 +75,7 @@ def _scalar_section(key: str, cfg: Any) -> dict[str, Any]:
 
 
 def config_schema() -> dict[str, Any]:
-    # The "provider" section describes one provider entry (choices/defaults for
-    # the reasoning pickers); the multi-provider form itself is custom UI.
     sections: list[dict[str, Any]] = [_scalar_section("provider", ProviderEntry)]
-    # Pricing/models render as cards in the UI, not schema sections.
-    # Timeline hidden (system default); mcpServers agent-managed.
     sections.append(_scalar_section("limits", LimitsCfg))
     sections.append(_scalar_section("timeline", TimelineCfg))
     return {"sections": sections}

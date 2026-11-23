@@ -14,8 +14,9 @@ from http.server import ThreadingHTTPServer
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from thyca.serve.routes import make_handler
+from thyca.bots.scheduler import tick
 from thyca.memories.facade import MemoryFacade
+from thyca.serve.routes import make_handler
 
 if TYPE_CHECKING:
     from thyca.app.chat_app import ChatApp
@@ -82,14 +83,11 @@ def make_server(
     )
 
 
-#: Scheduler cadence: cron has minute precision and the idle sweep
-#: threshold is 15 minutes, so one tick per minute is the sane interval.
 SCHEDULER_INTERVAL_S = 60.0
 
 
 def scheduler_tick_once(chat: ChatApp) -> dict:
     """One production scheduler pass (idle sweep + dedupe + due bots)."""
-    from thyca.bots.scheduler import tick
 
     return tick(chat)
 
@@ -107,7 +105,7 @@ def start_scheduler(
         while not stop.wait(interval_s):
             try:
                 scheduler_tick_once(chat)
-            except Exception as exc:  # never kill serve over a tick
+            except Exception as exc:
                 print(f"scheduler tick failed: {type(exc).__name__}", file=sys.stderr)
 
     thread = threading.Thread(target=_loop, name="thyca-scheduler", daemon=True)

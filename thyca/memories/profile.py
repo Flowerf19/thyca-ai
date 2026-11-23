@@ -192,17 +192,14 @@ def strip_legacy_habits_block(text: str) -> str:
                     skipping = True
                 elif item == LEGACY_AUTO_END:
                     skipping = False
-                elif skipping:
+                elif skipping or item.startswith("<!--"):
                     pass
-                elif item.startswith("<!--"):
-                    pass  # auto-generated comment, not manual content
                 elif item:
                     manual.append(lines[index])
                 index += 1
             if manual:
                 out.append(f"{LEGACY_HEADING}\n")
                 out.extend(manual)
-            # Drop blank lines left between this section and the next one.
             while index < total and not lines[index].strip():
                 index += 1
             continue

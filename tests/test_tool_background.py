@@ -7,8 +7,8 @@ import pytest
 
 from thyca.core.protocol import ToolCall
 from thyca.tools.builtin import register_file_tools
-from thyca.tools.gateway.background import BackgroundProcs
 from thyca.tools.gateway import ToolGateway
+from thyca.tools.gateway.background import BackgroundProcs
 from thyca.tools.gateway.gateway import tool_kill_spec, tool_read_spec
 from thyca.tools.path_guard import PathGuard
 from thyca.tools.registry import ToolRegistry
@@ -187,7 +187,6 @@ async def test_background_rejects_non_boolean(tmp_path: Path) -> None:
     gateway, _procs = _stack(tmp_path, BackgroundProcs())
     result = await _call(gateway, "bash", command="echo hi", background="false")
     assert result.is_error
-    # F7-strict: the registry rejects mistyped args before the handler runs.
     assert "argument 'background' must be boolean, got string" in result.content
 
 
@@ -197,10 +196,9 @@ async def test_kill_all_stops_running_procs(tmp_path: Path) -> None:
     gateway, _ = _stack(tmp_path, procs)
     await _call(gateway, "bash", command="sleep 30", background=True)
     await procs.kill_all()
-    await asyncio.sleep(0)  # let the settle callback fire
+    await asyncio.sleep(0)
     read = await gateway.read("exec1")
     assert "status: done" in read.content
-    # kill_all sets killed like kill(): the execution settles failed, not done.
     assert read.is_error
     assert gateway.executions["exec1"].status == "failed"
 

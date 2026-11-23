@@ -11,6 +11,8 @@ from thyca.bots.card import (
     BotModel,
     with_baseline_tools,
 )
+from thyca.configs import ConfigError, default_config, load
+from thyca.configs.coordination import CoordinationError, hold
 from thyca.tools.registry import ToolSpec
 
 from .deps import AdminDeps, _deny_child
@@ -69,20 +71,13 @@ def _create_spec(deps: AdminDeps) -> ToolSpec:
                 name=args["bot_id"],
                 role=args.get("role", "Trợ lý"),
                 description=args.get("description", ""),
-                # No explicit tint → least-used team tint, so twins are
-                # distinguishable by color instead of all rendering accent.
                 tint=args.get("tint") or deps.bots.suggest_tint(),
-                # No explicit avatar → least-used note shape, persisted
-                # on the card like the suggested tint.
                 avatar=avatar or deps.bots.suggest_avatar(),
                 model=BotModel(
                     id=args.get("model", "default"),
                     thinking=args.get("thinking") if isinstance(args.get("thinking"), str) else None,
                 ),
                 skills=skills,
-                # Every created bot can immediately talk to peers and use
-                # its memory; explicit tools union on top. hidden_tools,
-                # bash and memory policies still win at filter time.
                 tools=with_baseline_tools(explicit_tools),
                 hidden_tools=hidden_tools,
                 bash=args.get("bash", "ask"),
@@ -96,17 +91,9 @@ def _create_spec(deps: AdminDeps) -> ToolSpec:
             return "missing argument: description"
         if card.bash not in ("ask", "allow", "deny"):
             return "invalid bash (ask|allow|deny)"
-        # Persistent model assignment participates in the model coordination
-        # protocol: validate against the freshly loaded config inside the
-        # lock, then create (lock order: coordination → per-bot).
-        try:
-            from thyca.app.bot_settings import (
-                BotSettingsError,
-                check_model_against_config,
-            )
-            from thyca.configs import ConfigError, default_config, load
-            from thyca.configs.coordination import CoordinationError, hold
+        from thyca.app.bot_settings import BotSettingsError, check_model_against_config  # noqa: PLC0415 -- reason: break circular import with app.bot_settings
 
+        try:
             with hold(deps.bots.thyca_dir):
                 cfg_path = deps.bots.thyca_dir / "config.json"
                 live = load(cfg_path) if cfg_path.exists() else default_config()
@@ -218,7 +205,6 @@ def _delete_spec(deps: AdminDeps) -> ToolSpec:
         if denied:
             return denied
         bot_id = args["bot_id"]
-        # Prune first: a failed prune deletes nothing.
         pruned: list[str] = []
         dissolved: list[str] = []
         if getattr(deps, "prune_groups_for_bot", None) is not None:
@@ -303,7 +289,7 @@ def apply_card_edit(card: BotCard, patch: dict) -> BotCard:
         updated = replace(updated, bash=patch["bash"])
     if "schedule" in patch:
         schedule = patch["schedule"]
-        updated = replace(updated, schedule=schedule if schedule else None)
+        updated = replace(updated, schedule=schedule or None)
     if "persona" in patch:
         updated = replace(updated, persona=str(patch["persona"]))
     return updated
@@ -316,23 +302,10 @@ def _edit_card_spec(deps: AdminDeps) -> ToolSpec:
             return denied
         bot_id = args["bot_id"]
         patch = {k: v for k, v in args.items() if k != "bot_id" and v is not None}
-        # Whether the model changes is decided by the patch keys alone, so
-        # no card read is needed up front.
         model_changed = ("model" in patch or "thinking" in patch)
         try:
-            # A model change reads the card, applies the patch, validates
-            # against the fresh config, and persists — all inside the
-            # coordination lock. Reading outside it would let a concurrent
-            # model assignment slip in between, and the stale patched
-            # model would then overwrite the newer one. Identity-only edits
-            # skip validation so legacy bots stay editable.
             if model_changed:
-                from thyca.app.bot_settings import (
-                    BotSettingsError,
-                    check_model_against_config,
-                )
-                from thyca.configs import ConfigError, default_config, load
-                from thyca.configs.coordination import CoordinationError, hold
+                from thyca.app.bot_settings import BotSettingsError, check_model_against_config  # noqa: PLC0415 -- reason: break circular import with app.bot_settings
 
                 try:
                     with hold(deps.bots.thyca_dir):
@@ -340,8 +313,6 @@ def _edit_card_spec(deps: AdminDeps) -> ToolSpec:
                         updated = apply_card_edit(card, patch)
                         cfg_path = deps.bots.thyca_dir / "config.json"
                         live = load(cfg_path) if cfg_path.exists() else default_config()
-                        # A model-less legacy card has model None: same
-                        # "default" fallback the settings write itself uses.
                         current = updated.model if updated.model is not None else BotModel(id="default")
                         check_model_against_config(live, current)
                         deps.bots.update_card(

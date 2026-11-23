@@ -1,5 +1,3 @@
-/* Native root-only SPA router. Page factories register once; retained workspaces
-   and controllers mount lazily, while route data lives only in history.state. */
 'use strict';
 (function () {
   const pages = new Map();
@@ -10,12 +8,9 @@
   const chatWorkspace = document.querySelector('#chat-workspace');
   if (chatWorkspace) { chatWorkspace.hidden = true; chatWorkspace.inert = true; chatWorkspace.setAttribute('aria-hidden', 'true'); }
   const PAGE_IDS = ['chat', 'memories', 'profile', 'provider', 'dashboard'];
-  // Legacy /ui/settings* URLs land on chat with the shared Settings dialog
-  // open (see pendingSettingsDialog); the dedicated settings page is gone.
   let pendingSettingsDialog = false;
   const validPage = id => PAGE_IDS.includes(id);
 
-  // Parse one explicit trace detail hash; kind is in the path, never guessed.
   function parseTurnHash(hash) {
     const raw = String(hash || '').replace(/^#/, '');
     const parts = raw.split('/');
@@ -28,7 +23,6 @@
     if (parts[0] === 'groups' && /^group-[0-9a-f]{32}$/.test(id)) return { kind: 'group', group_id: id, turn };
     return null;
   }
-  // Build the trace detail hash for one explicit DM or group door.
   const turnHash = (detail) => detail.kind === 'dm'
     ? '#dm/' + encodeURIComponent(detail.bot_id) + '/' + detail.turn
     : '#groups/' + encodeURIComponent(detail.group_id) + '/' + detail.turn;
@@ -75,8 +69,6 @@
   }
   function normalize(value) {
     if (value && value.page === 'settings' && typeof value.search === 'string' && typeof value.hash === 'string') {
-      // Pre-migration history entries: the dedicated settings page is now
-      // the shared footer dialog over chat.
       pendingSettingsDialog = true;
       return { page: 'chat', search: '', hash: '' };
     }
@@ -89,7 +81,7 @@
     try { decodedPath = decodeURIComponent(path); } catch { decodedPath = ''; }
     const key = decodedPath.replace(/\/index\.html$/, '').replace(/\/$/, '') || '/';
     if (key === '/ui/settings') {
-      pendingSettingsDialog = true;   // honored on arrival when setup allows
+      pendingSettingsDialog = true;
       return { page: 'chat', search: '', hash: '' };
     }
     let page = map[key] || 'chat';
@@ -454,11 +446,6 @@
     if (pageMenuLabel) pageMenuLabel.textContent = entry.title;
     if (typeof closePageMenu === 'function') closePageMenu();
     document.title = `Thyca — ${entry.title}`;
-    // Legacy settings URL / historical settings entry: chat is showing, so
-    // open the shared dialog once the setup gate allows it. The marker
-    // survives the gate redirect (it only clears when the dialog can open),
-    // so a legacy settings URL reached while setup is required still opens
-    // after onboarding completes.
     drainPendingSettingsDialog();
     if (pageChanged) {
       const heading = entry.view.querySelector('h1, [data-page-heading]') || entry.view;
@@ -467,16 +454,12 @@
     }
   }
   function drainPendingSettingsDialog() {
-    // Honored on every arrival, including the same-route early return, so a
-    // marked Settings history entry reopens the dialog however it is reached.
     if (pendingSettingsDialog && setupState === 'ready') {
       pendingSettingsDialog = false;
       if (typeof openSettingsDialog === 'function') openSettingsDialog();
     }
   }
   function historyWrite(method, state) {
-    // Same-entry rewrites preserve a Settings marker; pushed entries never
-    // inherit one, so only history that originated from Settings reopens it.
     if (method === 'replaceState' && history.state?.thycaSettings && state.thycaSettings !== true) {
       state = { ...state, thycaSettings: true };
     }
@@ -486,7 +469,7 @@
     const raw = state?.thycaSpa;
     const marked = raw?.page === 'settings' || state?.thycaSettings === true;
     const next = normalize(raw) || legacyRoute(location.pathname, location.search, location.hash);
-    if (marked) pendingSettingsDialog = true;   // normalize already sets it for page:'settings'
+    if (marked) pendingSettingsDialog = true;
     const returnMarker = validReturn(state?.thycaReturn, next);
     const out = historyState(next, returnMarker);
     historyWrite('replaceState', marked ? { ...out, thycaSettings: true } : out);
@@ -525,12 +508,8 @@
   const initial = normalize(history.state?.thycaSpa) || legacyRoute(location.pathname, location.search, location.hash);
   startupRoute = { ...initial };
   startupReturn = validReturn(history.state?.thycaReturn, startupRoute);
-  // A reloaded entry that originated from Settings restores it like a revisit.
   if (history.state?.thycaSettings === true) pendingSettingsDialog = true;
   route = initial;
-  // Startup normalization of a legacy /ui/settings URL or an old settings
-  // state sets the pending dialog above; write the marker too, so navigating
-  // away and back to this entry reopens Settings like later visits do.
   historyWrite('replaceState', pendingSettingsDialog
     ? { ...historyState(route, startupReturn), thycaSettings: true }
     : historyState(route, startupReturn));

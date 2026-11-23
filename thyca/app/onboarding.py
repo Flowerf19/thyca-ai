@@ -10,6 +10,7 @@ import json
 import re
 import socket
 import time
+from dataclasses import replace as _replace
 from http.client import InvalidURL
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -45,9 +46,6 @@ def provider_ready(cfg: Config) -> bool:
         cfg.provider.api_key()
     except ConfigError:
         return False
-    # Chat also needs a selected global default to run turns. An
-    # unregistered legacy default still counts (nonempty text); only a
-    # missing default keeps setup locked (e.g. first save before set-default).
     return cfg.defaultModel != ""
 
 
@@ -104,7 +102,6 @@ def _request_json(
         headers = {"Authorization": f"Bearer {api_key}", "User-Agent": f"thyca/{__version__}"}
         if body is not None:
             headers["Content-Type"] = "application/json"
-        # Some gateways (e.g. commandcode) 403 requests without a User-Agent.
         request = Request(url, data=body, headers=headers)
     except ProviderProbeError:
         raise
@@ -295,7 +292,6 @@ def apply_provider(
     cfg: Config, base_url: str, api_key: str, model: str
 ) -> Config:
     """Return a new Config with the onboarding provider values applied."""
-    from dataclasses import replace as _replace
 
     if not model.strip():
         raise ProviderProbeError("provider.model must be non-empty")
@@ -309,5 +305,4 @@ def apply_provider(
         providers[cfg.defaultProvider] = entry
         return _replace(cfg, providers=providers, defaultModel=model.strip())
     except (ConfigError, KeyError) as exc:
-        # Empty model / bad URL surface as probe errors, not raw ConfigError.
         raise ProviderProbeError(str(exc)) from exc

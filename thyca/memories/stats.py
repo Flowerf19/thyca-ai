@@ -12,8 +12,6 @@ from thyca.memories.heading import format_ts, is_expired, utc_now
 SNIPPET_LEN = 250
 EXPIRE_SOON_DAYS = 14
 SUGGEST_IDLE_DAYS = 7
-# Dates + canonical sessions only: MEMORY.md rows are dropped on facade open
-# and never reindexed, so the legacy memory# alternative matched nothing.
 L2_MEMORY_RE = re.compile(
     r"^(?:\d{4}-\d{2}-\d{2}#[0-9a-f]{8}|canonical#[^#]+#[0-9a-f]{8})$"
 )
@@ -57,13 +55,11 @@ class MemoryStatsResult:
     suggest_removal: list[LeafStat] = field(default_factory=list)
     expiring: list[LeafStat] = field(default_factory=list)
     files: list[CanonicalFile] = field(default_factory=list)
-    # Echo the applied owner filter, so a client cannot label global data
-    # as scoped when a server/proxy ignores the query parameter.
     bot_id: str | None = None
 
 
 def build_stats(
-    archive,  # ArchivedMemory (untyped: stats must not import orchestration)
+    archive,
     *,
     today_chunks: list[Chunk],
     files: list[CanonicalFile] | None,
@@ -249,8 +245,6 @@ def _last_touch(item: LeafStat) -> str | None:
 
 
 def _created_ts(item: LeafStat) -> str | None:
-    # Headings arrive comment-stripped, so no TTL back-calculation applies;
-    # the timeline-day midnight fallback is the only creation signal.
     if item.timeline_day:
         return f"{item.timeline_day}T00:00:00Z"
     return None

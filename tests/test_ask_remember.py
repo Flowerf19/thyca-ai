@@ -4,8 +4,8 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from thyca.core.protocol import Message, ToolCall
 from thyca.conversations.runtime.ask_remember import ask_remember
+from thyca.core.protocol import Message, ToolCall, parse_ts
 
 NOW = datetime(2026, 8, 24, 12, 0, tzinfo=UTC)
 
@@ -77,7 +77,6 @@ def test_read_only_does_not_mutate() -> None:
 
 def test_parse_ts_shared_by_validation_and_ask_remember() -> None:
     """protocol.parse_ts is the one ts parser: Message + ask_remember agree."""
-    from thyca.core.protocol import parse_ts
 
     assert parse_ts("2026-01-02T03:04:05Z") == datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC)
     with pytest.raises(ValueError, match="ts must be ISO-8601"):

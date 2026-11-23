@@ -4,22 +4,23 @@ import json
 from collections.abc import Callable
 from dataclasses import replace
 
-from thyca.core.protocol import Message, estimate_tokens as _chars_to_tokens
+from thyca.conversations.runtime import ConversationManager, calibration_factor
+from thyca.core.protocol import Message
+from thyca.core.protocol import estimate_tokens as _chars_to_tokens
 from thyca.llms.pricing import cost_for
 from thyca.llms.prompt_manager import PromptManager
 from thyca.memories.active import ActiveSnapshot
-from thyca.conversations.runtime import ConversationManager, calibration_factor
 
 from .act import Act
 from .assemble import Assemble
 from .compacting import Summarizer, compact_with_llm
 from .events import EventSink, TurnEvent, emit_event
 from .observe import Observe
+from .reply import ContentDelta
 from .shrink import BACKSTOP_RATIO, estimate_wire_tokens, shrink_stage_messages
 from .stage import Stage
 from .think import Think
 from .thinking import ThinkingDelta
-from .reply import ContentDelta
 
 
 def _delta_callback(
@@ -36,7 +37,7 @@ def _delta_callback(
         if not delta:
             return
         try:
-            event_sink(cls(round=round_no, delta=delta, bot_id=bot_id))  # type: ignore[arg-type]
+            event_sink(cls(round=round_no, delta=delta, bot_id=bot_id))  # type: ignore[arg-type] -- reason: dynamic delta event constructor
         except Exception:
             pass
 
@@ -44,8 +45,6 @@ def _delta_callback(
 
 
 def _resolve_cost(stage: Stage, model: str | None, pricing: dict | None) -> None:
-    # Think already echoed reply.model into stage.llm_model; only the cost
-    # fallback lives here.
     usage = getattr(stage.reply, "usage", None)
     stage.llm_cost_usd = cost_for(stage.llm_model, usage, pricing)
     if stage.llm_cost_usd is None and model and model != stage.llm_model:
@@ -68,7 +67,6 @@ class AgentLoop:
         context_tokens: int | None = None,
         summarizer: Summarizer | None = None,
     ) -> None:
-        # context_tokens None disables the mid-turn guard (unit tests, no limits).
         self._conversations = conversations
         self._assemble = assemble
         self._think = think
@@ -93,8 +91,6 @@ class AgentLoop:
         return _chars_to_tokens(json.dumps(self._tools, ensure_ascii=False))
 
     def _tool_names(self) -> set[str] | None:
-        # None means the caller supplied no schema list (unit wiring);
-        # production paths always pass the turn's filtered schemas.
         if self._tools is None:
             return None
         names: set[str] = set()
@@ -115,17 +111,13 @@ class AgentLoop:
     def _with_context_budget(
         self, hot: object, *, pending_tokens: int, calibration: float
     ) -> object:
-        # The signal is computed on the post-compaction transcript so the
-        # bot sees the budget it actually starts this turn with. The
-        # baseline snapshot (signal cleared) sizes the hot prompt, so the
-        # estimate matches the compactor/guard inputs. (WS-3: math and
-        # format live in WorkspaceContextBuilder; same inputs, same timing.)
         tool_names = self._tool_names()
         can_read = tool_names is None or bool(
             tool_names & {"memory_search", "memory_recent", "memory_get", "memory_tasks"}
         )
         can_write = tool_names is None or "memory_remember" in tool_names
-        from thyca.bots.workspace_context import WorkspaceContextBuilder
+
+        from thyca.bots.workspace_context import WorkspaceContextBuilder  # noqa: PLC0415 -- reason: break circular import with bots.workspace_context
 
         return WorkspaceContextBuilder.with_context_budget(
             hot,
@@ -151,17 +143,9 @@ class AgentLoop:
         if self._loop_max < 1:
             raise ValueError("loop_max must be positive")
 
-        # One calibration factor for the whole turn, learned from stored
-        # (estimate, prompt_tokens) pairs for this model. Fixed per turn
-        # so pre-turn compact, shrink and backstop agree; pairs landed by
-        # this turn only affect the next one.
         calibration = calibration_factor(
             list(self._conversations.current.messages), model=self._model
         )
-        # Compact first: the stage must snapshot post-compaction history so
-        # the turn tripping the cap sends the compacted tail to the LLM.
-        # Overhead sizes (hot prompt, tools schema, pending user text) let
-        # the compactor reserve room for what assemble adds after this.
         pending_tokens = estimate_wire_tokens(
             [Message(role="user", content=user_msg)]
         )
@@ -169,14 +153,10 @@ class AgentLoop:
             self._observe.compact(
                 hot_tokens=self._hot_tokens(hot),
                 tools_tokens=self._tools_tokens(),
-                # Wire estimate, matching what the mid-turn guard counts for the
-                # assembled user message (raw chars undercount by ~8 tokens).
                 pending_user_tokens=pending_tokens,
                 calibration=calibration,
             )
         else:
-            # LLM summary first; compact_with_llm falls back to the same
-            # rule-based compact above on any summarizer failure.
             await compact_with_llm(
                 self._summarizer,
                 self._conversations,
@@ -201,8 +181,6 @@ class AgentLoop:
             tools=self._tools,
         )
         if bot_ctx:
-            # Team attribution (BE-6): the runtime names the bot + trace so
-            # Observe stamps every appended row and Trace can group by bot.
             for key in ("bot_id", "trace_id", "parent_span_id", "span_id",
                         "channel", "window_id", "work_id"):
                 value = bot_ctx.get(key)
@@ -218,14 +196,10 @@ class AgentLoop:
         else:
             self._assemble.assemble(stage, user_msg, append_user=False)
         emit_event(event_sink, TurnEvent(type="turn.accepted", bot_id=stage.bot_id))
-        # Index boundary for the shrink guard: entries below are pre-run
-        # history (round numbers restart every turn, so round-protection
-        # must not apply to them); entries at/above are this run's own.
         run_start = len(stage.messages)
 
         for _ in range(self._loop_max):
             stage.round += 1
-            # carry model/pricing so Observe/Trace can build meta without reading config
             stage.llm_model = self._model
             if self._context_tokens is not None:
                 shrunk_messages, shrunk, hidden, estimate = shrink_stage_messages(
@@ -251,8 +225,6 @@ class AgentLoop:
                     )
                 if estimate > int(self._context_tokens * BACKSTOP_RATIO):
                     return self._observe.context_limit(stage)
-                # Raw (uncalibrated) size of the exact payload about to be
-                # sent; persisted beside provider usage for calibration.
                 stage.llm_estimate_tokens = estimate_wire_tokens(
                     stage.messages, self._tools_tokens()
                 )
@@ -281,11 +253,8 @@ class AgentLoop:
                 return self._observe.assistant(stage)
             await self._act.act(stage, event_sink)
             self._observe.observe(stage)
-            # The pair is persisted now; a following loop_limit row must
-            # not duplicate it (it reuses this stage's meta builders).
             stage.llm_estimate_tokens = None
             if stage.round == self._loop_max:
                 return self._observe.loop_limit(stage)
 
-        # Unreachable: loop_max >= 1 always enters, and every path returns.
         raise AssertionError("unreachable: agent loop fell through")

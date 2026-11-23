@@ -1,39 +1,26 @@
-// Retained memories controller; declarations are isolated in this mount closure.
 ThycaRouter.register('memories', { title: 'Nhật ký', stylesheet: '/ui/memories/memoriescss/memories.css', mount(ctx) {
   let routeKey = '';
   const root = ctx.root;
   const $ = (selector, base = root) => selector === '.workspace' ? root : base.querySelector(selector);
   const $$ = (selector, base = root) => [...base.querySelectorAll(selector)];
-// Nhật ký (Memories) page — real memory stats + leaf actions, no sample data.
-// Shared shell: emitShell('memories') already ran before this file loaded
-// (SPA entry ui/chat/index.html); bootShell() fills the sidebar roster.
-// API: GET  /api/memory/stats[?bot_id=<id>] — stats row + leaf list
-//      POST /api/memory/reinforce {memory_id}          — renew a leaf's TTL
-//      POST /api/memory/update {memory_id, topic, summary} — edit a leaf
-//      POST /api/memory/forget {memory_id}             — drop a leaf
 
-
-/* Same rules as thyca/memories/stats.py so per-leaf badges match the
-   server-computed expiring/suggest_removal lists after a local update. */
 const EXPIRE_SOON_DAYS = 14;
 const SUGGEST_IDLE_DAYS = 7;
-const LEAF_PAGE = 60;     // leaves per "Tải thêm" click — big scopes hold thousands
+const LEAF_PAGE = 60;
 
 const memState = {
-  scope: '',            // '' = all bots, otherwise a bot id
+  scope: '',
   stats: null,
-  byChunk: new Map(),   // chunk_id -> leaf (action lookup)
-  expiring: new Set(),  // chunk_ids from stats.expiring
-  suggest: new Set(),   // chunk_ids from stats.suggest_removal
+  byChunk: new Map(),
+  expiring: new Set(),
+  suggest: new Set(),
   query: '',
-  kind: '',             // '' = all kinds; 'none' = untyped leaf, else TASK_KINDS value
-  use: '',              // '' = all; 'used' = get_count>=1, 'untouched' = never get+search
-  page: 1,              // 1-based leaf page — reset on scope/query/new stats
-  request: 0,           // stats request token — stale answers drop out
-  editing: null,        // leaf being edited in the dialog
+  kind: '',
+  use: '',
+  page: 1,
+  request: 0,
+  editing: null,
 };
-
-/* ---------- workspace markup ---------- */
 
 const PAGE_HTML = `
 <header class="page-nav">
@@ -79,8 +66,6 @@ const PAGE_HTML = `
   </div>
 </div>`;
 
-/* Page-local edit dialog — shared dialog wiring in shell-app.js ran before
-   this markup exists, so memories.js binds its own close/backdrop. */
 const DIALOG_HTML = `
 <dialog class="screen-dialog" id="memory-edit-dialog" aria-labelledby="memory-edit-title">
   <div class="dialog-heading"><div>
@@ -99,10 +84,6 @@ const DIALOG_HTML = `
   </form>
 </dialog>`;
 
-/* ---------- helpers ---------- */
-
-/* Leaf heading is "## HH:mm — title" (machine comment stripped); tolerate a
-   trailing " HH:MM" too, and plain titles with no time at all. */
 function splitHeading(leaf) {
   const raw = String(leaf?.heading || '').replace(/^##\s*/, '').trim();
   let match = raw.match(/^(\d{2}:\d{2})\s*[—–-]\s*(.+)$/);
@@ -132,7 +113,6 @@ function fmtTs(iso) {
     + ' ' + d.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
 }
 
-/* Owners: null/["team"] reads as shared memory, ids map to live bot names. */
 function ownerLabel(bots) {
   if (!Array.isArray(bots) || !bots.length) return 'chung';
   return bots.map(id => id === 'team' ? 'chung' : escapeHTML((getBot(id) || { name: id }).name)).join(', ');
@@ -141,8 +121,6 @@ function ownerLabel(bots) {
 const KIND_LABEL = { habit: 'thói quen', checkpoint: 'task' };
 const STATUS_LABEL = { open: 'đang mở', done: 'đã xong', cancelled: 'đã hủy' };
 
-/* Client mirror of stats.py expiring_soon / suggest rules — reused after a
-   reinforce response updates expires_at in place. */
 function leafExpiring(leaf) {
   if (leaf.is_today || !leaf.expires_at) return false;
   const exp = new Date(leaf.expires_at);
@@ -154,8 +132,6 @@ function leafSuggest(leaf) {
   return Number.isFinite(touched) && Date.now() - touched >= SUGGEST_IDLE_DAYS * 864e5;
 }
 
-/* Strip a single leading Markdown list marker when the snippet is one item,
-   so one-line memories align flush left with title and meta. */
 function snippetHtml(text) {
   const raw = String(text || '').trim();
   const single = (/^[-*]\s+/.test(raw) && !/\n\s*(?:[-*+]|\d+\.)\s+/.test(raw))
@@ -207,8 +183,6 @@ function metaHtml(leaf) {
   return parts.join('');
 }
 
-/* ---------- rendering ---------- */
-
 function renderStats() {
   const s = memState.stats;
   const kpis = [
@@ -253,10 +227,8 @@ function renderScopeCard() {
 
 function filteredLeaves() {
   let leaves = memState.stats?.leaves || [];
-  /* kind mirrors TASK_KINDS in memory/heading.py — 'none' means untyped. */
   if (memState.kind === 'none') leaves = leaves.filter(l => !l.kind);
   else if (memState.kind) leaves = leaves.filter(l => l.kind === memState.kind);
-  /* use mirrors stats.py plus client quick-filters for expiring / suggest. */
   if (memState.use === 'used') leaves = leaves.filter(l => (l.get_count || 0) >= 1);
   else if (memState.use === 'untouched') leaves = leaves.filter(l => !(l.get_count || 0) && !(l.search_count || 0));
   else if (memState.use === 'expiring') leaves = leaves.filter(l => memState.expiring.has(l.chunk_id) || leafExpiring(l));
@@ -307,7 +279,6 @@ function renderLeaves() {
     box.innerHTML = `<div class="empty-note"><strong>${hasFilter ? 'Không tìm thấy lá nào' : 'Chưa có lá nhớ nào'}</strong>${hasFilter ? 'Thử từ khóa khác hoặc xóa bộ lọc đang chọn.' : (memState.scope ? 'Bot này chưa ghi trang nào vào bộ nhớ.' : 'Các bot sẽ ghi lại điều học được sau mỗi phiên trò chuyện.')}</div>`;
     return;
   }
-  /* Group by timeline_day — Hôm nay/Hôm qua/date, payload order kept inside. */
   const groups = new Map();
   for (const leaf of visible) {
     const key = leaf.timeline_day || '';
@@ -318,7 +289,6 @@ function renderLeaves() {
   box.innerHTML = days.map(day => {
     const items = groups.get(day);
     const label = dayLabel(items[0]);
-    /* The date suffix only adds info under a relative label. */
     const parsedDay = (label === 'Hôm nay' || label === 'Hôm qua') && day ? new Date(day + 'T00:00:00') : null;
     const sub = parsedDay && Number.isFinite(parsedDay.getTime())
       ? `<small>${escapeHTML(parsedDay.toLocaleDateString('vi-VN'))}</small>` : '';
@@ -344,8 +314,6 @@ function renderAll() {
   renderLeaves();
 }
 
-/* ---------- data ---------- */
-
 function setLoading(on) {
   $('#memory-loading').hidden = !on;
   $('#memory-leaves').setAttribute('aria-busy', String(on));
@@ -357,16 +325,14 @@ function setStatus(text, cls = '') {
   el.hidden = !text;
 }
 
-/* API: GET /api/memory/stats, or ...?bot_id=<id> when a bot scope is chosen. */
 async function loadStats() {
   const request = ++memState.request;
   const scope = memState.scope;
   setLoading(true); setStatus('');
   try {
     const url = scope ? `/api/memory/stats?bot_id=${encodeURIComponent(scope)}` : '/api/memory/stats';
-    const stats = await getJson(url);                                   // API: GET /api/memory/stats[?bot_id=<id>]
+    const stats = await getJson(url);
     if (request !== memState.request) return;
-    /* The server echoes the applied scope — a mismatched answer is stale. */
     if ((stats.bot_id || null) !== (scope || null))
       throw new Error('Phản hồi bộ nhớ không khớp phạm vi đã chọn.');
     memState.stats = { ...stats, leaves: Array.isArray(stats.leaves) ? stats.leaves : [] };
@@ -382,10 +348,9 @@ async function loadStats() {
   }
 }
 
-/* POST /api/memory/{reinforce,update,forget} — one leaf at a time. */
 async function mutate(path, body, okMsg, { reload = true } = {}) {
   try {
-    const res = await postJson(path, body);                             // API: POST /api/memory/*
+    const res = await postJson(path, body);
     if (okMsg) toast(okMsg);
     if (reload) await loadStats();
     return res;
@@ -395,8 +360,6 @@ async function mutate(path, body, okMsg, { reload = true } = {}) {
   }
 }
 
-/* Re-render one leaf's chips + meta in place after reinforce returns a new
-   expires_at — avoids a full stats reload for a single-field change. */
 function refreshLeafDom(leaf) {
   const el = $(`#memory-leaves [data-chunk="${leaf.chunk_id}"]`);
   if (!el) return;
@@ -411,8 +374,6 @@ function openEdit(leaf) {
   $('#mem-edit-summary').value = String(leaf.snippet || '').replace(/^[-*]\s+/, '').trim();
   $('#memory-edit-dialog').showModal();
 }
-
-/* ---------- events ---------- */
 
 function wirePage() {
   $('#memory-kind').onchange = e => { memState.kind = e.target.value; memState.page = 1; renderLeaves(); };
@@ -432,7 +393,6 @@ function wirePage() {
   $('#memory-search').addEventListener('input', e => { memState.query = e.target.value; memState.page = 1; renderLeaves(); });
   $('#memory-reload').onclick = () => loadStats();
 
-  /* Leaf actions — delegation over the rendered list. */
   $('#memory-leaves').addEventListener('click', async e => {
     const btn = e.target.closest('[data-act]');
     if (!btn) return;
@@ -447,13 +407,13 @@ function wirePage() {
       const { title } = splitHeading(leaf);
       if (!confirm(`Quên “${title || 'trang này'}” khỏi bộ nhớ?`)) return;
       btn.disabled = true;
-      await mutate('/api/memory/forget', { memory_id: sid }, 'Đã quên trang.');   // API: POST /api/memory/forget
+      await mutate('/api/memory/forget', { memory_id: sid }, 'Đã quên trang.');
       btn.disabled = false;
       return;
     }
     if (btn.dataset.act === 'reinforce') {
       btn.disabled = true;
-      const res = await postJson('/api/memory/reinforce', { memory_id: sid }).catch(err => { toast('Không gia hạn được: ' + (err.message || '')); return null; });  // API: POST /api/memory/reinforce
+      const res = await postJson('/api/memory/reinforce', { memory_id: sid }).catch(err => { toast('Không gia hạn được: ' + (err.message || '')); return null; });
       btn.disabled = false;
       if (res && res.ok) {
         if (res.expires_at) {
@@ -473,7 +433,6 @@ function wirePage() {
     }
   });
 
-  /* Edit dialog — page-local wiring (see DIALOG_HTML note). */
   const dlg = $('#memory-edit-dialog');
   $('.dialog-close', dlg).onclick = () => dlg.close();
   dlg.addEventListener('click', e => { if (e.target === dlg) dlg.close(); });
@@ -483,19 +442,13 @@ function wirePage() {
     const leaf = memState.editing;
     if (!leaf) return;
     const topic = $('#mem-edit-topic').value.trim();
-    /* The writer stores summary as one "- …" line — newlines would split
-       into stray leaf lines, so collapse them like cleanText does. */
     const summary = $('#mem-edit-summary').value.replace(/\s+/g, ' ').trim();
     if (!topic || !summary) return;
-    const res = await mutate('/api/memory/update', { memory_id: leaf.memory_id, topic, summary }, '');  // API: POST /api/memory/update
+    const res = await mutate('/api/memory/update', { memory_id: leaf.memory_id, topic, summary }, '');
     if (res && res.ok) { dlg.close(); toast('Đã cập nhật trang.'); }
   };
 }
 
-/* Sidebar routing stays on this page: clicking a bot card or one of its
-   drawer conversations scopes the journal to that bot (instead of the shared
-   default, which opens chat). Clicking the scoped bot again clears the
-   filter; a group row scopes to its first member. */
 function selectBot(id) {
   memState.scope = !id || memState.scope === id ? '' : id;
   ctx.highlightBot(memState.scope);
@@ -517,13 +470,11 @@ function buildPage() {
 
 async function boot() {
   buildPage();
-  /* Deep link ?bot=<id> — stale ids clear once the roster answers below. */
   const wanted = new URLSearchParams(ctx.route.search).get('bot');
   if (wanted) memState.scope = wanted;
-  loadStats();                                     // API: GET /api/memory/stats[?bot_id=<id>]
-  try { await ctx.shellReady; }                       // API: GET /api/bots + GET /api/conversations
+  loadStats();
+  try { await ctx.shellReady; }
   catch (err) { toast('Không tải được đội bot: ' + (err.message || '')); }
-  /* A stale ?bot=<id> deep link clears once the real roster answers. */
   if (memState.scope && !getBot(memState.scope)) { memState.scope = ''; ctx.updateRoute({ search: '' }); }
   ctx.highlightBot(memState.scope);
   routeKey = ctx.route.search + ctx.route.hash;

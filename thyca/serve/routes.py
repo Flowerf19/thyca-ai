@@ -18,15 +18,15 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import parse_qsl, urlparse
 
-from thyca.app.turn_options import TEXT_MAX
-from thyca.bots.card import NAME_MAX, _NAME_RE
+from thyca.bots.card import _NAME_RE, NAME_MAX
 from thyca.bots.registry import BotRegistry, RegistryError
 from thyca.bots.timeline import TraceExecutionError
+from thyca.conversations.runtime import ConversationCorrupt, ConversationNotFound
+from thyca.conversations.store.contracts import ConversationStoreError
+from thyca.core.conversation import ConversationRef
+from thyca.memories.facade import MemoryFacade
 from thyca.serve import config_api
 from thyca.serve.bot_settings_api import bot_settings_get, bot_settings_post
-from thyca.serve.errors import _with_json
-from thyca.serve.memory import memory_endpoint
-from thyca.core.conversation import ConversationRef
 from thyca.serve.conversations_api import (
     bot_dm,
     bot_exchange_thread,
@@ -44,24 +44,24 @@ from thyca.serve.conversations_api import (
     group_bots,
     group_compact,
     group_create,
-    group_rename,
     group_delete,
     group_detail,
     group_operations,
+    group_rename,
     group_tasks,
     group_turn,
     group_turn_cancel,
     group_turn_follow,
     group_turn_stream,
 )
+from thyca.serve.errors import _with_json
+from thyca.serve.memory import memory_endpoint
 from thyca.serve.static import content_type, safe_file
 from thyca.serve.trace_api import (
     trace_detail_payload_ref,
     trace_list_payload,
     trace_stats_payload,
 )
-from thyca.conversations.runtime import ConversationCorrupt, ConversationNotFound
-from thyca.memories.facade import MemoryFacade
 
 if TYPE_CHECKING:
     from thyca.app.chat_app import ChatApp
@@ -94,10 +94,10 @@ _BOT_EXCHANGE_THREAD_RE = re.compile(
     rf"^/api/bots/{_BOT}/exchanges/{_BOT}$"
 )
 _BOT_SETTINGS_RE = re.compile(rf"^/api/bots/{_BOT}/settings$")
-# Worst-case turn body: TEXT_MAX chars \u-escaped (12 bytes per non-BMP char)
-# plus the JSON envelope (model/effort/retry). Must stay above that so a
-# valid 4000-emoji turn is never rejected as "invalid body".
-_BODY_CAP = TEXT_MAX * 12 + 4096
+def _body_cap() -> int:
+    from thyca.app.turn_options import TEXT_MAX  # noqa: PLC0415 -- reason: serve/ lazy app import boundary
+
+    return TEXT_MAX * 12 + 4096
 
 
 def _memory_bot_scope(facade: MemoryFacade, query: str) -> tuple[int, str | None]:
@@ -297,7 +297,6 @@ def make_handler(
                 return
             self._send(405, b"method not allowed", "text/plain; charset=utf-8")
 
-        # Delete one explicit group; every legacy conversation path is gone.
         def do_DELETE(self) -> None:
             path = urlparse(self.path).path
             if path.startswith("/api/conversations"):
@@ -328,8 +327,6 @@ def make_handler(
                 payload = asdict(stats)
                 body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
             except Exception:
-                # Surface the real cause in the log: a swallowed 503 here
-                # (e.g. an archive DB lock) is invisible anywhere else.
                 traceback.print_exc(file=sys.stderr)
                 body = json.dumps({"error": "memory stats unavailable"}).encode("utf-8")
                 self._send(503, body, "application/json; charset=utf-8")
@@ -356,14 +353,11 @@ def make_handler(
                 traceback.print_exc(file=sys.stderr)
                 self._json(503, {"error": "trace unavailable"})
 
-        # Read one trace turn for an explicit DM or group reference.
         def _trace_detail(self, ref: ConversationRef, turn_index: str) -> None:
             app = self._chat()
             if app is None:
                 return
-            # The trace patterns only match \d+: int() cannot fail here.
             idx = int(turn_index)
-            from thyca.conversations.store.contracts import ConversationStoreError
 
             try:
                 self._json(200, trace_detail_payload_ref(app, ref, idx))
@@ -415,7 +409,7 @@ def make_handler(
                 length = int(raw_len)
             except ValueError as exc:
                 raise ValueError("invalid length") from exc
-            if length < 0 or length > _BODY_CAP:
+            if length < 0 or length > _body_cap():
                 raise ValueError("invalid length")
             return self.rfile.read(length) if length else b""
 
@@ -440,7 +434,6 @@ def make_handler(
                 self.end_headers()
                 self.wfile.write(body)
             except (BrokenPipeError, ConnectionResetError):
-                # Client ngắt giữa response (reload/đóng tab): hết người nghe.
                 return
 
     return Handler

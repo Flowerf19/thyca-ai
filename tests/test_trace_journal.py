@@ -28,8 +28,6 @@ WEBUI = ROOT / "thyca" / "webui" / "ui"
 DASH_JS = WEBUI / "dashboard" / "js" / "dashboard.js"
 TRACE_JS = WEBUI / "trace" / "js" / "trace.js"
 
-# Same stub surface as test_trace_score.py plus: deferreds, toast capture,
-# window listener capture (hashchange), and a getJson responder boot can see.
 STUBS = r"""
 class El {
   constructor(tag = 'div') {
@@ -169,7 +167,7 @@ def test_usage_markup_and_trace_renderer_contract() -> None:
     assert "window.ThycaTraceDetail.render(detailData)" in dashboard
     assert "window.ThycaTraceDetail = Object.freeze({" in renderer
     assert "ThycaRouter.register" not in renderer and "getJson(" not in renderer
-    assert not re.search(r"^\s*(import|export)\s", renderer, re.M)
+    assert not re.search(r"^\s*(import|export)\s", renderer, re.MULTILINE)
 
 
 def test_route_from_url_rejects_unsafe_hash_parts(node: str) -> None:
@@ -218,10 +216,6 @@ def test_boot_without_route_loads_overview_only(node: str) -> None:
 def test_load_traces_pages_50_and_accumulates(node: str) -> None:
     """"Tải thêm" asks limit=50&offset=<rows so far>; rows concat, total
     tracks the server, and the footer hides the button at the total."""
-    rows = lambda base, n: [
-        {"kind": "dm", "bot_id": "thyca", "turn_index": base + i, "title": "T",
-         "started_at": "2026-09-20T10:00:00", "status": "completed"}
-        for i in range(n)]
     out = _eval_trace(
         node,
         """(async () => {
@@ -277,10 +271,10 @@ def test_load_traces_error_keeps_rows_and_shows_status(node: str) -> None:
         })().then((v) => console.log(JSON.stringify(v)))""",
     )
     assert out["error"] == "backend died"
-    assert out["rows"] == 65                       # partial pages kept
+    assert out["rows"] == 65
     assert "Không tải được danh sách lượt" in out["status"]
     assert out["statusHidden"] is False
-    assert out["more"] is True                     # error hides the button
+    assert out["more"] is True
 
 
 def test_filters_ride_the_query_and_q_trims(node: str) -> None:
@@ -481,7 +475,7 @@ def test_reload_button_re_reads_the_open_turn(node: str) -> None:
         "})().then((v) => console.log(JSON.stringify(v)))",
     )
     assert out["newCalls"] == ["/api/traces/dm/thyca/0"]
-    assert out["newUrls"] == 0                       # push: false
+    assert out["newUrls"] == 0
 
 
 def test_trace_list_is_flat_and_turn_rows_keep_context(node: str) -> None:
@@ -523,7 +517,6 @@ def test_detail_head_renders_turn_meta_and_error(node: str) -> None:
         "kind": "dm", "bot_id": "coder", "turn_index": 3, "title": "Đào sâu",
         "status": "failed", "model": "glm",
         "started_at": "2026-09-20T10:00:00", "ended_at": "2026-09-20T10:02:00",
-        "bot_id": "coder",
         "bot_breakdown": [{"bot_id": "coder", "requests": 2,
                            "total_tokens": 30},
                           {"bot_id": "ops", "requests": 1,
@@ -542,13 +535,13 @@ def test_detail_head_renders_turn_meta_and_error(node: str) -> None:
     assert "Lượt #3" in html and "Lỗi" in html
     assert ">Đào sâu</h2>" in html
     assert "dm:coder" in html
-    assert "Coder" in html and "ops" in html        # seal chips + id fallback
-    assert "2 req" in html and "30 tok" in html     # breakdown bits
+    assert "Coder" in html and "ops" in html
+    assert "2 req" in html and "30 tok" in html
     assert "glm" in html
     assert "3 request · 2 vòng · 4 tool" in html
     assert "vào 30 · cache 5 · ra 10 · tổng 40" in html
     assert "$0.0200" in html
-    assert "2 ph 0 giây" in html                    # fmtDur minutes
+    assert "2 ph 0 giây" in html
     assert "tr-1" in html and "w-9" in html
     assert "Boom" in html and "kaput" in html
 
@@ -587,7 +580,7 @@ def test_status_labels_and_formatters(node: str) -> None:
     assert "Chạm giới hạn" in loop and "s-warn" in loop
     assert "weird" in odd and 'class="tl-chip "' in odd
     assert out["t"][0].strip() != "" and out["t"][1] == "" and out["t"][2] == ""
-    assert out["dec"] == ["a b", "%ZZ", "x"]        # bad escapes pass through
+    assert out["dec"] == ["a b", "%ZZ", "x"]
     assert '"a": 1' in out["j"][0] and out["j"][1] == '"raw"'
 
 
@@ -608,8 +601,6 @@ def test_fill_model_options_collects_from_loaded_rows(node: str) -> None:
 def test_filter_change_handlers_are_wired(node: str) -> None:
     """f-from/f-to/f-model/f-status all trigger a refilter on change; the
     form's submit is preventDefault'd into the same path."""
-    # Structural pin: the handler list + debounced search input live in
-    # wirePage — a wrong selector or missing binding shows up here.
     src = DASH_JS.read_text(encoding="utf-8")
     assert "$('#filter-model').onchange = $('#filter-status').onchange = applyListFilters" in src
     assert "$('#filter-q').addEventListener('input'" in src

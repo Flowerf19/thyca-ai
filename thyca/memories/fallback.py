@@ -39,13 +39,8 @@ def read_unindexed_chunk(
     except FileNotFoundError:
         raise original from None
     if whole is None:
-        # Missing, not-a-file, or symlink (shared read policy): the
-        # chunk is not there, and nothing is recorded or renewed.
         raise original from None
     day = sid.split("#", 1)[0]
-    # Whole file, not the single block: legacy comment-less headings
-    # resolve occurrence counts file-wide, so a lone block would mistag
-    # duplicate titles as occurrence 1 and miss their real chunk ids.
     chunks = archive.chunker.chunk_markdown(
         path, whole, source_kind="daily", timeline_day=day
     )

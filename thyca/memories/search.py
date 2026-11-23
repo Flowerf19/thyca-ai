@@ -23,12 +23,11 @@ from thyca.memories.heading import (
     utc_now,
 )
 from thyca.memories.rank import _promote_in_order_span
+from thyca.memories.visibility import current_memory_view
 
 
 def _absolute_proj(value: object) -> str | None:
-    # Local import: thyca.tools.__init__ re-exports MemoryFacade, which
-    # imports this module, so a top-level import here would cycle.
-    from thyca.tools.path_guard import absolutize
+    from thyca.tools.path_guard import absolutize  # noqa: PLC0415 -- reason: break circular import with tools.path_guard
 
     if value is None:
         return None
@@ -98,7 +97,6 @@ def lexical_search(
             f"timeline_day {timeline_day} is not indexed "
             "(today and future files are excluded)"
         )
-    from thyca.memories.visibility import current_memory_view
 
     view = current_memory_view()
     fts, fts_hidden, fts_capped = archive.fts_memory_hits(
@@ -118,7 +116,6 @@ def lexical_search(
             )
         )
     hits: list[Hit] = list(fts)
-    # Full-table trigram only when FTS under-fills the visible limit (typo/fill).
     trigram = (
         archive.trigram_hits(
             query, timeline_day, now, CANDIDATE_CAP,
@@ -128,8 +125,6 @@ def lexical_search(
         if fts_visible_count < limit
         else []
     )
-    # Collapse trigram to one leaf per memory_id before merge/cap so a fat
-    # multi-leaf doc cannot alone trip the honesty candidate-cap warning.
     best_trigram: dict[str, Hit] = {}
     for hit in trigram:
         prev = best_trigram.get(hit.memory_id)
@@ -189,7 +184,6 @@ def recent(
     exemption; automatic callers leave it off.
     """
     limit = max(1, min(limit, 10))
-    from thyca.memories.visibility import current_memory_view
 
     view = current_memory_view()
     pool = archive.recent_hits(CANDIDATE_CAP, now, reader=reader)

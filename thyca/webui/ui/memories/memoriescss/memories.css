@@ -1,13 +1,7 @@
-/* Nhật ký page: layout delta + leaf list on top of share/app-shell.css.
-   .workspace becomes a fixed nav + scrolling body; all reusable chrome
-   (paper-card, field, chip, quiet-button, empty-note) comes from share/. */
-
-/* page-nav + page-scroll share the workspace height. */
 .memories-shell .workspace{display:grid;grid-template-rows:auto minmax(0,1fr)}
 .memories-shell .page-scroll{height:auto;min-height:0}
 .memories-shell .section-stack{gap:14px}
 
-/* Toolbar sits directly under the bot scope card in its own filter row. */
 .memories-shell .page-nav{flex-wrap:wrap;gap:8px 12px}
 .memories-shell .mem-filter-row{display:flex;align-items:center;justify-content:flex-start;gap:8px;flex-wrap:wrap}
 .mem-kind-field,.mem-use-field{width:auto;flex:0 1 auto;max-width:100%}
@@ -17,7 +11,6 @@
 #memory-use:has(option[value=""]:checked){color:var(--muted)}
 #memory-search{width:auto;flex:1 1 180px;max-width:340px;min-width:130px}
 
-/* 4-KPI clickable hairline strip. */
 .memories-shell .paper-card[aria-label="Thống kê bộ nhớ"]{padding:0;overflow:hidden}
 .memories-shell .paper-card[aria-label="Thống kê bộ nhớ"]>.eyebrow{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap;border:0}
 .mem-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(130px,100%),1fr));gap:0}
@@ -33,17 +26,14 @@
 .mem-stat.m-warn b{color:#8a6528}
 .mem-stat.m-danger b{color:#9c4f3f}
 
-/* List header: eyebrow + visible count + loading status line on one row. */
 .mem-list-top{display:flex;align-items:baseline;justify-content:space-between;gap:14px;margin-bottom:8px;min-height:18px}
 .mem-list-heading{display:flex;align-items:baseline;gap:8px}
 .mem-count{font-size:var(--fs-xs);color:var(--muted)}
 
-/* Day groups. */
 .mem-day+.mem-day{margin-top:18px}
 .mem-day-title{display:flex;align-items:baseline;gap:10px;margin:0 0 2px;padding-bottom:6px;border-bottom:1px solid #e2d6bb;color:#685633}
 .mem-day-title small{font:400 var(--fs-xs) var(--sans);color:var(--muted)}
 
-/* One compact memory leaf. */
 .mem-leaf{display:block;padding:11px 2px 12px;border-bottom:1px dashed #e6dcc4}
 .mem-day .mem-leaf:last-child{border-bottom:0}
 .mem-leaf-top{display:flex;align-items:baseline;justify-content:space-between;gap:8px 14px}
@@ -74,7 +64,6 @@
 .mem-meta>.mem-sid:before{display:none}
 .mem-expiring{color:#8a6528;font-weight:500}
 
-/* Edit dialog fields. */
 #memory-edit-dialog .field+.field{margin-top:15px}
 #memory-edit-dialog .dialog-actions{gap:9px}
 

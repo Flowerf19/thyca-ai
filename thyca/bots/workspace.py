@@ -53,7 +53,7 @@ class BotWorkspace:
         self,
         bot_id: str,
         store: WorkspaceStore,
-        registry: "WorkspaceRegistry | None" = None,
+        registry: WorkspaceRegistry | None = None,
     ) -> None:
         _check_bot_id(bot_id)
         self.bot_id = bot_id

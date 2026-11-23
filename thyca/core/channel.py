@@ -101,7 +101,7 @@ class WindowRef:
         }
 
     @staticmethod
-    def from_dict(data: dict) -> "WindowRef":
+    def from_dict(data: dict) -> WindowRef:
         if not isinstance(data, dict):
             raise ValueError(f"window must be a dict, got {data!r}")
         try:

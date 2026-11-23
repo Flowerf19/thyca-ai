@@ -7,12 +7,25 @@ sanitizes raw text semantically.
 """
 from __future__ import annotations
 
+import json as _json
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+from thyca.agents.context_budget import (
+    checkpoint_state,
+    format_context_budget,
+)
+from thyca.bots.card import identity_text
+from thyca.bots.registry import SYSTEM_BOT_ID
+from thyca.bots.work_items import overlay_private_followups, prioritize_window, project_work_items
+from thyca.conversations.runtime import context_usage
 from thyca.core.channel import WindowRef
+from thyca.core.protocol import estimate_tokens as _chars_to_tokens
+from thyca.llms.prompt_manager import PromptManager
 from thyca.memories.active import ActiveSnapshot
+from thyca.memories.facade import format_task_catalog
+from thyca.memories.habits import strip_auto_habits
 
 
 def overhead_tokens(hot=None, tool_schemas=None) -> tuple[int, int]:
@@ -23,10 +36,7 @@ def overhead_tokens(hot=None, tool_schemas=None) -> tuple[int, int]:
     runtime compactor plan and the app meter so the two can never drift.
     Either half may be None to measure only the other (the meter prices
     schemas before the hot snapshot exists)."""
-    import json as _json
 
-    from thyca.core.protocol import estimate_tokens as _chars_to_tokens
-    from thyca.llms.prompt_manager import PromptManager
 
     hot_tokens = (
         _chars_to_tokens(PromptManager().build(hot)) if hot is not None else 0
@@ -94,40 +104,21 @@ class WorkspaceContextBuilder:
         pending_followup: Any = None,
         mcp_status: str = "",
     ) -> ActiveSnapshot:
-        from thyca.bots.card import identity_text
-        from thyca.bots.registry import SYSTEM_BOT_ID
 
         memory_ok = card is None or card.memory.read
         if card is not None and not memory_ok:
-            # memory.read=false: the hot snapshot carries no memory
-            # content at all for this bot (own or team) — suppress every
-            # memory section, including any prepopulated strings.
             hot = replace(
                 hot, today="", today_elsewhere="",
                 bot_user="", memory_tasks="", recalled="")
         elif bot_user.strip():
-            # Phase 1E: this bot's own USER.md rides as <bot_user>.
             hot = replace(hot, bot_user=bot_user)
-        # Group projections hide only the exact AUTO-generated habits
-        # block (derived private labels) — manual profile text stays.
         if window is not None and getattr(window, "kind", None) == "group":
-            from thyca.memories.habits import strip_auto_habits
 
             if hot.user and strip_auto_habits(hot.user) != hot.user:
                 hot = replace(hot, user=strip_auto_habits(hot.user))
             if hot.bot_user and strip_auto_habits(hot.bot_user) != hot.bot_user:
                 hot = replace(hot, bot_user=strip_auto_habits(hot.bot_user))
         if card is not None:
-            # Two-layer identity (user decision 2026-10-13, hardened at the
-            # source in phase 1D): the shared soul (SOUL.md — voice/values
-            # only, names nobody) stays for every twin; a child bot's
-            # persona is its own overlay on top, never a replacement-or-
-            # fallback. The snapshot for a child already carries no
-            # identity (ActiveMemory only loads IDENTITY.md for privileged
-            # readers), and the <identity> slot is set here from its own
-            # TWIN.md as defense in depth — Thyca's IDENTITY.md must never
-            # ride a child turn (that leak made children answer as Thyca).
-            # Thyca itself keeps its real identity section.
             is_manager = card.system or bot_id == SYSTEM_BOT_ID
             hot = replace(
                 hot,
@@ -135,8 +126,6 @@ class WorkspaceContextBuilder:
                 identity=hot.identity if is_manager else identity_text(card),
             )
         if skills is not None:
-            # Exactly private + team skills for this bot; never fall
-            # back to Thyca's private index from the shared snapshot.
             hot = replace(hot, skills=skills)
         if team is not None:
             hot = replace(hot, team=team)
@@ -145,8 +134,6 @@ class WorkspaceContextBuilder:
         if memory_task_text and memory_ok:
             hot = replace(hot, memory_tasks=memory_task_text)
         if runtime_tasks or (memory_catalog and memory_ok):
-            from thyca.bots.work_items import prioritize_window, project_work_items
-            from thyca.memories.facade import format_task_catalog
 
             items = prioritize_window(
                 project_work_items(
@@ -156,7 +143,6 @@ class WorkspaceContextBuilder:
                 ),
                 window.window_id if window is not None else None,
             )
-            from thyca.bots.work_items import overlay_private_followups
 
             items = overlay_private_followups(
                 items, pending_followup, window
@@ -177,12 +163,8 @@ class WorkspaceContextBuilder:
                 if rows:
                     hot = replace(hot, memory_tasks=format_task_catalog(rows))
         if recalled and memory_ok:
-            hot = replace(hot, recalled="\n".join(str(l) for l in recalled))
+            hot = replace(hot, recalled="\n".join(str(line) for line in recalled))
         if room_delta:
-            # Unread public room history: already view-filtered by the
-            # caller, rides the prompt ephemerally (never persisted).
-            # Independent of the memory.read gate — a memory-blind bot
-            # still needs its room context to function.
             hot = replace(hot, room_history=room_delta)
         if window is not None:
             hot = replace(hot, channel_brief=_channel_brief(window))
@@ -225,13 +207,6 @@ class WorkspaceContextBuilder:
     ) -> object:
         """The two-pass ``<context_budget>`` signal (moved verbatim from
         AgentLoop: same timing inputs, same 80/90/95 math and renderer)."""
-        from thyca.agents.context_budget import (
-            checkpoint_state,
-            format_context_budget,
-        )
-        from thyca.core.protocol import estimate_tokens as _chars_to_tokens
-        from thyca.llms.prompt_manager import PromptManager
-        from thyca.conversations.runtime import context_usage
 
         if not isinstance(hot, ActiveSnapshot) or context_tokens is None:
             return hot

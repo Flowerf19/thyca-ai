@@ -32,10 +32,6 @@ def node() -> str:
     return binary
 
 
-# Minimal global surface for dashboard.js: real util.js semantics for
-# $/$$/escapeHTML/icon, a per-id element registry, and data-layer stubs the
-# page expects (getBot/getJson/toast/avatar/bootShell). boot() is stripped:
-# tests drive the individual render/load functions directly.
 STUBS = r"""
 class El {
   constructor(tag = 'div') {
@@ -145,11 +141,10 @@ def test_model_rows_sorted_by_tokens_desc(node: str) -> None:
         "a-very-long-model-name-with-date-suffix-20250929",
     ]
     assert "50 request" in rows
-    assert "5.000 token" in rows  # vi-VN grouping
+    assert "5.000 token" in rows
     assert "p50 1,2 giây" in rows
     assert "$0.0200" in rows
     assert "$0.0100" in rows
-    # Null cost is preserved in the model metadata rather than rendered as $0.
     assert "200 token · — · p50 —" in rows
 
 
@@ -174,7 +169,6 @@ def test_empty_zero_and_missing_models_are_honest(node: str) -> None:
     assert one.count('class="model-row"') == 1
     assert "solo-model" in one
     assert "p50 40 ms" in one
-    # A real zero cost is recorded pricing, not missing data.
     assert "$0.000000" in one
 
 
@@ -224,8 +218,6 @@ def test_period_change_never_keeps_a_stale_response(node: str) -> None:
     assert "fresh-7d" in outcome["afterFast"]
     assert "stale-30d" not in outcome["final"]
     assert outcome["stats"] == 5
-    # The two range-bound stats requests, in order (boot's own stats call
-    # already landed or errored out before this scenario runs).
     assert outcome["statUrls"][-2:] == [
         "/api/traces/stats?from=2026-09-01&to=2026-09-30",
         "/api/traces/stats?from=2026-09-20&to=2026-09-26",
@@ -348,13 +340,10 @@ def test_request_bots_avatar_sort_and_unknown(node: str) -> None:
         "designer": {"id": "designer", "name": "Designer", "color": "#456", "state": "idle"},
     }
     rows = _bot_rows_eval(node, by_bot, roster)
-    order = [n for n in ("Coder", "Designer", "Chưa gắn bot")]
     assert rows.index("Coder") < rows.index("Designer") < rows.index("Chưa gắn bot")
     assert "<ava:coder/>" in rows and "<ava:designer/>" in rows
-    # Unattributed: no seal, dashed '?' chip carrying the raw bucket id.
     assert '<span class="row-avatar id-chip" title="unknown">?</span>' in rows
     assert "Chưa gắn bot" in rows
-    # Shares are against the authoritative 100-token period total.
     assert "70%" in rows and "20%" in rows and "10%" in rows
     assert 'aria-label="70% tổng token"' in rows
 
@@ -387,7 +376,6 @@ def test_bot_row_meta_and_share_bar(node: str) -> None:
     ]
     rows = _bot_rows_eval(node, by_bot, {})
     assert "8 request · 2 tool · 80 token · $0.0040" in rows
-    # Biggest bot takes the full bar; the smaller keeps a visible minimum.
     assert 'style="width:100%' in rows or "width:100;" in rows or "width:100%" in rows
     assert "80% tổng token" in rows
     assert "20% tổng token" in rows
@@ -419,10 +407,8 @@ def test_model_rows_hide_unknown_but_keep_totals(node: str) -> None:
     for key in ("usage", "cost"):
         assert "known-model" in out[key]
         assert "unknown" not in out[key]
-    # Shares stay against the authoritative period totals (70/100, $0.07/$0.10).
     assert "70%" in out["usage"]
     assert "70%" in out["cost"]
-    # Underlying payload is preserved for totals/filters, not deleted.
     assert out["kept"] == 2
 
 

@@ -1,13 +1,27 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import pytest
 
+from thyca.conversations.runtime import ConversationManager
+from thyca.conversations.runtime.store import ConversationStore
+from thyca.conversations.store.runtime import ensure_runtime_store
+from thyca.core.channel import WindowRef
 from thyca.core.protocol import ToolCall
+from thyca.memories import jobs
 from thyca.memories.facade import MemoryFacade
-from thyca.tools.memory_tools import register_memory_tools
+from thyca.memories.heading import parse_heading
+from thyca.memories.identity import bind_bot_id, reset_bot_id
+from thyca.memories.visibility import MemoryView, bound_memory_view
 from thyca.tools.gateway import ToolGateway
+from thyca.tools.memory_tools import (
+    bind_chat_conversation,
+    register_memory_tools,
+    reset_chat_conversation,
+)
 from thyca.tools.registry import ToolRegistry
 from thyca.tools.task_store import TaskStore
 
@@ -85,18 +99,7 @@ async def test_memory_update_keeps_memory_id(tmp_path) -> None:
 
 @pytest.mark.asyncio
 async def test_memory_search_returns_owner_dm_hit_in_group(tmp_path) -> None:
-    # Tool-path search carries the owner exemption: coder's DM-origin hit
-    # surfaces under a bound group view.
-    from datetime import datetime, timedelta
-    from zoneinfo import ZoneInfo
 
-    from thyca.core.channel import WindowRef
-    from thyca.memories.identity import bind_bot_id, reset_bot_id
-    from thyca.memories.visibility import MemoryView, bound_memory_view
-
-    from thyca.conversations.runtime.store import ConversationStore
-    from thyca.conversations.store.runtime import ensure_runtime_store
-    from thyca.conversations.runtime import ConversationManager
 
     tz = ZoneInfo("Asia/Ho_Chi_Minh")
     yesterday = (datetime.now(tz).date() - timedelta(days=1)).isoformat()
@@ -133,18 +136,7 @@ async def test_memory_search_returns_owner_dm_hit_in_group(tmp_path) -> None:
 
 @pytest.mark.asyncio
 async def test_memory_recent_returns_owner_dm_hit_in_group(tmp_path) -> None:
-    # Tool-path recent carries the owner exemption: coder's DM-origin hit
-    # surfaces under a bound group view.
-    from datetime import datetime, timedelta
-    from zoneinfo import ZoneInfo
 
-    from thyca.core.channel import WindowRef
-    from thyca.memories.identity import bind_bot_id, reset_bot_id
-    from thyca.memories.visibility import MemoryView, bound_memory_view
-
-    from thyca.conversations.runtime.store import ConversationStore
-    from thyca.conversations.store.runtime import ensure_runtime_store
-    from thyca.conversations.runtime import ConversationManager
 
     tz = ZoneInfo("Asia/Ho_Chi_Minh")
     yesterday = (datetime.now(tz).date() - timedelta(days=1)).isoformat()
@@ -180,8 +172,6 @@ async def test_memory_recent_returns_owner_dm_hit_in_group(tmp_path) -> None:
 
 @pytest.mark.asyncio
 async def test_remember_injects_bound_chat_and_update_rejects_chat(tmp_path) -> None:
-    from thyca.memories.heading import parse_heading
-    from thyca.tools.memory_tools import bind_chat_conversation, reset_chat_conversation
 
     facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
     registry = ToolRegistry()
@@ -222,10 +212,6 @@ async def test_remember_injects_bound_chat_and_update_rejects_chat(tmp_path) -> 
 
 @pytest.mark.asyncio
 async def test_memory_remember_routes_through_ledgers_and_prevents_duplicates(tmp_path) -> None:
-    from thyca.memories import jobs
-    from thyca.memories.heading import parse_heading
-    from thyca.memories.identity import bind_bot_id, reset_bot_id
-    from thyca.tools.memory_tools import bind_chat_conversation, reset_chat_conversation
 
     facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
     registry = ToolRegistry()

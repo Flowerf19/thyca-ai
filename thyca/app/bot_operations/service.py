@@ -9,30 +9,38 @@ signatures so serve/ and internal callers are untouched.
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
 
-from thyca.bots.private_followups import PrivateFollowupStore
-from thyca.bots.registry import RegistryError
-from thyca.core.protocol import Message
-from thyca.conversations.runtime import ConversationRuntime, calibration_factor, context_usage
-from thyca.conversations.runtime.wire import conversation_detail
 from thyca.app.turn_options import (
     overlay_turn_cfg,
     resolve_bot_cfg,
     resolve_bot_provider,
 )
+from thyca.bots.private_followups import PrivateFollowupStore
+from thyca.bots.registry import RegistryError
+from thyca.bots.runtime import filtered_tool_schemas
+from thyca.bots.tasks import derive_open_tasks
+from thyca.bots.timeline import CanonicalConversationStore, TraceExecutionError, WorkspaceTimeline
+from thyca.bots.usage import usage_for_window
+from thyca.bots.workspace_context import build_workspace_hot, overhead_tokens
+from thyca.conversations.runtime import ConversationRuntime, calibration_factor, context_usage
+from thyca.conversations.runtime.wire import conversation_detail, turn_slices
+from thyca.core.protocol import Message
+from thyca.llms.pricing import pricing_for
+from thyca.memories.visibility import MemoryView, bound_memory_view
 
 if TYPE_CHECKING:
     from thyca.app.webui_channel import WindowRef
     from thyca.bots.registry import BotRegistry
     from thyca.configs import Config
+    from thyca.conversations.runtime import ConversationManager
     from thyca.memories.active import ActiveMemory, ActiveState
     from thyca.serve.turn_state import TurnState
-    from thyca.conversations.runtime import ConversationManager
 
 
 @dataclass
@@ -99,22 +107,11 @@ class BotOperationsService:
 
     def _room_task_units(self, window, room, bot_id: str) -> list[dict]:
         """Narrow serialized open tasks for exactly one bot+window."""
-        from thyca.bots.tasks import derive_open_tasks
-        from thyca.bots.timeline import CanonicalConversationStore, WorkspaceTimeline
 
         binding = self._deps.workspaces_store.get_binding(bot_id, room.conversation_id)
         if binding is None or binding.internal_conversation_id is None:
-            # Genuinely uninitialized window: the bot never ran here, so
-            # its projected view is empty by construction — only queued
-            # envelopes (filtered to this exact conversation below) can owe
-            # it work. Never derive from room rows: they aggregate every
-            # sender/recipient and would misattribute other bots' tasks.
             messages: list = []
         else:
-            # Canonical projection for this bot+window: post-compaction
-            # basis plus replay, in journal order. Construction AND read
-            # failures propagate (503 unavailable) instead of asserting
-            # an empty list on a failed read.
             timeline = WorkspaceTimeline(self._deps.root, bot_id, create=False)
             store = CanonicalConversationStore(
                 self._deps.root / "bots" / bot_id / "sessions",
@@ -136,7 +133,6 @@ class BotOperationsService:
         self, conversation_id: str, bot_id: str, span_id: str
     ) -> list[Message]:
         """Read canonical execution rows for a trusted room/bot/span tuple."""
-        from thyca.bots.timeline import TraceExecutionError, WorkspaceTimeline
 
         room = self._deps.conversations.store.load(conversation_id)
         window = self._deps.window_for(room)
@@ -186,10 +182,6 @@ class BotOperationsService:
         guess at an in-flight provider request. Actual historical usage and
         costs come from original canonical events, including retries.
         """
-        from thyca.bots.timeline import WorkspaceTimeline
-        from thyca.bots.usage import usage_for_window
-        from thyca.llms.pricing import pricing_for
-        from thyca.conversations.runtime.wire import turn_slices
 
         room = self._deps.conversations.store.load(conversation_id)
         window = self._deps.window_for(room)
@@ -253,7 +245,6 @@ class BotOperationsService:
         if binding is None or binding.internal_conversation_id is None:
             return None
         window = binding.window or self._deps.window_for(room)
-        from thyca.bots.timeline import WorkspaceTimeline
 
         timeline = WorkspaceTimeline(self._deps.root, bot_id, create=False)
         return timeline.project(window, conversation_id=binding.internal_conversation_id)
@@ -270,10 +261,6 @@ class BotOperationsService:
         """
         tools_tokens = 0
         try:
-            from thyca.bots.tasks import derive_open_tasks
-            from thyca.bots.workspace_context import build_workspace_hot, overhead_tokens
-            from thyca.memories.visibility import MemoryView, bound_memory_view
-            from thyca.bots.runtime import filtered_tool_schemas
 
             room = self._deps.conversations.store.load(conversation_id)
             window = self._deps.window_for(room)
@@ -294,8 +281,6 @@ class BotOperationsService:
             with bound_memory_view(
                 MemoryView(window=window, bot_id=bot_id, thyca_dir=self._deps.root)
             ):
-                # Meter already composes the authorized registry index below;
-                # skip the obsolete global scan.
                 hot = self._deps.memory.peek(
                     self._deps.state,
                     datetime.now(zone),
@@ -337,7 +322,6 @@ class BotOperationsService:
         return hot_tokens, tools_tokens
 
     def _context_usage(self, conversation: ConversationRuntime, cfg: Config) -> dict:
-        # A deleted bot is unavailable like a paused one.
         roster = list(conversation.bots or ["thyca"])
         if conversation.dm_bot is not None and conversation.dm_bot not in roster:
             roster = [conversation.dm_bot, *roster]

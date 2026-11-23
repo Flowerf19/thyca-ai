@@ -2,19 +2,39 @@
 from __future__ import annotations
 
 import json
+import stat as _stat
+import subprocess
+import sys
 import threading
+import time
+from dataclasses import dataclass, replace
 from http.client import BadStatusLine
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 import pytest
 
+import thyca.serve.config_api as config_api
 from thyca import __version__
-from thyca.configs import default_config, load, save
-from thyca.configs import config_schema
-from thyca.serve import default_webui, make_server
+from thyca.app.chat_app import ChatApp
+from thyca.bots.card import BotCard, BotModel
+from thyca.bots.registry import BotRegistry
+from thyca.configs import (
+    ModelCfg,
+    ProviderEntry,
+    config_schema,
+    default_config,
+    load,
+    merge_saved_keys,
+    save,
+)
+from thyca.configs.auth import auth_path_for, load_auth_keys
+from thyca.configs.coordination import CoordinationError, hold
+from thyca.llms.llm_base import ChatReply
 from thyca.memories.facade import MemoryFacade
+from thyca.serve import default_webui, make_server
 
 WEBUI = default_webui()
 
@@ -61,7 +81,6 @@ def _call(
 def test_schema_covers_all_scalar_sections() -> None:
     schema = config_schema()
     keys = [section["key"] for section in schema["sections"]]
-    # Pricing renders per-model in the UI, not as a schema section.
     assert keys == ["provider", "limits", "timeline"]
     provider = {f["key"]: f for f in schema["sections"][0]["fields"]}
     assert provider["provider.reasoningEffort"]["choices"] == ["low", "medium", "high", "xhigh", "max"]
@@ -74,7 +93,6 @@ def test_schema_covers_all_scalar_sections() -> None:
 
 
 def test_schema_includes_new_fields_without_labels() -> None:
-    # Any new dataclass field must surface even without a label entry.
     schema = config_schema()
     limits = {f["key"]: f for f in schema["sections"][1]["fields"]}
     assert set(limits) == {
@@ -85,8 +103,6 @@ def test_schema_includes_new_fields_without_labels() -> None:
     }
     assert limits["limits.softTimeoutS"]["min"] == 1
     assert limits["limits.softTimeoutS"]["max"] == 300
-    # timezone follows the host system; apiKeyEnv is plumbing, not user-facing.
-    # Both stay in the config file, the panel just skips them.
     timeline = {f["key"]: f.get("hidden") for f in schema["sections"][2]["fields"]}
     assert timeline == {"timeline.timezone": True}
     provider = {f["key"]: f for f in schema["sections"][0]["fields"]}
@@ -108,7 +124,6 @@ def test_config_get_masks_api_key(tmp_path: Path) -> None:
     try:
         status, body = _call(httpd, "/api/config")
         assert status == 200
-        # fresh config is truly empty: no provider, no OpenAI seed
         assert body["values"]["providers"] == {}
         assert body["values"]["defaultModel"] == ""
         assert body["values"]["defaultProvider"] == ""
@@ -224,7 +239,6 @@ def test_config_post_models_roundtrip(tmp_path: Path) -> None:
             "Qwen/Qwen3.8-Flash": {"baseUrl": "", "input": 0.1, "cache": 0.01, "output": 0.4},
             "gpt-x@other": {"baseUrl": "https://other.api/v1", "input": 1.0, "cache": 0.1, "output": 2.0},
         }
-        # UI keeps legacy pricing in sync with models; server stores both.
         values["pricing"] = {
             "Qwen/Qwen3.8-Flash": {"input": 0.1, "cache": 0.01, "output": 0.4},
             "gpt-x@other": {"input": 1.0, "cache": 0.1, "output": 2.0},
@@ -234,7 +248,6 @@ def test_config_post_models_roundtrip(tmp_path: Path) -> None:
         saved = load(tmp_path / "config.json")
         assert saved.models["gpt-x@other"].baseUrl == "https://other.api/v1"
         assert saved.models["Qwen/Qwen3.8-Flash"].output == 0.4
-        # Legacy pricing stays in sync so older consumers keep working.
         assert saved.pricing["Qwen/Qwen3.8-Flash"].output == 0.4
         _, got2 = _call(httpd, "/api/config")
         assert got2["values"]["models"]["gpt-x@other"]["baseUrl"] == "https://other.api/v1"
@@ -258,8 +271,6 @@ def test_config_post_removing_registered_default_is_rejected(tmp_path: Path) -> 
         values["models"] = {"only-model": {"input": 0, "cache": 0, "output": 0}}
         values["defaultModel"] = "only-model"
         _, _ = _call(httpd, "/api/config", method="POST", data=values)
-        # Keeping the name as an unregistered fallback does not excuse
-        # removing the registered entry.
         values2 = got["values"]
         values2["models"] = {}
         values2["defaultModel"] = "only-model"
@@ -269,9 +280,6 @@ def test_config_post_removing_registered_default_is_rejected(tmp_path: Path) -> 
         saved = load(tmp_path / "config.json")
         assert saved.defaultModel == "only-model"
         assert "only-model" in saved.models
-        # Keeping an unregistered legacy default that is NOT being
-        # removed stays legal: no registry entry is touched, so neither
-        # the reference guard nor the default rule fires.
         values2["models"] = {"only-model": {"input": 0, "cache": 0, "output": 0}}
         values2["defaultModel"] = "legacy-name"
         status, body = _call(httpd, "/api/config", method="POST", data=values2)
@@ -301,7 +309,6 @@ def test_verify_with_saved_key_no_leak(tmp_path: Path) -> None:
         assert "sk-x" not in body["error"]
         assert "url-secret" not in body["error"]
         assert "127.0.0.1" not in body["error"]
-        # no apiKey → uses stored (empty) → 422 missing key
         status2, body2 = _call(
             httpd,
             "/api/onboarding/verify",
@@ -367,8 +374,6 @@ def test_verify_success_returns_models(tmp_path: Path) -> None:
     class Handler:
         pass
 
-    # local stub server for /models
-    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
     payload = json.dumps({"data": [{"id": "m-1"}]}).encode()
 
@@ -411,7 +416,6 @@ def _chat_stub(
     calls: list | None = None,
     paths: list | None = None,
 ):
-    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
     class Handler(BaseHTTPRequestHandler):
         def do_POST(self) -> None:
@@ -466,12 +470,10 @@ def test_config_post_two_providers_keys_stay_isolated(tmp_path: Path) -> None:
         saved = load(tmp_path / "config.json")
         assert saved.providers["second"].api_key() == "sk-b"
         assert saved.effective_provider_for("model-b").baseUrl == "https://b.example/v1"
-        # secrets split: keys land in auth.json, never config.json
         auth_raw = json.loads((tmp_path / "auth.json").read_text(encoding="utf-8"))
         assert auth_raw["providers"]["second"]["apiKey"] == "sk-b"
         conf_text = (tmp_path / "config.json").read_text(encoding="utf-8")
         assert "sk-a" not in conf_text and "sk-b" not in conf_text
-        # masked re-post keeps each provider's own key (never crosses)
         _, got2 = _call(httpd, "/api/config")
         assert got2["values"]["providers"]["second"]["apiKey"] == ""
         assert got2["meta"]["providers"] == {"default": True, "second": True}
@@ -500,7 +502,6 @@ def test_config_post_rejects_unknown_model_provider(tmp_path: Path) -> None:
 
 
 def test_verify_uses_named_provider_saved_key(tmp_path: Path) -> None:
-    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
     calls: list = []
 
@@ -592,7 +593,6 @@ def test_providers_test_ok_and_failure(tmp_path: Path, capsys) -> None:
         assert calls == ["Bearer sk-live"]
         err = capsys.readouterr().err
         assert "provider test provider=default model=m-test ok=true" in err
-        # unknown model on a strict stub → 422 with the provider message
         fail, fthread = _chat_stub(b'{"error": "nope"}', status=404)
         try:
             base2 = f"http://127.0.0.1:{fail.server_address[1]}"
@@ -628,7 +628,6 @@ def test_providers_test_without_key_422(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.delenv("THYCA_TOKEN", raising=False)
     httpd, thread = _start(tmp_path)
     try:
-        # fresh configs ship with no provider: register a keyless one first
         _, got = _call(httpd, "/api/config")
         values = got["values"]
         values["providers"] = {
@@ -664,7 +663,6 @@ def test_providers_test_honors_model_baseurl_override(tmp_path: Path) -> None:
         base = f"http://127.0.0.1:{stub.server_address[1]}"
         _, got = _call(httpd, "/api/config")
         values = got["values"]
-        # Provider points nowhere; the model's own endpoint must win.
         values["providers"] = {
             "default": {
                 "baseUrl": "http://127.0.0.1:1",
@@ -739,9 +737,7 @@ def test_providers_test_dispatches_responses_api(tmp_path: Path) -> None:
 
 
 def test_merge_saved_key_keeps_omitted_and_null() -> None:
-    from dataclasses import replace
 
-    from thyca.configs import ProviderEntry, merge_saved_keys
 
     cfg = replace(
         default_config(),
@@ -756,7 +752,6 @@ def test_merge_saved_key_keeps_omitted_and_null() -> None:
     for missing in ({}, {"apiKey": None}, {"apiKey": ""}):
         merged = merge_saved_keys({"providers": {"default": dict(missing)}}, cfg)
         assert merged["providers"]["default"]["apiKey"] == "sk-live"
-    # unknown ids still merge to None (env fallback), never another key
     merged = merge_saved_keys({"providers": {"ghost": {}}}, cfg)
     assert merged["providers"]["ghost"]["apiKey"] is None
 
@@ -805,21 +800,10 @@ def test_config_post_save_failure_is_json_503(
         _stop(httpd, thread)
 
 
-# Moved from test_b4_unification.py / test_b4_p2.py (B4 batch).
-import json
-import threading
-from pathlib import Path
-from urllib.error import HTTPError
-from urllib.request import Request, urlopen
-
 def test_x4_merge_saved_keys_single_home() -> None:
-    from dataclasses import replace
 
-    import thyca.serve.config_api as config_api
-    from thyca.configs import default_config, merge_saved_keys
 
     assert config_api.merge_saved_keys is merge_saved_keys
-    from thyca.configs import ProviderEntry
 
     cfg = replace(
         default_config(),
@@ -834,9 +818,6 @@ def test_x4_merge_saved_keys_single_home() -> None:
 
 
 def _start_config_server(tmp_path: Path):
-    from thyca.configs import default_config, save
-    from thyca.memories.facade import MemoryFacade
-    from thyca.serve import default_webui, make_server
 
     save(default_config(), tmp_path / "config.json")
     facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
@@ -873,11 +854,7 @@ def _start_guarded(tmp_path: Path, *, models: dict, bots: dict | None = None,
     explicitly reference them (``bots`` maps bot id to model id; None
     means inherit the global default). ``config_file`` is always explicit
     so the guard scans the fixture inventory, never the live home dir."""
-    from dataclasses import replace
 
-    from thyca.bots.card import BotCard, BotModel
-    from thyca.bots.registry import BotRegistry
-    from thyca.configs import ModelCfg, ProviderEntry
 
     cfg = replace(
         default_config(),
@@ -887,8 +864,6 @@ def _start_guarded(tmp_path: Path, *, models: dict, bots: dict | None = None,
         models={name: ModelCfg(**spec) for name, spec in models.items()},
     )
     save(cfg, tmp_path / "config.json")
-    # bots=None leaves the inventory genuinely absent (no bots/ dir at
-    # all); an empty dict still seeds the registry (bots/ exists, empty).
     if bots is not None:
         reg = BotRegistry(tmp_path)
         reg.ensure_thyca()
@@ -963,7 +938,6 @@ def test_config_post_removal_with_unreadable_inventory_fails_closed(tmp_path: Pa
         assert status == 503
         assert "kiểm tra lại cấu hình bot" in body["error"]
         assert "m-used" in load(tmp_path / "config.json").models
-        # A replacement that removes nothing skips the scan and still works.
         values["models"]["m-used"] = {"baseUrl": "", "input": 0, "cache": 0, "output": 0}
         values["limits"] = {"loopMax": 81, "hotTailKB": 4, "contextTokens": 128000}
         status, _ = _call(httpd, "/api/config", method="POST", data=values)
@@ -976,12 +950,7 @@ def _start_guarded_chat(tmp_path: Path, *, models: dict, bots: dict,
                         default_model: str = "m1"):
     """Guarded fixture with a live ChatApp so bot assignment races the
     guarded config replacement over real HTTP."""
-    from dataclasses import dataclass, replace
 
-    from thyca.app.chat_app import ChatApp
-    from thyca.bots.card import BotCard, BotModel
-    from thyca.configs import ModelCfg, ProviderEntry
-    from thyca.llms.llm_base import ChatReply
 
     @dataclass
     class IdleLLM:
@@ -1024,7 +993,6 @@ def test_config_post_concurrent_removal_and_assignment_keeps_invariant(tmp_path:
     leaves a dangling explicit reference: either the deletion sees the
     new reference (409) or the assignment validates against the fresh
     config (400/503)."""
-    from thyca.bots.registry import BotRegistry
 
     httpd, thread, app = _start_guarded_chat(
         tmp_path, models={"m1": {}, "m2": {}},
@@ -1067,9 +1035,7 @@ def test_config_post_concurrent_removal_and_assignment_keeps_invariant(tmp_path:
 
 
 def test_model_coordination_hold_serializes_threads(tmp_path: Path) -> None:
-    import time
 
-    from thyca.configs.coordination import hold
 
     barrier = threading.Barrier(2)
     order: list = []
@@ -1088,15 +1054,11 @@ def test_model_coordination_hold_serializes_threads(tmp_path: Path) -> None:
     first.join(timeout=20)
     second.join(timeout=20)
     assert not first.is_alive() and not second.is_alive()
-    # Whoever enters first leaves before the other enters: never interleaved.
     assert [tag for tag, _ in order] == [order[0][0], order[0][0], order[3][0], order[3][0]]
     assert [mark for _, mark in order] == ["in", "out", "in", "out"]
 
 
 def test_model_coordination_hold_is_not_reentrant(tmp_path: Path) -> None:
-    # FileLock cannot nest in one thread: the single-acquisition discipline
-    # in coordination.py is load-bearing, not stylistic.
-    from thyca.configs.coordination import CoordinationError, hold
 
     with hold(tmp_path):
         try:
@@ -1120,7 +1082,6 @@ def test_bot_settings_assignment_to_deleted_model_fails(tmp_path: Path) -> None:
             httpd, "/api/bots/designer/settings", {"model": {"id": "m2", "thinking": None}})
         assert status == 400
         assert body == {"error": "unknown model"}
-        # Re-registering makes the same assignment succeed again.
         _, got = _call(httpd, "/api/config")
         values = got["values"]
         values["models"]["m2"] = {"baseUrl": "", "input": 0, "cache": 0, "output": 0}
@@ -1144,7 +1105,6 @@ def test_config_post_removal_counts_paused_bots_but_not_default_inheritance(tmp_
         del values["models"]["m-used"]
         status, body = _call(httpd, "/api/config", method="POST", data=values)
         assert status == 409
-        # The paused bot blocks; the default-inheriting bot is not listed.
         assert body["referencedBy"] == {"m-used": ["sleeper"]}
     finally:
         _stop_guarded(httpd, thread)
@@ -1170,9 +1130,6 @@ def test_config_post_abandoning_default_is_rejected(tmp_path: Path) -> None:
 
 
 def test_config_post_default_switch_then_delete_in_separate_steps(tmp_path: Path) -> None:
-    # Even an atomic switch-and-delete is rejected: the default must be
-    # switched in one operation, and only then may the old default be
-    # removed in another.
     httpd, thread = _start_guarded(
         tmp_path, models={"m1": {}, "m2": {}},
         bots={"coder": "m2"}, default_model="m1",
@@ -1201,8 +1158,6 @@ def test_config_post_default_switch_then_delete_in_separate_steps(tmp_path: Path
 
 
 def test_config_post_switch_and_delete_with_reference_conflicts(tmp_path: Path) -> None:
-    # The reference guard runs first: switching the default does not
-    # excuse a model still explicitly assigned to a bot.
     httpd, thread = _start_guarded(
         tmp_path, models={"m1": {}, "m2": {}},
         bots={"coder": "m1"}, default_model="m1",
@@ -1253,9 +1208,6 @@ def test_config_post_removal_with_absent_inventory_succeeds(tmp_path: Path) -> N
 
 
 def test_config_post_deletion_can_win_before_assignment(tmp_path: Path) -> None:
-    # Deterministic deletion-wins ordering: with no references the removal
-    # succeeds, and the later assignment to the gone model must fail.
-    from thyca.bots.registry import BotRegistry
 
     httpd, thread, app = _start_guarded_chat(
         tmp_path, models={"m1": {}, "m2": {}},
@@ -1279,11 +1231,6 @@ def test_config_post_deletion_can_win_before_assignment(tmp_path: Path) -> None:
 
 
 def test_config_post_unreferenced_race_keeps_invariant(tmp_path: Path) -> None:
-    # Barrier-started race with no initial references: either the deletion
-    # wins (assignment then fails) or the assignment wins (deletion then
-    # conflicts). The invariant holds in every outcome; responses stay in
-    # the fail-closed set and the server never wedges.
-    from thyca.bots.registry import BotRegistry
 
     httpd, thread, app = _start_guarded_chat(
         tmp_path, models={"m1": {}, "m2": {}},
@@ -1323,9 +1270,6 @@ def test_config_post_unreferenced_race_keeps_invariant(tmp_path: Path) -> None:
 
 
 def test_model_coordination_hold_blocks_across_processes(tmp_path: Path) -> None:
-    import subprocess
-    import sys
-    import time
 
     httpd, thread = _start_guarded(
         tmp_path, models={"m-used": {}, "m-free": {}}, bots=None,
@@ -1355,8 +1299,6 @@ def test_model_coordination_hold_blocks_across_processes(tmp_path: Path) -> None
             status, body = _call(httpd, "/api/config", method="POST", data=values)
             elapsed = time.monotonic() - start
             assert status == 200 and body["ok"] is True
-            # The file lock is truly cross-process: the POST waited for
-            # the holder instead of sailing through (or deadlocking).
             assert elapsed >= 0.8
         finally:
             proc.wait(timeout=10)
@@ -1383,18 +1325,7 @@ def test_config_revision_present_and_changes_on_write(tmp_path: Path) -> None:
 
 
 def test_config_get_snapshot_cannot_be_split_by_post(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    # The GET race the revision scheme exists to close: pause GET after
-    # it has read values but before it reads the revision, and let a
-    # concurrent POST run. The coordination lock must serialize the POST
-    # behind the whole snapshot, so replaying the returned snapshot can
-    # never overwrite the intervening update. Without the lock the POST
-    # would slip in between, GET would pair stale values with the new
-    # revision, and the replay would silently revert the update.
-    import threading
-    import time
 
-    import thyca.serve.config_api as config_api
-    from thyca.configs.coordination import CoordinationError, hold
 
     httpd, thread = _start_guarded(
         tmp_path, models={"m1": {}}, bots=None, default_model="m1",
@@ -1420,7 +1351,7 @@ def test_config_get_snapshot_cannot_be_split_by_post(tmp_path: Path, monkeypatch
         def reader() -> None:
             try:
                 outcomes["get"] = _call(httpd, "/api/config")
-            except Exception as exc:  # noqa: BLE001 — recorded for assert
+            except Exception as exc:
                 outcomes["get_error"] = exc
 
         def writer() -> None:
@@ -1432,7 +1363,7 @@ def test_config_get_snapshot_cannot_be_split_by_post(tmp_path: Path, monkeypatch
                     "limits": {"loopMax": 91, "hotTailKB": 4, "contextTokens": 128000},
                 }
                 outcomes["post"] = _call(httpd, "/api/config", method="POST", data=values)
-            except Exception as exc:  # noqa: BLE001 — recorded for assert
+            except Exception as exc:
                 outcomes["post_error"] = exc
 
         monkeypatch.setattr(config_api, "_config_revision", hooked)
@@ -1440,15 +1371,12 @@ def test_config_get_snapshot_cannot_be_split_by_post(tmp_path: Path, monkeypatch
         getter.start()
         try:
             assert entered.wait(timeout=10)
-            # The paused GET holds coordination across values→revision:
-            # anything else serializes behind it instead of interleaving.
-            with pytest.raises(CoordinationError):
-                with hold(tmp_path, timeout=0.3):
-                    pass
+            with pytest.raises(CoordinationError), hold(tmp_path, timeout=0.3):
+                pass
             poster = threading.Thread(target=writer)
             poster.start()
             time.sleep(0.3)
-            assert poster.is_alive()  # blocked on the snapshot hold
+            assert poster.is_alive()
         finally:
             release.set()
         getter.join(timeout=20)
@@ -1459,9 +1387,6 @@ def test_config_get_snapshot_cannot_be_split_by_post(tmp_path: Path, monkeypatch
         assert outcomes["post"][0] == 200
         status, got = outcomes["get"]
         assert status == 200
-        # The snapshot predates the POST (values show the default
-        # loopMax 200) yet carries the pre-POST revision — replaying
-        # it must conflict instead of reverting the update.
         assert got["values"]["limits"]["loopMax"] == 200
         replay = dict(got["values"])
         replay["baseRevision"] = got["revision"]
@@ -1476,10 +1401,6 @@ def test_config_get_snapshot_cannot_be_split_by_post(tmp_path: Path, monkeypatch
 
 
 def test_config_post_replay_of_superseded_snapshot_conflicts(tmp_path: Path) -> None:
-    # Deterministic proof that a returned snapshot cannot overwrite an
-    # intervening update: replaying the superseded values verbatim with
-    # their stale revision fails, while replaying the current snapshot
-    # is a harmless no-op that leaves the revision untouched.
     httpd, thread = _start_guarded(
         tmp_path, models={"m1": {}}, bots=None, default_model="m1",
     )
@@ -1532,11 +1453,8 @@ def test_config_post_stale_base_revision_conflicts_without_applying(tmp_path: Pa
         _, got = _call(httpd, "/api/config")
         stale = dict(got["values"])
         stale["baseRevision"] = got["revision"]
-        # A newer write lands first (another tab saving concurrently).
         stale["limits"] = {"loopMax": 83, "hotTailKB": 4, "contextTokens": 128000}
         assert _call(httpd, "/api/config", method="POST", data=dict(stale))[0] == 200
-        # The stale write must not silently replace it: no values or keys
-        # echoed back, and the stored config keeps the newer limits.
         stale["limits"] = {"loopMax": 84, "hotTailKB": 4, "contextTokens": 128000}
         status, body = _call(httpd, "/api/config", method="POST", data=stale)
         assert status == 409
@@ -1566,7 +1484,6 @@ def test_config_key_only_change_rotates_revision(tmp_path: Path) -> None:
 
 
 def test_config_concurrent_key_only_saves_conflict_safely(tmp_path: Path) -> None:
-    from thyca.configs.auth import auth_path_for, load_auth_keys
 
     httpd, thread = _start_guarded(
         tmp_path, models={"m1": {}}, bots=None, default_model="m1",
@@ -1594,12 +1511,10 @@ def test_config_concurrent_key_only_saves_conflict_safely(tmp_path: Path) -> Non
         second.join(timeout=20)
         assert not first.is_alive() and not second.is_alive()
         assert fetched["a"] == fetched["b"]
-        # Same base revision, same content shape, different keys: exactly
-        # one wins; the loser retries against the rotated revision.
         assert sorted(code for code in (outcomes["a"][0], outcomes["b"][0])) == [200, 409]
         stored = load_auth_keys(auth_path_for(tmp_path / "config.json"))
         assert stored.get("alpha") in ("kA", "kB")
-        loser = "b" if outcomes["a"][0] == 200 else "a"
+        "b" if outcomes["a"][0] == 200 else "a"
         _, got = _call(httpd, "/api/config")
         values = dict(got["values"])
         values["baseRevision"] = got["revision"]
@@ -1621,12 +1536,11 @@ def test_config_get_snapshot_survives_concurrent_posts(tmp_path: Path) -> None:
 
         def reader() -> None:
             barrier.wait(timeout=10)
-            for _ in range(10):
-                gets.append(_call(httpd, "/api/config"))
+            gets.extend(_call(httpd, "/api/config") for _ in range(10))
 
         def writer(n: int) -> None:
             barrier.wait(timeout=10)
-            for i in range(5):
+            for _i in range(5):
                 _, got = _call(httpd, "/api/config")
                 values = dict(got["values"])
                 values["baseRevision"] = got.get("revision")
@@ -1634,7 +1548,7 @@ def test_config_get_snapshot_survives_concurrent_posts(tmp_path: Path) -> None:
                                        "contextTokens": 128000}
                 try:
                     posts.append(_call(httpd, "/api/config", method="POST", data=values))
-                except Exception as exc:  # noqa: BLE001 — recorded, never raised
+                except Exception as exc:
                     posts.append(exc)
 
         workers = [threading.Thread(target=reader) for _ in range(3)]
@@ -1681,8 +1595,6 @@ def test_config_corrupt_revision_key_fails_closed_but_keeps_legacy_post(tmp_path
         tmp_path, models={"m1": {}}, bots=None, default_model="m1",
     )
     try:
-        # A torn write (empty, as an interrupted publish would leave under
-        # the old in-place scheme) and a short file both fail closed.
         (tmp_path / "config_revision.key").write_bytes(b"")
         status, body = _call(httpd, "/api/config")
         assert status == 503
@@ -1694,8 +1606,6 @@ def test_config_corrupt_revision_key_fails_closed_but_keeps_legacy_post(tmp_path
                   "models": {"m1": {"baseUrl": "", "input": 0, "cache": 0, "output": 0}},
                   "limits": {"loopMax": 85, "hotTailKB": 4, "contextTokens": 128000}}
         assert _call(httpd, "/api/config", method="POST", data=values)[0] == 200
-        # Documented recovery: deleting the corrupt key lets the next
-        # request publish a fresh one atomically.
         (tmp_path / "config_revision.key").unlink()
         status, body = _call(httpd, "/api/config")
         assert status == 200 and isinstance(body.get("revision"), str)
@@ -1706,10 +1616,6 @@ def test_config_corrupt_revision_key_fails_closed_but_keeps_legacy_post(tmp_path
 def test_config_revision_key_creation_failure_fails_closed_without_litter(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Simulates a crash during first key creation: nothing may be
-    # published at the final path, and GET must fail closed rather than
-    # serve values callers would silently save back unconditionally.
-    import thyca.serve.config_api as config_api
 
     httpd, thread = _start_guarded(
         tmp_path, models={"m1": {}}, bots=None, default_model="m1",
@@ -1731,8 +1637,6 @@ def test_config_revision_key_creation_failure_fails_closed_without_litter(
 
 
 def test_config_revision_key_concurrent_first_creation_converges(tmp_path: Path) -> None:
-    import stat as _stat
-    import threading
 
     httpd, thread = _start_guarded(
         tmp_path, models={"m1": {}}, bots=None, default_model="m1",
@@ -1747,7 +1651,7 @@ def test_config_revision_key_concurrent_first_creation_converges(tmp_path: Path)
             for _ in range(3):
                 try:
                     outcomes.append(_call(httpd, "/api/config"))
-                except Exception as exc:  # noqa: BLE001 — recorded, never raised
+                except Exception as exc:
                     outcomes.append(exc)
 
         workers = [threading.Thread(target=reader) for _ in range(4)]
@@ -1772,8 +1676,6 @@ def test_config_revision_key_concurrent_first_creation_converges(tmp_path: Path)
 def test_m7_providers_test_explicit_empty_model_is_400(tmp_path: Path) -> None:
     httpd, thread = _start_config_server(tmp_path)
     try:
-        # fresh configs ship with no provider: the empty-model check needs
-        # an existing provider to reach the model validation.
         _, got = _call(httpd, "/api/config")
         values = got["values"]
         values["providers"] = {"default": {"baseUrl": "https://a.example/v1"}}

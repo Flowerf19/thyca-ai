@@ -41,8 +41,6 @@ def _check_shared(
     _text(baseUrl, "provider.baseUrl")
     _text(apiKeyEnv, "provider.apiKeyEnv")
     _text(apiKey, "provider.apiKey", allow_none=True, non_empty=True)
-    # STRICT like ModelCfg: a non-http URL or junk effort never worked, so
-    # fail at parse, not in the HTTP layer mid-turn.
     if not baseUrl.startswith(("http://", "https://")):
         raise ConfigError(
             f"provider.baseUrl must start with http:// or https://: {baseUrl!r}"
@@ -108,7 +106,6 @@ class ProviderEntry(_ApiKeyMixin):
         _check_shared(
             self.baseUrl, self.apiKeyEnv, self.apiKey, self.reasoningEffort, self.api
         )
-        # Stored entries are model-agnostic: custom levels live on models.
         _check_global_effort(self.reasoningEffort, "provider.reasoningEffort")
 
 
@@ -122,13 +119,11 @@ class ProviderCfg(_ApiKeyMixin):
 
     baseUrl: str = DEFAULT_PROVIDER_BASE_URL
     apiKeyEnv: str = DEFAULT_PROVIDER_API_KEY_ENV
-    # apiKey before model: settings UI flow is key → fetch models → pick model.
     apiKey: str | None = field(default=None, repr=False)
     reasoningEffort: str = DEFAULT_PROVIDER_REASONING_EFFORT
     api: str = DEFAULT_PROVIDER_API
     model: str = DEFAULT_PROVIDER_MODEL
     reasoningEfforts: tuple[str, ...] = ()
-    # Resolved output cap: the model's own maxTokens wins, else the default.
     maxTokens: int = DEFAULT_MODEL_MAX_TOKENS
 
     def __post_init__(self) -> None:

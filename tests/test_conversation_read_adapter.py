@@ -5,7 +5,10 @@ import uuid
 from pathlib import Path
 
 import pytest
+from seeded_config import seeded_config
 
+from thyca.conversations.runtime import ConversationRuntime
+from thyca.conversations.runtime.wire import conversation_detail, conversation_summary
 from thyca.conversations.store import (
     AdminStore,
     AgentStore,
@@ -18,11 +21,10 @@ from thyca.conversations.store import (
     trace_detail_for,
     trace_turns_for,
 )
+from thyca.conversations.store import read_adapter as adapter
 from thyca.conversations.store.read_adapter import _MAX_ASSEMBLY_RESYNCS
 from thyca.core.conversation import ConversationRef
 from thyca.core.protocol import Message
-from thyca.conversations.runtime import ConversationRuntime
-from thyca.conversations.runtime.wire import conversation_detail, conversation_summary
 
 
 def _root_id(root: Path) -> str:
@@ -60,8 +62,6 @@ def _wire_conversation(ref: ConversationRef, messages: list[Message]) -> Convers
     )
 
 
-# ---------- AdminStore.list pagination ----------
-
 def test_list_is_paginated_newest_first_and_includes_empty(tmp_path: Path) -> None:
     _init(tmp_path)
     admin = AdminStore(tmp_path)
@@ -78,8 +78,6 @@ def test_list_is_paginated_newest_first_and_includes_empty(tmp_path: Path) -> No
     items2, has_more2 = admin.list(limit=2, offset=2)
     assert has_more2 is False
     assert len(items2) == 1
-    # Pages tile the full newest-first ordering (created_at DESC, then
-    # kind/id ASC for same-second ties); every door appears exactly once.
     full, full_more = admin.list(limit=10, offset=0)
     assert full_more is False
     assert [row.ref for row in items + items2] == [row.ref for row in full]
@@ -87,7 +85,6 @@ def test_list_is_paginated_newest_first_and_includes_empty(tmp_path: Path) -> No
     expect = sorted(full, key=lambda row: (row.ref.kind, row.ref.id))
     expect = sorted(expect, key=lambda row: row.created_at, reverse=True)
     assert [row.ref for row in full] == [row.ref for row in expect]
-    # Empty conversations are listed with their creation stamp and metadata.
     empty = next(row for row in items2 + items if row.ref == second)
     assert empty.participants == ('bob',)
     assert empty.created_at
@@ -98,7 +95,7 @@ def test_list_rejects_bad_pagination_before_touching_disk(tmp_path: Path) -> Non
     for kwargs in ({'limit': 0}, {'limit': True}, {'limit': '2'},
                    {'offset': -1}, {'offset': True}):
         with pytest.raises(ValueError):
-            AdminStore(root).list(**kwargs)  # type: ignore[arg-type]
+            AdminStore(root).list(**kwargs)  # type: ignore[arg-type] -- reason: intentional invalid-type or test-double argument
     assert not root.exists()
 
 
@@ -108,8 +105,6 @@ def test_list_skips_nothing_on_ready_root(tmp_path: Path) -> None:
     assert has_more is False
     assert [row.ref for row in items] == [ref]
 
-
-# ---------- cursor-based full-history assembly ----------
 
 def test_assembly_across_pages_matches_single_read(tmp_path: Path) -> None:
     ref = _seed_dm(tmp_path)
@@ -128,11 +123,11 @@ def test_assembly_across_pages_matches_single_read(tmp_path: Path) -> None:
 def test_assembly_requires_intent_and_valid_page_limit(tmp_path: Path) -> None:
     ref = _seed_dm(tmp_path)
     with pytest.raises(ValueError):
-        assemble_history(tmp_path, ref, 'coder', intent='runtime')  # type: ignore[arg-type]
+        assemble_history(tmp_path, ref, 'coder', intent='runtime')  # type: ignore[arg-type] -- reason: intentional invalid-type or test-double argument
     for bad in (0, True, '10'):
         with pytest.raises(ValueError):
             assemble_history(tmp_path, ref, 'coder', intent=_intent(),
-                             page_limit=bad)  # type: ignore[arg-type]
+                             page_limit=bad)  # type: ignore[arg-type] -- reason: intentional invalid-type or test-double argument
 
 
 def test_assembly_resyncs_after_compaction_generation_bump(tmp_path: Path) -> None:
@@ -141,17 +136,12 @@ def test_assembly_resyncs_after_compaction_generation_bump(tmp_path: Path) -> No
     admin = AdminStore(tmp_path)
     for i in range(4):
         agents.append(ref, 'coder', _msg('user' if i % 2 == 0 else 'assistant', f'm-{i}', 5))
-    # Compact the prefix: generation bumps, logical positions shift to a
-    # summary row plus the suffix.
     admin.compact_through_seq(ref, 2, lambda _old: 'summary')
     assembled = assemble_history(tmp_path, ref, 'coder', intent=_intent(), page_limit=1)
     assert [m.content for m in assembled.messages] == ['summary', 'm-2', 'm-3']
 
 
-# ---------- summary/detail byte-compat ----------
-
 def test_summary_matches_wire_shape_and_values(tmp_path: Path) -> None:
-    from seeded_config import seeded_config
 
     cfg = seeded_config()
     ref = _seed_dm(tmp_path)
@@ -176,7 +166,6 @@ def test_summary_matches_wire_shape_and_values(tmp_path: Path) -> None:
 
 
 def test_detail_never_carries_tool_calls_or_reasoning(tmp_path: Path) -> None:
-    from seeded_config import seeded_config
 
     ref = _seed_dm(tmp_path)
     agents = AgentStore(tmp_path)
@@ -198,7 +187,6 @@ def test_empty_conversation_uses_created_at_and_has_no_title(tmp_path: Path) -> 
     summary = summary_for(conversation, created)
     assert summary['updated_at'] == created
     assert summary['message_count'] == 0 and summary['turns'] == 0
-    # Identity carries the display: kind/dm stay present on an empty door.
     assert 'title' not in summary
     assert summary['kind'] == 'dm' and summary['dm'] == 'coder'
     with pytest.raises(ValueError):
@@ -219,10 +207,8 @@ def test_prototype_rejects_content_none(tmp_path: Path) -> None:
     ref = _seed_dm(tmp_path)
     with pytest.raises(ValueError):
         AgentStore(tmp_path).append(
-            ref, 'coder', Message(role='user', content=None))  # type: ignore[arg-type]
+            ref, 'coder', Message(role='user', content=None))  # type: ignore[arg-type] -- reason: intentional invalid-type or test-double argument
 
-
-# ---------- trace payloads: tool_calls only in Trace ----------
 
 def test_trace_lists_match_turns_from_conversation(tmp_path: Path) -> None:
     ref = _seed_dm(tmp_path)
@@ -242,7 +228,6 @@ def test_trace_lists_match_turns_from_conversation(tmp_path: Path) -> None:
 
 
 def test_trace_detail_carries_tool_shape_while_detail_does_not(tmp_path: Path) -> None:
-    from seeded_config import seeded_config
 
     cfg = seeded_config()
     ref = _seed_dm(tmp_path)
@@ -266,18 +251,15 @@ def test_trace_detail_carries_tool_shape_while_detail_does_not(tmp_path: Path) -
 
     detail = detail_for(conversation, cfg)
     assert all('tool_calls' not in item for item in detail['messages'])
-    # Same source rows, two shapes: chat stays lean, trace carries the calls.
     assert [m['content'] for m in detail['messages']] == [m['content'] for m in trace['messages']]
 
-
-# ---------- runtime-only gate ----------
 
 def test_adapter_refuses_non_runtime_callers_before_io(tmp_path: Path) -> None:
     root = tmp_path / 'missing'
     ref = ConversationRef.dm('coder')
     for call in (
-        lambda: assemble_history(root, ref, 'coder', intent=None),  # type: ignore[arg-type]
-        lambda: assemble_history(root, ref, 'coder', intent='runtime'),  # type: ignore[arg-type]
+        lambda: assemble_history(root, ref, 'coder', intent=None),  # type: ignore[arg-type] -- reason: intentional invalid-type or test-double argument
+        lambda: assemble_history(root, ref, 'coder', intent='runtime'),  # type: ignore[arg-type] -- reason: intentional invalid-type or test-double argument
     ):
         with pytest.raises(ValueError):
             call()
@@ -286,7 +268,6 @@ def test_adapter_refuses_non_runtime_callers_before_io(tmp_path: Path) -> None:
 
 def test_writes_stay_on_legacy_path(tmp_path: Path) -> None:
     """The adapter exposes reads only: no append/create/set_metadata surface."""
-    from thyca.conversations.store import read_adapter as adapter
 
     for name in ('append', 'create_group', 'set_metadata', 'bootstrap_initial_dm',
                  'initialize', 'purge_before', 'compact_through_seq', 'vacuum'):

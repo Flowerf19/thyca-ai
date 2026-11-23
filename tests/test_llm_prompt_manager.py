@@ -142,7 +142,6 @@ def test_runtime_guidance_has_one_owner() -> None:
     assert "Never assume the user is still on those topics" in rules
     assert "use read on" not in rules
     assert "lexical" not in rules
-    # Tool descriptions own individual operations and their calling conventions.
     for name in ("recent", "get", "reinforce", "forget"):
         assert f"memory_{name}" not in soul
 
@@ -171,10 +170,9 @@ def test_user_template_has_upkeep_and_empty_profile_sections() -> None:
 def test_today_elsewhere_section_rendered_only_when_nonempty() -> None:
     manager = PromptManager()
     without = manager.build(_hot())
-    assert "<today_elsewhere>\n" not in without  # rules mention it, but no section renders
+    assert "<today_elsewhere>\n" not in without
     with_index = manager.build(_hot(today_elsewhere="- 15:04 — other [2026-09-28#bbbb2222]"))
     assert "<today_elsewhere>\n- 15:04 — other [2026-09-28#bbbb2222]\n</today_elsewhere>" in with_index
-    # Order: today, today_elsewhere, then skills/rules.
     assert with_index.index("<today>") < with_index.index("<today_elsewhere>")
     assert with_index.index("</today_elsewhere>") < with_index.index("<rules>")
 

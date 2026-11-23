@@ -14,18 +14,20 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from thyca.configs import Config
+from thyca.conversations.store.admin import AdminStore
+from thyca.conversations.store.runtime import is_runtime_ready
 from thyca.core.protocol import Message, ToolCall
 from thyca.skills.skill_event import skill_name_for_call
-from . import (
-    ConversationRuntime,
+
+from .ask_remember import ask_remember
+from .compaction import calibration_factor, context_usage
+from .errors import (
     ConversationBusy,
     ConversationCorrupt,
     ConversationError,
     ConversationNotFound,
 )
-from .ask_remember import ask_remember
-from .compaction import calibration_factor, context_usage
-
+from .models import ConversationRuntime
 
 _SIDECAR_KINDS = frozenset({"compaction"})
 
@@ -42,19 +44,13 @@ def is_sidecar_message(message: Message) -> bool:
     return (message.meta or {}).get("kind") in _SIDECAR_KINDS
 
 
-# Resolve the listing stamp for one conversation without inventing a file.
 def updated_at(conversation: ConversationRuntime) -> str:
     if conversation.messages:
         return conversation.messages[-1].ts
-    # Store-backed doors have no transcript file: an empty door reports
-    # its stored creation stamp, exactly like the read adapter listing.
-    # An unknown door is not found; no file stamp is ever consulted.
     try:
-        from thyca.conversations.store.runtime import is_runtime_ready
 
         root = conversation.path.parent.parent
         if is_runtime_ready(root):
-            from thyca.conversations.store.admin import AdminStore
 
             items, _more = AdminStore(root).list(limit=5000)
             for row in items:
@@ -93,15 +89,9 @@ def conversation_summary(conversation: ConversationRuntime) -> dict:
         "conversation_id": conversation.conversation_id,
         "updated_at": updated_at(conversation),
         "message_count": len(conversation.messages),
-        # Turns the way Trace counts them: one per user message. Raw
-        # message_count would read as inflated by tool traffic.
         "turns": len(turn_slices(conversation.messages)),
-        # Team room participants (BE-3, contract §6): legacy conversations
-        # without a bots meta line read as Thyca alone.
         "bots": list(conversation.bots) if conversation.bots else ["thyca"],
-        # Bot main window (CBE-5): bot id whose fixed DM this is, else null.
         "dm": conversation.dm_bot,
-        # User-facing channel model (phase 2B): exactly dm or group.
         "kind": "dm" if conversation.dm_bot else "group",
         "channel": "webui",
         "window_id": conversation.conversation_id,
@@ -150,8 +140,6 @@ def conversation_detail(
     }
     if conversation.title is not None:
         detail["title"] = conversation.title
-    # A turn in flight is invisible on disk until it finishes writing, so
-    # the client is told here: it can wait instead of guessing.
     resolved = running if running is not None else started_at is not None
     detail["running"] = resolved
     if started_at is not None:

@@ -1,4 +1,3 @@
-// Chat screen: messages, composer, conversation switching, real NDJSON turn stream.
 'use strict';
 const fmtTime = ts => { const d = ts ? new Date(ts) : new Date(); return Number.isFinite(d.getTime()) ? d.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : ''; };
 function userMessage(text, time) {
@@ -9,14 +8,6 @@ function userMessage(text, time) {
   const source = framed ? `<span class="message-source">${framed.label}</span>` : '';
   return `<article class="message-user">${body}<footer>${source}<time>${time}</time>${icon('check')}</footer></article>`;
 }
-/* External bridge posts (any source tool) wrap a compact conversation
-   JSON between UNTRUSTED_CONVERSATION markers after trusted/policy/task
-   scaffolding meant for the LLM, not the reader. The display layer is
-   source-agnostic: it keys only on that frame protocol, never on which
-   tool produced it. Parsed frame as renderable data: one row per message
-   with the sender resolved, mentions mapped, reply target named, and the
-   message that triggered the turn (new_message_id) flagged. Null when
-   the text is not a framed bridge post or carries no messages. */
 function framedConversationData(text) {
   const m = String(text || '').match(/UNTRUSTED_CONVERSATION job_ref=(\S+) START\n([\s\S]*?)\nUNTRUSTED_CONVERSATION job_ref=\1 END/);
   if (!m) return null;
@@ -50,18 +41,11 @@ function framedConversationData(text) {
   return messages.length ? { messages, label: sourceLabel } : null;
 }
 
-/* A framed conversation renders as its own conversation block — one
-   proper row per message (sender, time, reply context, the triggering
-   message highlighted) instead of every line crammed into a single user
-   bubble. */
 function framedConversationBlock(convo, time) {
   const rows = convo.messages.map(msg => `<article class="framed-msg${msg.isNew ? ' is-new' : ''}"><header><strong>${escapeHTML(msg.sender)}</strong>${msg.time ? `<time>${escapeHTML(msg.time)}</time>` : ''}${msg.replyTo ? `<span class="framed-reply">trả lời ${escapeHTML(msg.replyTo)}</span>` : ''}</header><div class="framed-text">${msg.textHtml}</div></article>`).join('');
   return `<section class="framed-convo" aria-label="${escapeHTML(convo.label)}"><header class="framed-head"><span class="message-source">${escapeHTML(convo.label)}</span><time>${time}</time></header>${rows}</section>`;
 }
 
-/* Fallback for a framed post the parser above cannot use (unparseable
-   JSON or no renderable messages): show the inner text escaped, without
-   the markers — never the scaffolding around the frame. */
 function framedConversationFallback(text) {
   const m = String(text || '').match(/UNTRUSTED_CONVERSATION job_ref=(\S+) START\n([\s\S]*?)\nUNTRUSTED_CONVERSATION job_ref=\1 END/);
   if (!m) return null;
@@ -73,18 +57,10 @@ function assistantMessage(botId, content, time, toolNames = []) {
   const tools = toolNames.length ? `<span class="usage-pill">${icon('leaf')}Đã dùng: ${toolNames.map(escapeHTML).join(', ')}</span>` : '';
   return `<article class="message-assistant" style="${paletteStyle(b)}"><header class="message-byline"><span>${escapeHTML(b.name)}</span><time>${time}</time></header><div class="live-copy markdown-body">${content}</div><footer class="message-footer">${tools}<button class="again" data-retry="${b.id}">${icon('retry')}Thử lại</button><button data-copy aria-label="Sao chép phản hồi">${icon('copy')}</button></footer></article>`;
 }
-/* Assistant content is markdown — rendered by share/markdown.js (marked GFM,
-   sanitized). The escaped-paragraph path stays as a fallback for the brief
-   window before the module evaluates. */
 const contentHtml = text => window.formatMarkdown
   ? window.formatMarkdown(text)
   : escapeHTML(String(text || '')).split(/\n{2,}/).map(p => `<p>${p.replace(/\n/g, '<br>')}</p>`).join('');
 
-/* Structured cards (ask_user/report_error/consent) ride on assistant rows:
-   meta = {kind:'card', card:{type:'question'|'error', ...}}. Room cards
-   carry content:"" (or the error summary); the DM consent card carries
-   the title as content plus card.private_followup. Unknown card types
-   fall through to the plain assistant row. */
 function cardLabelOf(option) {
   const label = typeof option === 'string' ? option : String(option?.label || option?.id || '');
   return label.trim();
@@ -124,10 +100,6 @@ function renderErrorCard(card, answered, botId) {
   const hook = (option, label) => `data-card-label="${escapeHTML(label)}"`;
   return `<section class="user-card card-error" aria-label="Bot gặp lỗi"><h3>Làm dở tới đâu</h3><ul class="card-progress">${steps.join('')}</ul><h3>Làm tiếp thế nào?</h3>${hint}${cardChoices(card, answered, botId, hook)}</section>`;
 }
-/* Consent decisions the backend never echoes as a user row: once a
-   choice POST succeeds, its card stays disabled via this set, keyed by
-   pending_id:revision — independent of later re-renders. No backend
-   change: the set lives in the client that owns the chips. */
 const decidedConsents = new Set();
 function consentKeyOf(card) {
   const pf = card && typeof card === 'object' ? card.private_followup : null;
@@ -138,27 +110,16 @@ function cardArticle(m, detail, time, userAfter) {
   const card = m.meta.card;
   const botId = String(m.meta?.bot_id || detail.bot_id || '');
   const names = (m.tool_calls || []).map(c => c.skill || c.name).filter(Boolean);
-  // Consent decisions are never echoed as a user row by the backend, so
-  // a decided card stays disabled via the decided set as well.
   const answered = userAfter || (consentKeyOf(card) && decidedConsents.has(consentKeyOf(card)));
   const body = card.type === 'error' ? renderErrorCard(card, answered, botId) : renderQuestionCard(card, answered, botId);
   const content = typeof m.content === 'string' ? m.content.trim() : '';
-  // The DM consent card repeats its title as content — render it once.
   const lead = content && content !== String(card.title || '').trim() ? contentHtml(m.content) : '';
   return assistantMessage(botId, lead + body, time, names);
 }
-/* Bot<->bot A2A rows never render inline in any transcript: DM shows
-   them through the grouped per-partner entry + thread modal (below),
-   groups hide them entirely. */
 function peerDisplayName(id) { const b = getBot(id); return (b && b.name) || id; }
 function renderTranscript(detail) {
   const nodes = [];
   const messages = detail.messages || [];
-  // Bot<->bot A2A rows (bus requests + results) never render inline:
-  // DM shows them through the grouped per-partner entry + thread modal,
-  // groups hide them entirely.
-  // Stamp each rendered article with its message ts so DM exchange
-  // entries can slot in at their last-exchange time (see below).
   const stamp = (html, ts) => ts
     ? html.replace('<article ', `<article data-ts="${escapeHTML(String(ts))}" `)
     : html;
@@ -174,8 +135,6 @@ function renderTranscript(detail) {
     const card = m.meta?.card;
     if (m.meta?.kind === 'card' && card && typeof card === 'object'
         && (card.type === 'question' || card.type === 'error')) {
-      // A later user message is the answer itself; consent cards rely on
-      // the decided set instead (the backend never echoes a user row).
       const userAfter = messages.slice(i + 1).some(next => next && next.role === 'user');
       nodes.push(stamp(cardArticle(m, detail, time, userAfter), m.ts));
       continue;
@@ -186,15 +145,9 @@ function renderTranscript(detail) {
   return nodes.join('');
 }
 
-/* DM exchange groups: in a bot's DM, one entry per bot it exchanged
-   messages with (read from the origin rooms via the exchanges API).
-   Each entry behaves like a normal message: it slots into the
-   transcript at the partner's last exchange time and only reaches
-   the end when that exchange is the newest activity. Tapping one
-   opens the A-B thread modal. */
 function botFace(id) {
   const b = getBot(id);
-  if (b) { try { return avatar(b); } catch { /* fall through to initial */ } }
+  if (b) { try { return avatar(b); } catch {  } }
   const name = (b && b.name) || String(id || '?');
   return `<span class="seal-avatar seal-fallback" aria-hidden="true">${escapeHTML(name.slice(0, 1).toUpperCase())}</span>`;
 }
@@ -213,7 +166,7 @@ async function renderExchangeGroups(detail) {
   if (!list) return;
   for (const p of partners) {
     if (!p || !p.partner) continue;
-    if (p.partner === owner) continue;   // defensive: an owner is never its own partner
+    if (p.partner === owner) continue;
     const name = peerDisplayName(p.partner);
     const partnerBot = getBot(p.partner);
     const btn = document.createElement('button');
@@ -221,9 +174,6 @@ async function renderExchangeGroups(detail) {
     btn.className = 'exchange-group';
     btn.dataset.exchangeOwner = owner;
     btn.dataset.exchangePartner = p.partner;
-    /* Paint the pill with the partner palette (neutral var fallbacks in
-       chat.css keep unknown/ghost partners readable). Inline custom
-       properties win over the fallback without touching classes. */
     if (partnerBot) btn.setAttribute('style', paletteStyle(partnerBot));
     btn.setAttribute('aria-label', `${p.count} tin nhắn với ${name}`);
     const when = p.last_ts
@@ -272,23 +222,16 @@ async function openExchangeModal(ownerId, partnerId) {
   }).join('');
 }
 
-/* Card answers. Question/error chips send the visible label as a normal
-   turn through the composer's send path (same busy guard, no bypass).
-   Consent chips POST the option id to this DM's private-followup
-   endpoint, then re-render from fresh detail. */
 function answerCardLabel(label, button) {
   label = String(label || '').trim();
   if (!label || !currentConversation || runs.has(currentConversation)) return false;
   if (button) button.disabled = true;
   const botId = String(button?.dataset?.cardBot || '') || selectedBot;
-  // sendTurn resolves false when nothing was actually sent (bot offline
-  // or missing): reopen the chip instead of stranding it disabled.
   void Promise.resolve(sendTurn(label, botId)).then(
     ok => { if (!ok && button) button.disabled = false; },
     () => { if (button) button.disabled = false; });
   return true;
 }
-// Decide one private follow-up in the current DM only.
 async function decidePrivateFollowup(pendingId, revision, choice, button) {
   const rev = Number(revision);
   const conversationId = currentConversation;
@@ -310,7 +253,7 @@ async function decidePrivateFollowup(pendingId, revision, choice, button) {
   try {
     const fresh = await getJson(`/api/bots/${encodeURIComponent(parts.bot_id)}/dm`);
     if (currentConversation === conversationId && fresh && Array.isArray(fresh.messages)) $('#message-list').innerHTML = renderTranscript(fresh);
-  } catch { /* keep the answered-disabled chips as-is */ }
+  } catch {  }
   return true;
 }
 
@@ -323,9 +266,6 @@ function updateComposer() {
 }
 function saveHistory() { if (currentConversation && !runs.has(currentConversation)) histories.set(currentConversation, $('#message-list').innerHTML); }
 
-/* The transcript's opening divider carries the opened bot's own
-   description instead of the generic new-day line. Groups and bots
-   without a description keep the default line. */
 function setDayDivider(detail) {
   const el = document.querySelector('.day-divider');
   if (!el) return;
@@ -334,10 +274,6 @@ function setDayDivider(detail) {
   el.textContent = desc || 'Hôm nay, một khởi đầu mới';
 }
 
-/* Open one conversation by its typed key (dm:<bot> or group:<group_id>).
-   The header names the door from its identity: a DM shows its bot name,
-   a group shows the shared conversation label. Empty doors show the same
-   identity, so a blank conversation stays readable. */
 async function loadConversation(id, botId) {
   const parts = convParts(id);
   if (!parts) return;
@@ -353,7 +289,7 @@ async function loadConversation(id, botId) {
   $('#chat-title').textContent = '…';
   try {
     const detail = await getJson(convDetailUrl(id));
-    if (nav !== chatNavCurrent() || currentConversation !== id) return;   // user switched meanwhile
+    if (nav !== chatNavCurrent() || currentConversation !== id) return;
     const group = detail.kind === 'group';
     const groupTitle = groupTitleOf(detail.title);
     $('#chat-title').textContent = group ? groupTitle : ((getBot(detail.bot_id || selectedBot) || {}).name || 'Thyca');
@@ -362,7 +298,7 @@ async function loadConversation(id, botId) {
     if (detail.bot_id && getBot(detail.bot_id)) selectedBot = detail.bot_id;
     $('#message-list').innerHTML = renderTranscript(detail);
     void renderExchangeGroups(detail);
-    if (detail.running) followRunningTurn(id);        // API: GET turn/stream replay on the typed door
+    if (detail.running) followRunningTurn(id);
   } catch (err) {
     if (nav !== chatNavCurrent() || currentConversation !== id) return;
     $('#message-list').innerHTML = `<article class="conversation-empty"><h2>Không tải được cuộc trò chuyện</h2><p>${escapeHTML(err.message)}</p></article>`;
@@ -374,17 +310,14 @@ async function loadConversation(id, botId) {
   closeMobile(); busy(runs.has(id)); toBottom(true);
 }
 
-// Open one bot's fixed DM and show it as the current conversation.
 async function selectBot(id) {
   const b = getBot(id); if (!b) return;
   if (window.ThycaRouter?.currentPage() === 'chat') ThycaRouter.updateCurrent({ search: '?bot=' + encodeURIComponent(id), hash: '' });
-  // Selecting a bot navigates to its DM; the pocket stays closed until
-  // the user explicitly opens it (chevron/+N).
   if (selectedBot === id && currentConversation) return;
   const nav = nextChatNav();
-  try {                                          // API: GET /api/bots/<id>/dm — fixed DM, find-or-create
+  try {
     const detail = await getJson(`/api/bots/${encodeURIComponent(id)}/dm`);
-    if (nav !== chatNavCurrent()) return;        // user switched meanwhile
+    if (nav !== chatNavCurrent()) return;
     const key = dmKey(detail.bot_id || id);
     saveHistory(); currentConversation = key; selectedBot = id;
     updateComposer();
@@ -394,7 +327,7 @@ async function selectBot(id) {
     setDayDivider(detail);
     $('#message-list').innerHTML = renderTranscript(detail);
     void renderExchangeGroups(detail);
-    if (detail.running) followRunningTurn(key);   // API: GET turn/stream replay — rejoin in-flight turn after reload
+    if (detail.running) followRunningTurn(key);
     bots.forEach(updateCard);
     if (typeof refreshOpenPocketsOnWindowChange === 'function') refreshOpenPocketsOnWindowChange();
     busy(runs.has(key)); toBottom(true);
@@ -408,9 +341,6 @@ function isNearBottom() { const e = $('#conversation-scroll'); return e.scrollHe
 function toBottom(force = false) { const e = $('#conversation-scroll'); if (force || isNearBottom()) e.scrollTop = e.scrollHeight; }
 function busy(value) { $('#send-message').hidden = value; $('#stop-button').hidden = !value; $('#message-list').setAttribute('aria-busy', String(value)); }
 
-/* POST turn/stream on the typed DM/group door — NDJSON. Events drive the seal
-   (handleEvent maps them to lifecycle states) and stream into the live
-   message node. Exactly one terminal event: turn.completed / cancelled / failed. */
 async function sendTurn(text, botId = selectedBot, { retry = false } = {}) {
   if (runs.has(currentConversation) || !currentConversation) return false;
   const b = getBot(botId) || bots[0]; if (!b) return false;
@@ -425,8 +355,6 @@ async function sendTurn(text, botId = selectedBot, { retry = false } = {}) {
   list.append(node);
   const token = { botId: b.id, conversationId: currentConversation, start: Date.now(), node, text: text || '', phase: 'waiting', timers: [], tools: [] };
   runs.set(token.conversationId, token); run = token; busy(true); toBottom(true);
-  // Sending never opens the pocket: disclosure needs an explicit
-  // chevron/+N open. Clear this window's stale live calls instead.
   clearLiveCalls(b, token.conversationId); updateCard(b);
   setState(b.id, 'waiting', 'Mình đang đọc yêu cầu\nvà ghi nhận những điều bạn cần.', 0);
   token.interval = setInterval(() => { if (runs.get(token.conversationId) !== token) { clearInterval(token.interval); return; } b.elapsed = Math.floor((Date.now() - token.start) / 1000); const e = $('.elapsed', $('#bot-' + b.id)); if (e) e.textContent = formatElapsed(b.elapsed); }, 1000);
@@ -441,7 +369,7 @@ async function sendTurn(text, botId = selectedBot, { retry = false } = {}) {
       throw Object.assign(new Error(msg), { status: res.status });
     }
     await readNdjson(res.body, ev => handleStreamEvent(token, ev));
-    if (runs.get(token.conversationId) === token && token.phase !== 'settled') finishTurn(token);   // stream ended without terminal event
+    if (runs.get(token.conversationId) === token && token.phase !== 'settled') finishTurn(token);
   } catch (err) {
     if (runs.get(token.conversationId) === token) { token.phase = 'settled'; cancelTurn(token, 'Lượt trả lời gặp lỗi: ' + err.message, 'gặp lỗi'); setState(token.botId, 'error'); }
   }
@@ -461,20 +389,11 @@ async function readNdjson(stream, onEvent) {
   const s = buf.trim(); if (s) { try { onEvent(JSON.parse(s)); } catch {} }
 }
 
-/* Live activity: tool/skill calls observed on this client's streams.
-   The compact card preview derives from liveCalls (grouped with \u00d7N,
-   up to two groups +N); the pocket itself renders fetched backend tasks
-   for the exact window. Thinking/writing tails are not tasks and stay
-   out of both surfaces — only real tool/skill events count. */
 function handleStreamEvent(token, ev) {
-  if (!token || token.superseded) return;   // replaced rejoin: ignore late replay/events
+  if (!token || token.superseded) return;
   const type = ev.type, botId = ev.bot_id || token.botId;
   const fb = getBot(botId);
   const liveCopy = $('.live-copy', token.node);
-  // One live bubble belongs to the turn's primary bot. Nested A2A turns
-  // ride the same stream stamped with the child bot's bot_id: their
-  // state/live-call updates stay on that bot's card, but their text must
-  // never render into (or flip the phase of) the primary bubble.
   const own = botId === token.botId;
   switch (type) {
     case 'turn.accepted':
@@ -490,7 +409,6 @@ function handleStreamEvent(token, ev) {
       setState(botId, 'thinking');
       break;
     case 'llm.thinking':
-      // Thinking deltas are not tasks: state only, no preview/pocket change.
       setState(botId, 'thinking');
       break;
     case 'tool.started': case 'skill.started': {
@@ -498,7 +416,6 @@ function handleStreamEvent(token, ev) {
         token.phase = 'working'; token.tools.push(ev.name || 'tool');
         $('.message-byline time', token.node).textContent = 'đang làm việc';
       }
-      // kind comes from the actual event semantics, never the name.
       const kind = type === 'skill.started' ? 'skill' : 'tool';
       setState(botId, 'working', `Đang gọi ${ev.name || 'tool'}`);
       if (fb) {
@@ -509,9 +426,6 @@ function handleStreamEvent(token, ev) {
       break;
     }
     case 'tool.finished': case 'skill.finished': {
-      // Collision-safe association scoped to this turn's window: the
-      // finish carries the same public id, kind semantics and name as
-      // its start; a finish with no match removes nothing.
       const finKind = type === 'skill.finished' ? 'skill' : 'tool';
       if (fb) {
         liveCallFinished(fb, ev.call_id,
@@ -521,7 +435,6 @@ function handleStreamEvent(token, ev) {
         updateCard(fb);
         if (typeof refreshOpenPocket === 'function') refreshOpenPocket(fb);
       } else setState(botId, 'thinking');
-      // Admin tools may have added/removed/renamed a bot — re-sync the roster.
       if (/^bot_(create|pause|delete|restore|edit_card)$/.test(ev.name || '')) scheduleRosterSync();
       break;
     }
@@ -534,7 +447,7 @@ function handleStreamEvent(token, ev) {
       if (!own) break;
       token.phase = 'writing';
       token.mdBuf = (token.mdBuf || '') + (ev.delta || '');
-      if (token.conversationId === currentConversation) {          // node may be detached after a conversation switch
+      if (token.conversationId === currentConversation) {
         $('.message-byline time', token.node).textContent = 'đang viết';
         let p = $('.stream-text', liveCopy);
         if (!p) {
@@ -542,9 +455,6 @@ function handleStreamEvent(token, ev) {
           token.caret = document.createElement('span'); token.caret.className = 'streaming-caret';
           p.append(token.caret); liveCopy.replaceChildren(p);
         }
-        // Raw text during the stream — markdown is only re-parsed at stable
-        // boundaries (llm.finished), same as the old UI, so half-written
-        // fences/bold markers never glitch the render.
         p.insertBefore(document.createTextNode(ev.delta || ''), token.caret);
         toBottom();
       }
@@ -559,8 +469,6 @@ function handleStreamEvent(token, ev) {
   if (group && ev.bot_id) setGroupActivity(group.id, ev.bot_id);
 }
 
-/* turn.completed carries the authoritative conversation detail — re-render the
-   transcript from it so streamed deltas reconcile with stored messages. */
 async function finishTurn(token, detail) {
   clearInterval(token.interval); clearMusic(token.botId); setGroupActivity(null);
   runs.delete(token.conversationId); if (run === token) run = [...runs.values()].at(-1) || null; busy(runs.has(currentConversation));
@@ -569,7 +477,7 @@ async function finishTurn(token, detail) {
       const fresh = detail && detail.messages ? detail : await getJson(convDetailUrl(token.conversationId));
       $('#message-list').innerHTML = renderTranscript(fresh);
       void renderExchangeGroups(fresh);
-    } catch { /* keep the streamed node as-is */ }
+    } catch {  }
   }
   setState(token.botId, 'done', 'Đã hoàn tất.\nPhản hồi đã được gửi vào hội thoại.');
   refreshConversations().then(() => bots.forEach(updateCard)).catch(() => {});
@@ -586,17 +494,13 @@ function cancelTurn(token, message, byline) {
   refreshConversations().then(() => bots.forEach(updateCard)).catch(() => {});
 }
 
-// Cancel the current conversation's in-flight turn on its typed door.
 async function stopRun() {
   const token = runs.get(currentConversation) || run; if (!token) return false;
-  try { await fetch(convDoorUrl(token.conversationId, 'turn/cancel'), { method: 'POST' }); }   // API: POST turn/cancel
+  try { await fetch(convDoorUrl(token.conversationId, 'turn/cancel'), { method: 'POST' }); }
   catch { token.phase = 'settled'; cancelTurn(token, 'Đã dừng lượt trả lời.', 'đã dừng'); setState(token.botId, 'idle'); }
   announce('Đã dừng.'); return true;
 }
 
-/* Rejoin an in-flight turn (another tab or reload): GET turn/stream replays
-   the event journal, then tails live deltas. Re-entry reuses the existing
-   subscription and restores text accumulated while its node was detached. */
 function followRunningTurn(conversationId) {
   const prev = runs.get(conversationId);
   if (prev && prev.phase !== 'settled') {
@@ -625,5 +529,3 @@ function followRunningTurn(conversationId) {
     .then(() => { if (runs.get(conversationId) === token && token.phase !== 'settled') finishTurn(token); })
     .catch(() => { if (runs.get(conversationId) === token) finishTurn(token); });
 }
-
-/* openMobile/closeMobile moved to ../share/shell-app.js — shared by every page. */

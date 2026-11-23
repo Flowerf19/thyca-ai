@@ -81,17 +81,15 @@ def test_validate_args_missing_and_extra() -> None:
 
 
 def test_spec_rejects_empty_name_description_and_bad_parameters() -> None:
-    with pytest.raises(ValueError, match="ToolSpec.name"):
+    with pytest.raises(ValueError, match=r"ToolSpec\.name"):
         _echo_spec(name="")
-    with pytest.raises(ValueError, match="ToolSpec.description"):
+    with pytest.raises(ValueError, match=r"ToolSpec\.description"):
         _echo_spec(description="")
-    with pytest.raises(ValueError, match="ToolSpec.parameters"):
+    with pytest.raises(ValueError, match=r"ToolSpec\.parameters"):
         _echo_spec(parameters=[])
 
 
-# Moved from test_b4_unification.py / test_b4_p2.py (B4 batch).
 def _strict_spec(**overrides):
-    from thyca.tools.registry import ToolSpec
 
     async def handler(args: dict) -> str:
         return "ok"
@@ -118,7 +116,6 @@ def _strict_spec(**overrides):
 
 
 def test_x3_registry_rejects_mistyped_args() -> None:
-    from thyca.tools.registry import ToolRegistry
 
     registry = ToolRegistry()
     spec = _strict_spec()
@@ -147,7 +144,6 @@ def test_x3_registry_rejects_mistyped_args() -> None:
 
 
 def test_x3_untyped_and_unknown_types_skip() -> None:
-    from thyca.tools.registry import ToolRegistry
 
     registry = ToolRegistry()
     spec = _strict_spec(
@@ -162,7 +158,6 @@ def test_x3_untyped_and_unknown_types_skip() -> None:
 
 
 def test_x3_malformed_type_shape_skips() -> None:
-    from thyca.tools.registry import ToolRegistry
 
     registry = ToolRegistry()
     spec = _strict_spec(
@@ -186,5 +181,5 @@ def test_unregister_removes_and_is_idempotent() -> None:
     registry.unregister("echo")
     assert registry.get("echo") is None
     assert registry.to_openai_schema() == []
-    registry.unregister("echo")  # no-op, no raise
+    registry.unregister("echo")
     registry.unregister("never-existed")

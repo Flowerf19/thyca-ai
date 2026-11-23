@@ -18,20 +18,17 @@ import re
 from collections.abc import Collection
 from dataclasses import replace
 
+from thyca.conversations.runtime.compaction import estimate_tokens as _wire_tokens
 from thyca.core.context import BACKSTOP_RATIO as BACKSTOP_RATIO
 from thyca.core.protocol import Message, ToolCall
-from thyca.conversations.runtime.compaction import estimate_tokens as _wire_tokens
 
 TRIGGER_RATIO = 0.8
 TARGET_RATIO = 0.7
-# BACKSTOP_RATIO is imported from core (shared with the pre-turn compactor)
-# and stays importable from here for existing importers.
 
 REFETCH_HEAD_CHARS = 500
 FASTPATH_HEAD_CHARS = 2048
 PROTECT_LAST_ROUNDS = 3
 
-#: Shape check only: authority comes from metadata/call args, never text.
 _EXEC_ID_RE = re.compile(r"exec\d+")
 
 
@@ -155,8 +152,6 @@ def _build_shrunk(
         head_limit = REFETCH_HEAD_CHARS
         pointer = "[shrunk: {hidden} bytes hidden; execution no longer retained]"
     elif delta:
-        # A delta-consuming poll (tool_read): a plain re-read reports no new
-        # output, so point at positional paging, never at a rerun or an id.
         head_limit = REFETCH_HEAD_CHARS
         pointer = (
             "[shrunk: {hidden} bytes hidden; re-read retained output via "
@@ -228,7 +223,7 @@ def shrink_stage_messages(
             ):
                 continue
         if "[shrunk:" in content:
-            continue  # idempotent: never re-shrink, the pointer would lie
+            continue
         exec_id = _trusted_exec_id(
             message, calls_by_id, index, run_start, live_exec_ids
         )

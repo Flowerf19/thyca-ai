@@ -8,17 +8,17 @@ import sys
 from dataclasses import replace
 from pathlib import Path
 
+from thyca import __version__
 from thyca.agents.think import LLMPort
 from thyca.app.chat_ui import ChatUi
-from thyca.bots.registry import RegistryError
 from thyca.app.turn_options import InvalidTurnOption
-from thyca.configs import ConfigError, load
+from thyca.bots.registry import RegistryError
+from thyca.configs import GUIDE_NAME, ConfigError, ensure_thyca_dir, load, write_config_guide
+from thyca.conversations.runtime import ConversationError
 from thyca.llms.llm_base import LLMError
 from thyca.memories.facade import MemoryFacade
-from thyca.conversations.runtime import ConversationError
 
 
-# Build the CLI parser; conversation choice is --bot (DM) or --group.
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="thyca", description="Thyca — personal terminal harness")
     parser.add_argument("--version", action="store_true", help="show version and exit")
@@ -56,7 +56,6 @@ class Cli:
         args = build_parser().parse_args(argv)
         ui = ChatUi(self._stdout, self._stderr, color=False)
         if args.version:
-            from thyca import __version__
 
             print(f"thyca {__version__}", file=self._stdout)
             return 0
@@ -97,9 +96,8 @@ class Cli:
             print(file=self._stdout)
             return 0
 
-    # Run one CLI conversation: a bot DM (--bot, default thyca) or one group (--group).
     async def _run(self, args: argparse.Namespace) -> int:
-        from thyca.app.chat_app import ChatApp
+        from thyca.app.chat_app import ChatApp  # noqa: PLC0415 -- reason: lazy CLI startup
 
         root = self._thyca_dir if self._thyca_dir is not None else Path.home() / ".thyca"
         ui = ChatUi(self._stdout, self._stderr)
@@ -124,7 +122,6 @@ class Cli:
             banner_cfg = replace(cfg, defaultModel=model) if model else cfg
             provider = banner_cfg.effective_provider()
 
-            # Print prompt diagnostics for the selected DM or group door.
             def diagnostics(report: dict) -> None:
                 system = report["system"]
                 ui.debug(
@@ -157,13 +154,9 @@ class Cli:
                 await asyncio.to_thread(app.shutdown)
 
     def _seed(self) -> int:
-        from thyca.configs import GUIDE_NAME, ConfigError, ensure_thyca_dir, write_config_guide
-        from thyca.memories.active import ActiveMemory, ActiveMemoryError
-        from thyca.skills import SkillStore
+        from thyca.memories.active import ActiveMemory, ActiveMemoryError  # noqa: PLC0415 -- reason: lazy CLI startup
+        from thyca.skills import SkillStore  # noqa: PLC0415 -- reason: lazy CLI startup
 
-        # Install-time seeding: HOME-based ~/.thyca by design (self._thyca_dir
-        # is a per-run override, not the install target). Every step below is
-        # copy-if-missing, so reinstalls/upgrades never overwrite user edits.
         ui = ChatUi(self._stdout, self._stderr, color=False)
         try:
             root = ensure_thyca_dir()
@@ -180,9 +173,9 @@ class Cli:
         return 0
 
     def _serve(self, port: int, *, daemon: bool = False, stop: bool = False) -> int:
-        from thyca.app.chat_app import ChatApp
-        from thyca.serve import ServeError, default_webui, run
-        from thyca.serve.daemon import (
+        from thyca.app.chat_app import ChatApp  # noqa: PLC0415 -- reason: lazy CLI startup
+        from thyca.serve import ServeError, default_webui, run  # noqa: PLC0415 -- reason: lazy CLI startup
+        from thyca.serve.daemon import (  # noqa: PLC0415 -- reason: lazy CLI startup
             claim_server_lock,
             daemonize,
             log_file,
@@ -214,17 +207,10 @@ class Cli:
                 ui.error(str(exc))
                 return 1
         else:
-            # One server per data dir. A foreground instance beside a
-            # daemon (or another foreground) would share memory.sqlite:
-            # both write the archive index, and the losing writer holds
-            # its transaction open until every reader wedges. The daemon
-            # path guards inside daemonize(); here the pidfile check
-            # gives the friendly message and the flock is the hard stop.
             try:
                 existing = running_pid(root)
                 if existing is not None:
                     raise ServeError(f"already running (pid {existing})")
-                # Held for this frame's lifetime, which spans run() below.
                 _lock_fd = claim_server_lock(root)
             except ServeError as exc:
                 ui.error(str(exc))

@@ -35,7 +35,6 @@ def _build_result(
             is_error=True,
         )
     if dispatched is None:
-        # Misbehaving dispatcher: per-call error, never an abort of act().
         return ToolResult(
             tool_call_id=call.id,
             name=call.name,
@@ -47,8 +46,6 @@ def _build_result(
         name=call.name,
         content=dispatched.content,
         is_error=dispatched.is_error,
-        # Gateway-attached provenance survives the rebuild; output text
-        # is never parsed for ids (a quoted exec<N> in docs is not a ref).
         exec_ref=dispatched.exec_ref,
     )
 
@@ -64,7 +61,6 @@ class Act:
         if stage.reply is None or not stage.reply.tool_calls:
             stage.results = []
             return stage.results
-        # measure each tool individually so Stage.tool_latencies keeps real parallelism
         async def timed(call: ToolCall) -> tuple[ToolResult, int]:
             start = time.perf_counter()
             result = await self._one(call, stage.round, event_sink, bot_id=stage.bot_id)
@@ -73,9 +69,7 @@ class Act:
 
         pairs = await asyncio.gather(*(timed(call) for call in stage.reply.tool_calls))
         stage.results = [result for result, _ in pairs]
-        # keep latencies keyed by call_id for Observe to attach to tool messages
         latencies = {result.tool_call_id: elapsed for result, elapsed in pairs}
-        # merge rather than replace — loop may have previous rounds
         existing = getattr(stage, "tool_latencies", {}) or {}
         existing.update(latencies)
         stage.tool_latencies = existing
@@ -88,12 +82,9 @@ class Act:
         event_sink: EventSink | None = None,
         bot_id: str | None = None,
     ) -> ToolResult:
-        # A read inside the skills dir emits skill.* instead of tool.* — one
-        # action is one beat pair, never tool.* and skill.* together.
         skill_name = self._skill_name(call)
         kind = "skill" if skill_name is not None else "tool"
         name = call.name if skill_name is None else public_skill_name(skill_name)
-        # Guard on sink: no-sink callers (round may be 0) must behave byte-for-byte as before.
         invocation_id = uuid.uuid4().hex if event_sink is not None else None
         if event_sink is not None:
             emit_event(

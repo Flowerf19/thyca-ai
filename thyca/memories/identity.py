@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from contextvars import ContextVar
 
-#: In-flight bot id, or None for the default Thyca/CLI turn (the user).
 _bot_id: ContextVar[str | None] = ContextVar("thyca_bot_id", default=None)
 
 

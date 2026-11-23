@@ -16,8 +16,8 @@ import concurrent.futures
 import queue
 import threading
 
-from thyca.core.protocol import utc_now_ts
 from thyca.conversations.runtime import ConversationBusy, ConversationError, ConversationManager
+from thyca.core.protocol import utc_now_ts
 
 
 class TurnHub:
@@ -74,7 +74,7 @@ class TurnHub:
 class _TurnJob:
     """One turn's asyncio handle: task, cancel flag, and completion future."""
 
-    __slots__ = ("task", "cancel", "cfut", "lock")
+    __slots__ = ("cancel", "cfut", "lock", "task")
 
     def __init__(self) -> None:
         self.task: asyncio.Task | None = None
@@ -102,15 +102,8 @@ class TurnState:
     """
 
     def __init__(self) -> None:
-        # Plain lock, not reentrant: nothing here calls back into the claim
-        # while holding it, and re-entry would mean the delete gate is being
-        # used from inside itself.
         self._lock = threading.Lock()
         self._turns: dict[str, _Turn] = {}
-        # Conversations with a manual LLM compaction in flight. Unlike the
-        # sync rule path (rewrite under this lock), summarization spends
-        # seconds off-lock, so the conversation needs its own busy marker that
-        # claim/delete honor for the whole operation.
         self._compacts: set[str] = set()
 
     def snapshot(self) -> dict[str, str]:
@@ -123,7 +116,6 @@ class TurnState:
             turn = self._turns.get(conversation_id)
             return turn.started_at if turn is not None else None
 
-    # True when a turn or manual compaction holds one conversation.
     def is_busy(self, conversation_id: str) -> bool:
         with self._lock:
             return conversation_id in self._turns or conversation_id in self._compacts
@@ -184,7 +176,6 @@ class TurnState:
         if turn is not None:
             turn.hub.close()
 
-    # Delete one door unless a turn currently holds it.
     def delete_unclaimed(self, manager: ConversationManager, conversation_id: str) -> None:
         """Delete a conversation unless a turn holds it.
 

@@ -6,10 +6,12 @@ from pathlib import Path
 
 import pytest
 
+from thyca.memories.active import ActiveMemory
 from thyca.memories.archive_store import ArchiveError
 from thyca.memories.facade import MemoryFacade
 from thyca.memories.heading import parse_heading
 from thyca.memories.identity import bind_bot_id, reset_bot_id
+from thyca.tools.memory_tools import bind_chat_conversation, reset_chat_conversation
 
 T0 = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
 T1 = T0 + timedelta(days=1)
@@ -56,10 +58,8 @@ def test_bots_round_trip_heading_to_sqlite(tmp_path: Path) -> None:
         reset_bot_id(token)
     bots = _file_bots(tmp_path, "2026-08-01")
     assert bots[sid.split("#")[1]] == ("coder",)
-    # A reindexed facade (new process view) carries the owner in SQLite.
     facade2 = _facade(tmp_path)
     assert facade2.archive.store.memory_bots(sid) == ("coder",)
-    # Legacy user entries carry no bots field.
     sid2 = facade.remember("pub", "user note", now=T0, importance=5)
     entry2 = sid2.split("#")[1]
     assert _file_bots(tmp_path, "2026-08-01")[entry2] is None
@@ -81,7 +81,6 @@ def test_child_cannot_touch_team_or_other_private(tmp_path: Path) -> None:
             facade.update(other_sid, summary="hijack", now=T1)
         with pytest.raises(ArchiveError):
             facade.get(memory_id=other_sid, now=T1)
-        # Team + legacy stay readable.
         assert "team fact" in facade.get(memory_id=team_sid, now=T1)
     finally:
         reset_bot_id(token)
@@ -150,8 +149,6 @@ def test_forget_removes_entry_and_reads_miss(tmp_path: Path) -> None:
 
 
 def test_hot_prompt_hides_other_private(tmp_path: Path) -> None:
-    from thyca.memories.active import ActiveMemory
-    from thyca.tools.memory_tools import bind_chat_conversation, reset_chat_conversation
 
     chat_token = bind_chat_conversation("room1")
     try:

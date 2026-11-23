@@ -10,9 +10,6 @@ if TYPE_CHECKING:
     from thyca.bots.card import BotCard
 
 TEXT_MAX = 4000
-#: System-generated turn prompts (scheduled tasks, curation, profile
-#: aggregation) carry injected data, so the user-message cap does not fit;
-#: the prompt itself stays bounded by the context budget downstream.
 SYSTEM_TEXT_MAX = 24000
 MODEL_MAX = 200
 
@@ -104,9 +101,6 @@ def overlay_turn_cfg(cfg: Config, model: str | None, effort: str | None) -> Conf
     if effort is not None:
         if not isinstance(effort, str) or not effort.strip():
             raise InvalidTurnOption("invalid effort")
-        # Model-aware membership (F5): the model's own set governs when it
-        # declares one, else the global set. InvalidTurnOption (400), never a
-        # ConfigError leak from the resolve below.
         registered = cfg.models.get(chosen)
         own_set = registered.reasoningEfforts if registered is not None else ()
         allowed = own_set or REASONING_EFFORTS

@@ -1,28 +1,20 @@
-// Shared backend data layer for every Thyca page.
-// API: GET /api/bots, GET /api/conversations, GET /api/config,
-//      GET /api/bots/<id>/dm, GET /api/bots/<id>/dm/operations,
-//      GET /api/bots/<id>/dm/tasks, GET /api/bots/<id>/groups/<group_id>/tasks.
 'use strict';
-const bots = [];      // live roster from loadRoster()
-const groups = [];    // group conversations from refreshConversations()
+const bots = [];
+const groups = [];
 let liveSeq = 0, avatarCounter = 0, run = null;
 let selectedBot = '', motionPaused = false, toastTimer = null, rosterSyncTimer = null;
 const reduced = matchMedia('(prefers-reduced-motion:reduce)');
 
 function getBot(id) { return bots.find(b => b.id === id); }
 
-// Build the typed window key for one bot's fixed DM.
 function dmKey(botId) { return 'dm:' + botId; }
-// Build the typed window key for one group.
 function groupKey(groupId) { return 'group:' + groupId; }
-// Split one typed window key back into its door parts.
 function convParts(key) {
   const text = String(key || '');
   if (text.startsWith('dm:') && text.length > 3) return { kind: 'dm', bot_id: text.slice(3) };
   if (text.startsWith('group:') && text.length > 6) return { kind: 'group', group_id: text.slice(6) };
   return null;
 }
-// Build the detail URL for one typed window key.
 function convDetailUrl(key) {
   const parts = convParts(key);
   if (!parts) return null;
@@ -30,7 +22,6 @@ function convDetailUrl(key) {
     ? `/api/bots/${encodeURIComponent(parts.bot_id)}/dm`
     : `/api/groups/${encodeURIComponent(parts.group_id)}`;
 }
-// Build one door URL under a typed window key (turn, stream, cancel, ...).
 function convDoorUrl(key, suffix) {
   const parts = convParts(key);
   if (!parts) return null;
@@ -40,13 +31,7 @@ function convDoorUrl(key, suffix) {
     : `/api/groups/${encodeURIComponent(parts.group_id)}${tail}`;
 }
 
-/* Favorite (star) markers are a browser-only UI preference, persisted
-   in localStorage like the tint override ('thyca.tint.<id>'). The one
-   exception is the system bot: Thyca is always the main bot, so its
-   star is permanently on and cannot be removed. */
 const FAVORITE_KEY = 'thyca.favorites';
-/* Group pins use the same browser-only star preference, under their own
-   key so group ids and bot ids never collide. */
 const GROUP_FAVORITE_KEY = 'thyca.groupFavorites';
 function favoriteIdsFor(key) {
   try {
@@ -57,7 +42,7 @@ function favoriteIdsFor(key) {
 function setFavoriteFor(key, id, favorite) {
   const ids = favoriteIdsFor(key);
   if (favorite) ids.add(id); else ids.delete(id);
-  try { localStorage.setItem(key, JSON.stringify([...ids])); } catch { /* marker still applies when storage is unavailable */ }
+  try { localStorage.setItem(key, JSON.stringify([...ids])); } catch {  }
 }
 function favoriteIds() { return favoriteIdsFor(FAVORITE_KEY); }
 function botFavorite(cardId, system) {
@@ -67,8 +52,6 @@ function setBotFavorite(id, favorite) { setFavoriteFor(FAVORITE_KEY, id, favorit
 function groupFavoriteIds() { return favoriteIdsFor(GROUP_FAVORITE_KEY); }
 function setGroupFavorite(id, favorite) { setFavoriteFor(GROUP_FAVORITE_KEY, id, favorite); }
 
-/* Display title for one group: its stored title when present, else the
-   shared-conversation fallback (one rule for sidebar, pockets, chat). */
 function groupTitleOf(title) {
   return typeof title === 'string' && title.trim() ? title.trim() : 'Hội thoại chung';
 }
@@ -96,8 +79,6 @@ function toast(text) {
 }
 function announce(text) { const el = $('#announcer'); if (el) el.textContent = text; }
 
-/* Card.tint is a theme token, not a hex — map to the same hues the seal
-   engine expects. A saved custom hex overrides it first. */
 const TINT_HEX = {
   accent: '#a65a42',
   'accent-deep': '#8f4a35',
@@ -118,20 +99,14 @@ function botElapsed(card) {
   return Number.isFinite(at) ? Math.max(0, Math.floor((Date.now() - at) / 1000)) : 0;
 }
 
-/* A bot mid-turn in this client owns its state; roster polls only patch
-   cards while no local run drives the same bot id. */
 function botHasRun(id) {
   return typeof runs !== 'undefined' && [...runs.values()].some(t => t.botId === id);
 }
 
-/* Public bot card -> the runtime shape sidebar, avatars and pages share. */
 function normalizeBot(card, index) {
   const hex = localStorage.getItem('thyca.tint.' + card.id)
     || TINT_HEX[card.tint]
     || TINT_HEX[TINT_ORDER[index % TINT_ORDER.length]];
-  /* Browser-only shape override, mirroring the tint override above.
-     DROP_NAMES is owned by avatars.js; call-time reference is safe
-     because normalizeBot only runs after all scripts have loaded. */
   const shapeRaw = localStorage.getItem('thyca.shape.' + card.id);
   const shape = (typeof DROP_NAMES !== 'undefined' && DROP_NAMES.includes(shapeRaw)) ? shapeRaw : null;
   return {
@@ -159,14 +134,7 @@ function normalizeBot(card, index) {
     bash: card.bash || '',
     schedule: card.schedule || null,
     mentioned: false, revision: 0, orbitAngle: 0, orbitAt: Date.now(),
-    /* Live tool/skill calls observed on this client's streams:
-       {key, call_id, kind, name, conversation, seq}. The compact preview
-       derives from them; removal happens only on the corresponding
-       finish (first match) or when the conversation's turn ends. */
     liveCalls: [],
-    /* Pocket task disclosure: fetched only after an explicit chevron/+N
-       open, guarded by taskGen so a late response can never paint a
-       stale bot/window. taskWindow is the window the cache was read for. */
     taskWindow: null,
     taskCache: null,
     taskGen: 0,
@@ -174,11 +142,6 @@ function normalizeBot(card, index) {
   };
 }
 
-/* Exact current chat window — the only room a pocket or preview may
-   read. Null on non-chat pages (sidebar.js is shared) or when no
-   conversation is selected, so callers can never invent a window and leak
-   another room's private work. currentConversation lives in the chat bundle;
-   the typeof guard keeps this shared file safe where it is absent. */
 function currentChatWindow() {
   try {
     if (typeof currentConversation === 'undefined' || !currentConversation) return null;
@@ -188,8 +151,6 @@ function currentChatWindow() {
   } catch { return null; }
 }
 
-/* Invocation tokens are opaque and scoped to the stream's turn, bot and
-   window. Legacy events can finish only a unique legacy candidate. */
 function liveCallStarted(b, opts) {
   const { kind, name, call_id, conversation, turn, invocation_id } = opts || {};
   if (invocation_id && turn) {
@@ -235,15 +196,10 @@ function clearLiveCalls(b, conversation) {
     }
   }
 }
-/* Live calls for exactly the current window, newest last. */
 function liveCallsForWindow(b, window) {
   if (!window) return [];
   return (b.liveCalls || []).filter(f => f.conversation === window);
 }
-/* Compact preview model: concurrent calls group by actual kind+name
-   (tool 'read' and skill 'read' stay distinct), newest group first.
-   Shows up to two groups; `extra` counts the remaining groups and
-   drives the +N button, which opens the full list separately. */
 function livePreviewGroups(b, window) {
   const grouped = new Map();
   for (const f of liveCallsForWindow(b, window)) {
@@ -256,19 +212,11 @@ function livePreviewGroups(b, window) {
   return { shown: groups.slice(0, 2), extra: Math.max(0, groups.length - 2), total: groups.length };
 }
 
-/* Pocket task fetch — explicit-open only. Callers (chevron/+N, stream
-   events while open, window switches while open) invoke this; roster
-   load, bot select and send never do. The taskGen guard drops late
-   responses so a stale fetch can never paint another bot/window:
-   the payload renders only when gen and window still match. Bursts
-   (parallel calls, replay) coalesce: a same-window fetch already in
-   flight absorbs newcomers into one bounded trailing recheck — no
-   background polling, at most one extra request per burst. */
 async function refreshBotTasks(b, window) {
   const target = window === undefined ? currentChatWindow() : window;
   const flight = b._taskFlight;
   if (flight && flight.window === target) {
-    flight.dirty = true;   // coalesce: recheck once when the flight lands
+    flight.dirty = true;
     return flight.promise;
   }
   const gen = ++b.taskGen;
@@ -289,10 +237,10 @@ async function refreshBotTasks(b, window) {
         : parts ? `/api/bots/${encodeURIComponent(b.id)}/groups/${encodeURIComponent(parts.group_id)}/tasks` : null;
       if (!url) throw new Error('unknown conversation');
       const payload = await getJson(url);
-      if (gen !== b.taskGen || b.taskWindow !== target) return null;  // superseded
+      if (gen !== b.taskGen || b.taskWindow !== target) return null;
       b.taskCache = { status: 'ok', payload };
     } catch (err) {
-      if (gen !== b.taskGen || b.taskWindow !== target) return null;  // superseded
+      if (gen !== b.taskGen || b.taskWindow !== target) return null;
       const status = err && (err.status === 404 || err.status === 503) ? 'unavailable' : 'error';
       b.taskCache = { status, message: (err && err.message) || 'Unavailable' };
     }
@@ -305,25 +253,19 @@ async function refreshBotTasks(b, window) {
   if (b._taskFlight === slot) b._taskFlight = null;
   if (slot.dirty && b.open && b.taskWindow === target) {
     const now = window === undefined ? currentChatWindow() : window;
-    if (now === target) return refreshBotTasks(b, target);   // one bounded recheck
+    if (now === target) return refreshBotTasks(b, target);
   }
   return out;
 }
 function noteTaskStale(b) { if (b) b.taskGen++; }
 
 async function loadRoster() {
-  const payload = await getJson('/api/bots');                  // API: GET /api/bots
+  const payload = await getJson('/api/bots');
   bots.splice(0, bots.length, ...(payload.bots || []).map(normalizeBot));
-  // Pockets stay closed until the user explicitly opens one (chevron/+N):
-  // roster load, bot select and send must not disclose tasks by themselves.
   bots.forEach(b => { b.open = false; });
   if (!getBot(selectedBot) && bots[0]) selectedBot = bots[0].id;
 }
 
-/* Conversations -> compact rows per pocket + the shared group roster. Deleted
-   bots are filtered out by getBot before any member row is built. Each row
-   names its door from identity: a DM shows its bot name, a group shows the
-   shared conversation label. Empty doors keep the same identity label. */
 function conversationRow(conversation) {
   const when = conversation.updated_at ? new Date(conversation.updated_at) : null;
   const day = when && when.toDateString() === new Date().toDateString() ? 'Hôm nay'
@@ -334,11 +276,8 @@ function conversationRow(conversation) {
   const label = conversation.kind === 'dm' ? ((getBot(conversation.bot_id) || {}).name || conversation.bot_id || 'Thyca') : groupTitleOf(conversation.title);
   return [key, label, day + turns];
 }
-// Refresh the conversation list into group rows and per-bot pocket rows.
-// Each group and bot keeps its newest conversation timestamp (activityAt /
-// updatedAtMs) so the unified sidebar can push recent chats to the top.
 async function refreshConversations() {
-  const payload = await getJson('/api/conversations');         // API: GET /api/conversations
+  const payload = await getJson('/api/conversations');
   const list = payload.conversations || [];
   const tsOf = s => { const t = Date.parse(s.updated_at || ''); return Number.isFinite(t) ? t : 0; };
   groups.splice(0, groups.length, ...list.filter(s => s.kind === 'group').map(s => {
@@ -349,17 +288,13 @@ async function refreshConversations() {
     const mine = list.filter(s => (s.kind === 'dm' && s.bot_id === b.id)
       || (s.kind === 'group' && (s.bots || []).includes(b.id)));
     b.conversations = mine.map(conversationRow);
-    /* Sidebar recency for a bot entry tracks its own DM only — group chats
-       promote the group entry, not every member bot on their own. */
     b.activityAt = list.filter(s => s.kind === 'dm' && s.bot_id === b.id)
       .reduce((max, s) => Math.max(max, tsOf(s)), 0);
   });
 }
 
-/* Re-sync the roster without a page reload: new bots get a card, deleted
-   bots drop out, card fields refresh in place. */
 async function syncRoster() {
-  const payload = await getJson('/api/bots');                  // API: GET /api/bots
+  const payload = await getJson('/api/bots');
   const incoming = payload.bots || [], ids = new Set(incoming.map(c => c.id));
   let changed = false;
   incoming.forEach((raw, i) => {
@@ -373,7 +308,7 @@ async function syncRoster() {
   if (!changed) { bots.forEach(b => { if (typeof updateCard === 'function') updateCard(b); }); return; }
   if (typeof renderTeam === 'function') renderTeam();
   if (typeof rebuildExpressionBots === 'function') rebuildExpressionBots();
-  await refreshConversations();                                     // API: GET /api/conversations
+  await refreshConversations();
   if (typeof renderGroups === 'function') renderGroups();
   if (!getBot(selectedBot) && bots.length) selectedBot = bots[0].id;
 }
@@ -382,9 +317,8 @@ function scheduleRosterSync() {
   rosterSyncTimer = setTimeout(() => syncRoster().catch(() => {}), 350);
 }
 
-/* Context meter for one bot's DM (the fixed room it uses on this page). */
 async function botContext(botId) {
-  await getJson(`/api/bots/${encodeURIComponent(botId)}/dm`);  // API: GET /api/bots/<id>/dm
+  await getJson(`/api/bots/${encodeURIComponent(botId)}/dm`);
   const ops = await getJson(`/api/bots/${encodeURIComponent(botId)}/dm/operations`);
   return ops && typeof ops === 'object' ? ops : null;
 }

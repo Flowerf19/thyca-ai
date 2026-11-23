@@ -247,7 +247,7 @@ def test_refollow_rebuilds_live_node_without_duplicating(rounds: dict) -> None:
     assert mid["streamText"] == "replay-one"
     done = rounds["refollowDone"]
     assert done["liveNodes"] == 0
-    assert done["occurrences"] == 1  # only the stored transcript shows it
+    assert done["occurrences"] == 1
     assert done["tracked"] is False
 
 
@@ -281,5 +281,4 @@ def test_transcript_renders_articles_and_tool_pills(rounds: dict) -> None:
     ]
     assert rounds["transcript"]["copies"][2] == "Search xong rồi. Vài tin hôm nay:"
     assert rounds["transcript"]["copies"][4] == "Nhiệt độ: 45°C — vẫn mát."
-    # Reasoning is a live-card concern; the stored transcript drops it.
     assert rounds["transcript"]["hasReasoning"] is False

@@ -22,6 +22,7 @@ from pathlib import Path
 from filelock import FileLock
 
 from thyca.configs import atomic_write_text
+from thyca.configs.store import config_path
 from thyca.skills.store import _NAME_RE
 
 STATE_FILENAME = "skill-sharing.json"
@@ -30,9 +31,6 @@ STATE_TMP_FILENAME = "skill-sharing.json.tmp"
 STATE_VERSION = 1
 SKILL_FILENAME = "SKILL.md"
 
-# Reserved sharing-state files denied to native write/edit on every path
-# identity (lexical and resolved, including aliases). The exact publication
-# temp name is reserved so a child cannot substitute pending grants.
 RESERVED_SHARING_FILES = frozenset({
     STATE_FILENAME,
     LOCK_FILENAME,
@@ -60,16 +58,12 @@ def _lock(root: Path) -> FileLock:
 class SkillRef:
     """One recognized skill-file location."""
 
-    kind: str  # "team" | "private" | "global" | "thyca-private"
+    kind: str
     bot_id: str | None
     skill_name: str
 
 
 def is_reserved_sharing_file(root: Path, candidate: Path) -> bool:
-    # True when ``candidate`` names a reserved sharing file under ``root``.
-    # A leading root alias re-anchors first so an aliased spelling still
-    # matches; inner components stay lexical. Callers check both the
-    # lexical request and its resolved destination.
     resolved = _resolved_or_self(root)
     try:
         anchored = anchored_skill_path(resolved, candidate)
@@ -80,10 +74,6 @@ def is_reserved_sharing_file(root: Path, candidate: Path) -> bool:
 
 
 def skill_refs_for(root: Path, lexical: Path, resolved: Path) -> tuple[SkillRef | None, SkillRef | None]:
-    # Classify both the lexical request and its resolved destination.
-    # A permitted leading root alias re-anchors to the same skill on both
-    # sides; any other mismatch means an inner or outer symlink alias and
-    # must fail closed. Callers deny when the two identities differ.
     try:
         ref_lex = classify_skill_path(root, lexical)
     except (OSError, ValueError):
@@ -96,9 +86,6 @@ def skill_refs_for(root: Path, lexical: Path, resolved: Path) -> tuple[SkillRef 
 
 
 def skill_refs_match(first: SkillRef | None, second: SkillRef | None) -> bool:
-    # Both absent means an ordinary file; both present must agree exactly.
-    # Any one-sided skill identity is an alias into or out of the skill
-    # roots and fails closed.
     if first is None and second is None:
         return True
     if first is None or second is None:
@@ -107,8 +94,6 @@ def skill_refs_match(first: SkillRef | None, second: SkillRef | None) -> bool:
 
 
 def _resolved_or_self(root: Path) -> Path:
-    # Canonical root for containment checks; context roots may still
-    # carry a symlink alias, so callers compare against this form.
     try:
         return Path(root).resolve()
     except (OSError, RuntimeError, ValueError):
@@ -150,13 +135,10 @@ def classify_skill_path(root: Path, lexical: Path) -> SkillRef | None:
     parts = rel.parts
     if not parts:
         return None
-    # Team: skills-team/<name>/...
     if parts[0] == "skills-team" and len(parts) >= 2:
         return SkillRef(kind="team", bot_id=None, skill_name=parts[1])
-    # Global Thyca-owned: skills/<name>/...
     if parts[0] == "skills" and len(parts) >= 2:
         return SkillRef(kind="global", bot_id=None, skill_name=parts[1])
-    # Private: bots/<bot_id>/skills/<name>/...
     if parts[0] == "bots" and len(parts) >= 4 and parts[2] == "skills":
         bot_id = parts[1]
         name = parts[3]
@@ -190,25 +172,17 @@ def load_shared_names(root: Path) -> set[str]:
     try:
         st = os.lstat(path)
     except FileNotFoundError:
-        # Missing state means nothing is shared.
         return set()
     except OSError as exc:
         raise SharingCorrupt(f"unreadable sharing state: {exc}") from exc
     if not stat.S_ISREG(st.st_mode):
-        # A directory, fifo, socket, or symlink at the state path is
-        # untrusted input, never an empty grant.
         raise SharingCorrupt(f"sharing state is not a regular file: {path}")
-    # Reads use atomic rename visibility (no lock): writers replace the
-    # file atomically, so readers see old or new, never torn bytes.
-    # Share/unshare hold the lock across read-modify-write.
     data = _read_state_file(path)
     if data.get("version") != STATE_VERSION:
         raise SharingCorrupt(f"unsupported sharing version: {data.get('version')!r}")
     shared = data.get("shared")
     if not isinstance(shared, list) or any(not isinstance(v, str) for v in shared):
         raise SharingCorrupt("invalid sharing state: shared must be a string list")
-    # Validate names; an invalid entry makes the whole state untrusted
-    # rather than silently dropping one grant.
     for name in shared:
         if not _NAME_RE.fullmatch(name):
             raise SharingCorrupt(f"invalid shared skill name: {name!r}")
@@ -216,8 +190,6 @@ def load_shared_names(root: Path) -> set[str]:
 
 
 def _write_state(root: Path, shared: set[str]) -> None:
-    # Caller holds the lock across read-modify-write; the rename itself
-    # is atomic for lock-free readers.
     payload = {"version": STATE_VERSION, "shared": sorted(shared)}
     atomic_write_text(_state_path(root), json.dumps(payload, indent=2) + "\n")
 
@@ -226,14 +198,9 @@ def _require_team_skill_exists(root: Path, name: str) -> None:
     if not _NAME_RE.fullmatch(name):
         raise ValueError(f"invalid skill name: {name!r}")
     skill_dir = Path(root) / "skills-team" / name
-    # Lexical existence only; link checks happen at index/read time and
-    # disallow linked skills without blocking the name grant itself: a
-    # symlinked entry may precede its target, so the grant persists.
     try:
         if skill_dir.is_symlink():
             return
-        # A plain file (or fifo, socket, ...) where a skill dir should
-        # be is a typo, never a skill.
         if not skill_dir.is_dir():
             raise ValueError(f"no such team skill: {name!r}")
     except OSError as exc:
@@ -250,7 +217,6 @@ class SharingService:
     """Persisted name grants plus one place for skill access decisions."""
 
     def __init__(self, thyca_dir: Path | None = None) -> None:
-        from thyca.configs.store import config_path
 
         self._root = Path(thyca_dir or config_path().parent)
 
@@ -269,8 +235,6 @@ class SharingService:
             try:
                 current = load_shared_names(self._root)
             except SharingCorrupt:
-                # A corrupt state never silently repairs: refuse to add a
-                # grant on top of untrusted bytes.
                 raise
             if name in current:
                 return False
@@ -291,7 +255,6 @@ class SharingService:
             _write_state(self._root, current - {name})
             return True
 
-    # -- access decisions (index + native file tools share these) -----
 
     def can_read_skill(self, bot_id: str | None, ref: SkillRef) -> bool:
         """True when ``bot_id`` may read this recognized skill path."""
@@ -304,7 +267,6 @@ class SharingService:
                 return ref.skill_name in load_shared_names(self._root)
             except SharingCorrupt:
                 return False
-        # Global and Thyca-private roots are Thyca-owned.
         return False
 
     def can_write_skill(self, bot_id: str | None, ref: SkillRef) -> bool:
@@ -313,12 +275,8 @@ class SharingService:
             return True
         if ref.kind == "private":
             return ref.bot_id == bot_id
-        # Shared team skills are read-only for children; global and
-        # Thyca-private roots are Thyca-owned.
         return False
 
-
-# -- link-safe descriptor reads for recognized skill files -------------
 
 def _lstat_no_follow(path: Path) -> os.stat_result:
     return os.lstat(path)
@@ -343,8 +301,6 @@ def _has_symlink_component(lexical: Path, root: Path) -> bool:
             if current.is_symlink():
                 return True
         except OSError:
-            # Unreadable component fails closed elsewhere; here report no
-            # symlink so the caller raises its own precise error.
             return False
     return False
 
@@ -382,9 +338,8 @@ def read_skill_checked(root: Path, lexical_abs: Path) -> str:
     except OSError as exc:
         raise ValueError(f"cannot open skill root: {exc}") from exc
     try:
-        # Open each parent directory, then the final file.
         fd = base_fd
-        base_fd = None  # ownership moves to fd
+        base_fd = None
         for part in parts[:-1]:
             try:
                 nxt = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
@@ -404,9 +359,6 @@ def read_skill_checked(root: Path, lexical_abs: Path) -> str:
                 raise ValueError("skill path is not a regular file")
             if st.st_nlink != 1:
                 raise ValueError("skill file is hardlinked")
-            # Read from the validated descriptor, not the pathname.
-            # Plain utf-8 preserves BOM bytes in native read/edit output;
-            # BOM tolerance lives in metadata parsing only.
             with os.fdopen(file_fd, "r", encoding="utf-8", closefd=False) as stream:
                 text = stream.read()
             os.close(file_fd)
@@ -442,20 +394,12 @@ def validate_skill_write_path(root: Path, lexical_abs: Path) -> None:
     root = _resolved_or_self(root)
     lexical_abs = anchored_skill_path(root, lexical_abs)
     try:
-        rel = lexical_abs.relative_to(root)
+        lexical_abs.relative_to(root)
     except ValueError as exc:
         raise ValueError(f"skill path escapes root: {exc}") from exc
     if _has_symlink_component(lexical_abs, root):
         raise ValueError("skill path contains a symlink")
     parent = lexical_abs.parent
-    # Validate each parent directory exists (or will be created for new
-    # skills?) and contains no symlink. For creation, parents must exist;
-    # skill creation uses write which mkdirs? Native write creates parents
-    # via replace_file mkdir. Here require existing parents to be real dirs;
-    # missing intermediate skill dirs are created by the caller only for
-    # own-private skills after this check would fail. To keep creation
-    # working, allow missing leaf skill dirs but require the skill-root
-    # parents (roots/skills-team, bots/<id>/skills) to be real dirs.
     current = Path(root)
     for part in parent.relative_to(root).parts:
         current = current / part
@@ -464,10 +408,6 @@ def validate_skill_write_path(root: Path, lexical_abs: Path) -> None:
                 raise ValueError("skill path contains a symlink")
         except OSError as exc:
             raise ValueError(f"skill parent unreadable: {exc}") from exc
-        # Missing intermediate dirs are only allowed below the skill-name
-        # level (new skill files like <skill>/references/x.md). The two
-        # levels above the skill name must already be real directories.
-        # Enforcement happens naturally: is_dir checks below skip missing.
         try:
             if current.exists() and not current.is_dir():
                 raise ValueError("skill parent is not a directory")
@@ -476,7 +416,7 @@ def validate_skill_write_path(root: Path, lexical_abs: Path) -> None:
     try:
         st = _lstat_no_follow(lexical_abs)
     except FileNotFoundError:
-        return  # creation: parents already validated
+        return
     except OSError as exc:
         raise ValueError(f"skill target unreadable: {exc}") from exc
     if stat.S_ISLNK(st.st_mode):
@@ -487,17 +427,8 @@ def validate_skill_write_path(root: Path, lexical_abs: Path) -> None:
         raise ValueError("skill file is hardlinked")
 
 def write_skill_checked(root: Path, lexical_abs: Path, content: str) -> None:
-    # Write a recognized skill file without reopening an unchecked parent.
-    # Parents are pinned through O_NOFOLLOW directory descriptors; missing
-    # intermediate dirs below the skill root are created with mkdirat on the
-    # pinned parent, so a swapped symlink cannot redirect the write. The
-    # existing target, when present, is rechecked as a single-link regular
-    # file before the atomic temp replace. The temp file is created O_EXCL
-    # inside the pinned parent and renamed within that directory.
     if not isinstance(content, str):
         raise ValueError("content must be str")
-    # Encode before creating the temp so an unencodable string never leaves
-    # a blocking "<leaf>.tmp" behind.
     try:
         data = content.encode("utf-8")
     except (UnicodeEncodeError, ValueError) as exc:
@@ -529,7 +460,6 @@ def write_skill_checked(root: Path, lexical_abs: Path, content: str) -> None:
             try:
                 nxt = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, dir_fd=parent_fd)
             except FileNotFoundError:
-                # Create one missing intermediate dir inside the pinned parent.
                 try:
                     os.mkdir(part, 0o700, dir_fd=parent_fd)
                 except OSError as exc:
@@ -543,7 +473,6 @@ def write_skill_checked(root: Path, lexical_abs: Path, content: str) -> None:
             os.close(parent_fd)
             parent_fd = nxt
             _validate_skill_dir_fd(parent_fd)
-        # Recheck an existing target without following symlinks.
         try:
             st = os.stat(leaf, dir_fd=parent_fd, follow_symlinks=False)
         except FileNotFoundError:
@@ -561,8 +490,6 @@ def write_skill_checked(root: Path, lexical_abs: Path, content: str) -> None:
         try:
             tmp_fd = os.open(tmp_name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600, dir_fd=parent_fd)
         except OSError as exc:
-            # Preexisting user temp (symlink, hardlink, or file) is never
-            # deleted or overwritten; fail closed.
             raise ValueError(f"cannot create skill temp: {exc}") from exc
         try:
             view = memoryview(data)
@@ -575,7 +502,6 @@ def write_skill_checked(root: Path, lexical_abs: Path, content: str) -> None:
                 os.close(tmp_fd)
             except OSError:
                 pass
-            # Only the temp created by this operation is removed.
             try:
                 os.unlink(tmp_name, dir_fd=parent_fd)
             except OSError:

@@ -7,13 +7,13 @@ import pytest
 from thyca.agents.observe import Observe
 from thyca.agents.stage import Stage
 from thyca.agents.think import ChatReply
-from thyca.core.protocol import Message, ToolCall, ToolResult
+from thyca.bots.timeline import CanonicalConversationStore, WorkspaceTimeline
 from thyca.conversations.runtime import ConversationManager
+from thyca.core.channel import WindowRef
+from thyca.core.protocol import Message, ToolCall, ToolResult
 
-# Build a canonical-timeline manager holding one execution conversation.
+
 def _canonical_manager(root: Path, limits=None) -> ConversationManager:
-    from thyca.bots.timeline import CanonicalConversationStore, WorkspaceTimeline
-    from thyca.core.channel import WindowRef
 
     timeline = WorkspaceTimeline(root, "thyca")
     window = WindowRef(
@@ -25,7 +25,6 @@ def _canonical_manager(root: Path, limits=None) -> ConversationManager:
     manager = ConversationManager(store=store, limits=limits)
     manager.load(conversation_id)
     return manager
-
 
 
 def test_observe_reorders_results_and_extends_stage(tmp_path: Path) -> None:
@@ -40,7 +39,6 @@ def test_observe_reorders_results_and_extends_stage(tmp_path: Path) -> None:
             ToolResult(tool_call_id="first", name="one", content="1"),
         ],
     )
-    # persist user first so conversation isn't only the tool round
     manager.append(stage.messages[0])
 
     Observe(manager).observe(stage)
@@ -145,7 +143,7 @@ def test_compact_delegates_to_conversation_manager(tmp_path: Path) -> None:
         seen.update(kwargs)
         return True
 
-    manager.compact_if_needed = compact  # type: ignore[method-assign]
+    manager.compact_if_needed = compact  # type: ignore[method-assign] -- reason: test spy method replacement
 
     assert Observe(manager).compact() is True
     assert called == [True]
@@ -172,18 +170,7 @@ def test_observe_persists_reasoning_details(tmp_path: Path) -> None:
     assert stored.reasoning_details == details
 
 
-# Moved from test_b4_unification.py / test_b4_p2.py (B4 batch).
-from pathlib import Path
-
 def test_m2_observe_normalizes_tool_path_content(tmp_path: Path) -> None:
-    from thyca.agents.observe import Observe
-    from thyca.agents.stage import Stage
-    from thyca.core.protocol import ToolCall
-    from thyca.llms.llm_base import ChatReply
-    from thyca.conversations.runtime import ConversationManager
-
-    from thyca.core.protocol import ToolResult
-
     manager = _canonical_manager(tmp_path)
     call = ToolCall(id="c1", name="echo", arguments={})
     Observe(manager).observe(

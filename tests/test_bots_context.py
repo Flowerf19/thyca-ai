@@ -1,20 +1,36 @@
 """CBE-1/CBE-2/CBE-4: per-bot budgets, slim prompt, flush + re-inject."""
 from __future__ import annotations
 
+import asyncio
 import json
+import json as _json
 from dataclasses import replace
 from pathlib import Path
 
+import pytest as _pytest
+from seeded_config import seeded_config
+
 from thyca.agents.loop import AgentLoop
 from thyca.app.chat_app import ChatApp
-from thyca.bots.card import BotCard
+from thyca.bots.bus import Bus, new_span_id, new_trace_id
+from thyca.bots.card import BotCard, BotMemoryPolicy
+from thyca.bots.context import BotTurnContext, BotTurnScope
+from thyca.bots.registry import BotRegistry
+from thyca.bots.runtime import BotRuntime
 from thyca.configs import load, save
-from seeded_config import seeded_config
-from thyca.core.protocol import Message, ToolCall
-from thyca.llms.llm_base import ChatReply
-from thyca.memories.active import ActiveSnapshot
 from thyca.conversations.runtime import ConversationManager
 from thyca.conversations.runtime.compaction import ConversationCompactor
+from thyca.conversations.store.contracts import _view
+from thyca.conversations.store.runtime import resolve_ref
+from thyca.conversations.store.turn_pipeline import project_for_trace
+from thyca.core.protocol import Message, ToolCall
+from thyca.llms.llm_base import ChatReply
+from thyca.llms.prompt_manager import PromptManager
+from thyca.memories.active import ActiveSnapshot
+from thyca.memories.habits import AUTO_END as LEGACY_END
+from thyca.memories.habits import AUTO_START as LEGACY_START
+from thyca.memories.identity import bind_bot_id, reset_bot_id
+from thyca.memories.profile import PROFILE_AUTO_END, PROFILE_AUTO_START
 
 
 def _chat(tmp_path: Path, connect, context_tokens: int | None = None) -> ChatApp:
@@ -64,16 +80,8 @@ def _internal_messages(app: ChatApp, bot_id: str, room_id: str):
     return store.load(conversation_id).messages
 
 
-# --- CBE-1: per-instance budget ------------------------------------------
-
 def test_bot_instance_compacts_with_own_budget_and_overhead(tmp_path: Path) -> None:
     llm = _CaptureLLM()
-    # 5400 (was 5200/4800/4400/4000/3400/3000/2000): legacy cards now always keep
-    # the baseline tools, whose schemas are real counted overhead in this
-    # budget; message_user, then ask_user/report_error, then memory_tasks
-    # (phase 1A), then memory_tasks in baseline (review rework), then the
-    # private follow-up channel tools, then the compact tool (TURN-CURATE)
-    # raised it again.
     app = _chat(tmp_path, llm, context_tokens=5400)
     try:
         app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
@@ -82,7 +90,6 @@ def test_bot_instance_compacts_with_own_budget_and_overhead(tmp_path: Path) -> N
                                  description="Helps.", persona="PERSONA-HELPER"))
         other = app.create(bots=["helper"])["conversation_id"]
         _seed_history(app, "helper", other, marker="HELPER-HISTORY")
-        # Created last: creating a conversation prunes other blank conversations.
         room = app.create(bots=["coder"])["conversation_id"]
         _seed_history(app, "coder", room, marker="EARLY-SECRET")
 
@@ -94,12 +101,9 @@ def test_bot_instance_compacts_with_own_budget_and_overhead(tmp_path: Path) -> N
             m.role == "system" and (m.content or "").startswith("[compaction: ")
             for m in coder_msgs
         ), "bot conversation must compact under its own context budget"
-        # The compacted main prompt no longer carries the earliest seeded
-        # turns (the summarizer side-call legitimately sees them once).
         main_prompts = [p for p in llm.prompts if "PERSONA-CODER" in p]
         assert main_prompts
         assert all("EARLY-SECRET-0" not in prompt for prompt in main_prompts)
-        # The other bot's conversation is untouched by coder's compaction.
         helper_msgs = _internal_messages(app, "helper", other)
         assert not any(
             m.role == "system" and (m.content or "").startswith("[compaction: ")
@@ -110,8 +114,6 @@ def test_bot_instance_compacts_with_own_budget_and_overhead(tmp_path: Path) -> N
 
 
 def test_compactor_counts_hot_and_tools_overhead() -> None:
-    # Transcript alone fits under the backstop; transcript + hot + tools
-    # does not. The plan must fire only when overhead is counted.
     messages = [
         Message(role="user", content="u" * 1200, ts="2026-08-01T10:00:00Z"),
         Message(role="assistant", content="a" * 1200, ts="2026-08-01T10:01:00Z"),
@@ -125,7 +127,7 @@ def test_compactor_counts_hot_and_tools_overhead() -> None:
 
 def test_agent_loop_hot_and_tools_token_counters() -> None:
     loop = AgentLoop(
-        conversations=None, assemble=None, think=None, act=None, observe=None,  # type: ignore[arg-type]
+        conversations=None, assemble=None, think=None, act=None, observe=None,  # type: ignore[arg-type] -- reason: intentional invalid-type or test-double argument
         loop_max=1, tools=[{"type": "function", "function": {"name": "read"}}],
         context_tokens=1000,
     )
@@ -135,16 +137,12 @@ def test_agent_loop_hot_and_tools_token_counters() -> None:
         recalled="- hit: fact",
     )
     assert loop._hot_tokens(hot) > 0
-    # Every hot section (team/tasks/recalled included) is counted.
     bigger = replace(hot, team=hot.team + "\n- x — y" * 50)
     assert loop._hot_tokens(bigger) > loop._hot_tokens(hot)
     assert loop._tools_tokens() > 0
 
 
-# --- CBE-2: slim prompt ----------------------------------------------------
-
 def test_team_index_is_name_and_role_only(tmp_path: Path) -> None:
-    from thyca.bots.registry import BotRegistry
 
     registry = BotRegistry(tmp_path)
     registry.ensure_thyca()
@@ -155,13 +153,11 @@ def test_team_index_is_name_and_role_only(tmp_path: Path) -> None:
     index = registry.team_index_text()
     assert "- coder — Coder" in index
     assert "very long description" not in index
-    # The public API keeps the description; only prompts slim down.
     public = {row["id"]: row for row in registry.public_list()}
     assert "very long description" in public["coder"]["description"]
 
 
 def test_skill_index_is_name_plus_short_description_no_body(tmp_path: Path) -> None:
-    from thyca.bots.registry import BotRegistry
 
     registry = BotRegistry(tmp_path)
     registry.ensure_thyca()
@@ -172,8 +168,8 @@ def test_skill_index_is_name_plus_short_description_no_body(tmp_path: Path) -> N
         encoding="utf-8")
     index = registry.skill_index_text("thyca")
     assert "SECRET BODY" not in index
-    line = [row for row in index.splitlines() if row.startswith("- mine")][0]
-    assert len(line) < 300  # name + capped (<=256) short description only
+    line = next(row for row in index.splitlines() if row.startswith("- mine"))
+    assert len(line) < 300
 
 
 def test_bot_prompt_carries_task_index_counted_in_hot(tmp_path: Path) -> None:
@@ -200,12 +196,8 @@ def test_bot_prompt_carries_task_index_counted_in_hot(tmp_path: Path) -> None:
         app.shutdown()
 
 
-# --- CBE-4: flush before compact, re-inject after ---------------------------
-
 def test_flush_runs_before_compaction_and_recall_fires_once(tmp_path: Path) -> None:
     llm = _CaptureLLM()
-    # 5400 (was 5200/...): the baseline tool set (incl. the compact tool)
-    # is counted overhead in this budget, like the first test above.
     app = _chat(tmp_path, llm, context_tokens=5400)
     try:
         app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
@@ -225,7 +217,6 @@ def test_flush_runs_before_compaction_and_recall_fires_once(tmp_path: Path) -> N
         app._runtime.memory_searcher = lambda text, bot_id: ["- recalled: egg coffee fact"]
 
         app.turn(room, "first turn")
-        # Flush saw the intact (pre-compaction) transcript, exactly once.
         assert flush_calls == [("coder", False)]
         assert any(
             (m.content or "").startswith("[compaction: ")
@@ -255,8 +246,6 @@ def test_no_flush_when_agent_checkpointed_segment(tmp_path: Path) -> None:
                                  description="Writes code.", persona="PERSONA-CODER"))
         room = app.create(bots=["coder"])["conversation_id"]
         _seed_history(app, "coder", room, marker="CKPT")
-        # Agent đã chủ động ghi checkpoint (kind='checkpoint' + task link)
-        # trong segment này — hệ thống phải đứng yên, không chạy mono.
         store, conversation_id = _internal_store(app, "coder", room)
         manager = ConversationManager(store=store)
         manager.load(conversation_id)
@@ -288,9 +277,6 @@ def test_no_flush_when_agent_checkpointed_segment(tmp_path: Path) -> None:
 def test_aggregate_team_profiles_runs_thyca_turn_and_strips_legacy(
     tmp_path: Path, monkeypatch
 ) -> None:
-    from thyca.memories.habits import AUTO_END as LEGACY_END
-    from thyca.memories.habits import AUTO_START as LEGACY_START
-    from thyca.memories.profile import PROFILE_AUTO_END, PROFILE_AUTO_START
 
     llm = _CaptureLLM()
     app = _chat(tmp_path, llm)
@@ -322,8 +308,7 @@ def test_aggregate_team_profiles_runs_thyca_turn_and_strips_legacy(
         assert calls[0][0] == "thyca"
         prompt = calls[0][1]
         assert "coder fact" in prompt
-        assert "Writes code." in prompt  # card context injected
-        # Legacy ## Habits block đã strip vì line nằm trong profile block.
+        assert "Writes code." in prompt
         text = shared.read_text(encoding="utf-8")
         assert "## Habits" not in text
         assert "## Profile" in text
@@ -334,7 +319,6 @@ def test_aggregate_team_profiles_runs_thyca_turn_and_strips_legacy(
 def test_aggregate_team_profiles_skips_within_window(
     tmp_path: Path, monkeypatch
 ) -> None:
-    from thyca.memories.profile import PROFILE_AUTO_END, PROFILE_AUTO_START
 
     llm = _CaptureLLM()
     app = _chat(tmp_path, llm)
@@ -354,7 +338,7 @@ def test_aggregate_team_profiles_skips_within_window(
             lambda bot_id, text: (calls.append((bot_id, text)), {"id": "dm"})[1],
         )
         assert app.aggregate_team_profiles()["ran"] is True
-        assert app.aggregate_team_profiles()["ran"] is False  # trong 24h
+        assert app.aggregate_team_profiles()["ran"] is False
         assert len(calls) == 1
     finally:
         app.shutdown()
@@ -384,8 +368,6 @@ def test_no_flush_when_no_compaction_due(tmp_path: Path) -> None:
         app.shutdown()
 
 
-# --- Two-layer twin identity (2026-10-13) -----------------------------------
-
 def _marker_home(tmp_path: Path, app: ChatApp) -> None:
     (tmp_path / "SOUL.md").write_text(
         "# Soul\n\nSHARED-SOUL-MARKER: shared team voice.\n", encoding="utf-8")
@@ -405,10 +387,8 @@ def test_child_prompt_own_identity_shared_soul_persona_overlay(tmp_path: Path) -
         prompts = [p for p in llm.prompts if "PERSONA-CODER" in p]
         assert prompts, "child main prompt must carry its persona overlay"
         prompt = prompts[-1]
-        # Own identity from TWIN.md, shared soul, persona overlay …
         assert "Name: coder" in prompt
         assert "SHARED-SOUL-MARKER" in prompt
-        # … and never Thyca's IDENTITY.md (the child-as-Thyca leak).
         assert "THYCA-IDENTITY-MARKER" not in prompt
         assert "Name: Thyca" not in prompt
     finally:
@@ -434,11 +414,8 @@ def test_child_empty_persona_keeps_own_identity_and_shared_soul(tmp_path: Path) 
         app.shutdown()
 
 
-# --- Phase 1C: extractor catalog per bot + <memory_tasks> section ---------
-
 def _seed_task(app: ChatApp, bot_id: str | None, topic: str, task_id: str,
                chat: str | None = None):
-    from thyca.memories.identity import bind_bot_id, reset_bot_id
 
     facade = app.job_facade()
     token = bind_bot_id(bot_id) if bot_id else None
@@ -451,7 +428,6 @@ def _seed_task(app: ChatApp, bot_id: str | None, topic: str, task_id: str,
 
 
 def test_flush_extractor_prompt_hides_other_bot_task(tmp_path: Path) -> None:
-    import asyncio
 
     llm = _CaptureLLM()
     app = _chat(tmp_path, llm)
@@ -480,7 +456,6 @@ def test_flush_extractor_prompt_hides_other_bot_task(tmp_path: Path) -> None:
 
 
 def test_flush_extractor_prompt_includes_today_notes_scoped(tmp_path: Path) -> None:
-    import asyncio
 
     llm = _CaptureLLM()
     app = _chat(tmp_path, llm)
@@ -554,7 +529,6 @@ def test_thyca_prompt_sees_all_memory_tasks(tmp_path: Path) -> None:
 
 
 def test_prompt_sections_open_tasks_and_memory_tasks_stay_separate() -> None:
-    from thyca.llms.prompt_manager import PromptManager
 
     hot = ActiveSnapshot(
         soul="# Soul\nVoice.", user="# User\n", today="notes",
@@ -565,8 +539,6 @@ def test_prompt_sections_open_tasks_and_memory_tasks_stay_separate() -> None:
     assert "<open_tasks>\n- job A · open · room1\n</open_tasks>" in out
     assert "<memory_tasks>\n- task-aaaaaaaa: Fix sink" in out
 
-
-# --- Phase 1E: per-bot USER.md in prompt -------------------------------------
 
 def _write_bot_user(app: ChatApp, bot_id: str, text: str) -> None:
     path = app._bots.bot_dir(bot_id) / "USER.md"
@@ -595,7 +567,6 @@ def test_child_prompt_carries_own_bot_user_only(tmp_path: Path) -> None:
 
 
 def test_memory_read_false_has_no_bot_user_section(tmp_path: Path) -> None:
-    from thyca.bots.card import BotMemoryPolicy
 
     llm = _CaptureLLM()
     app = _chat(tmp_path, llm)
@@ -626,8 +597,6 @@ def test_thyca_prompt_carries_thyca_bot_user(tmp_path: Path) -> None:
 
 
 def test_flush_explicit_habit_lands_in_bot_user(tmp_path: Path) -> None:
-    import asyncio
-    import json as _json
 
     class HabitLLM:
         async def chat(self, messages, tools=None):
@@ -671,8 +640,6 @@ def test_shared_user_habit_reaches_prompt_through_user_section(tmp_path: Path) -
         app.shutdown()
 
 
-# --- Phase 2A: public room context -----------------------------------------
-
 def _internal_rows(app: ChatApp, bot_id: str, room_id: str):
     """Raw canonical transcript rows for a bot's room binding."""
     return list(_internal_messages(app, bot_id, room_id))
@@ -702,8 +669,6 @@ def _room_history_section(prompt: str) -> str:
 
 
 def _room_context_blocks(app: ChatApp, bot_id: str, room_id: str) -> list[str]:
-    # Canonical-only: no synthetic room_context rows are ever persisted.
-    # Kept as a guard — must always be empty.
     return [m.content or "" for m in _internal_rows(app, bot_id, room_id)
             if isinstance(m.meta, dict) and m.meta.get("kind") == "room_context"]
 
@@ -714,21 +679,17 @@ def _seed_room_pair(app: ChatApp) -> str:
                              role="Designer", description="Draws.", persona=""))
     app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
                              description="Writes code.", persona=""))
-    # Group from the start (phase 2B): solo rooms are DMs, which admit
-    # no second participant. Designer answers first as participant[0].
     room = app.create(bots=["designer", "coder"])["conversation_id"]
     app.turn(room, "user asks about deploy")
     return room
 
 
 def test_first_turn_sees_public_history_not_secrets(tmp_path: Path) -> None:
-    from thyca.conversations.runtime import ConversationManager
 
     llm = _CaptureLLM()
     app = _chat(tmp_path, llm)
     try:
         room = _seed_room_pair(app)
-        # Private envelope + raw tool output must never enter room context.
         app._runtime.send(sender="designer", recipient="coder", kind="message",
                           conversation_id=room, payload="SECRET-ENVELOPE")
         store = ConversationManager(store=app._conversations.store)
@@ -744,7 +705,6 @@ def test_first_turn_sees_public_history_not_secrets(tmp_path: Path) -> None:
                              ts="2026-10-16T10:02:00Z"))
         since = len(llm.prompts)
         app.turn(room, "@coder go")
-        # Nothing persisted — and the wire carried exactly one delta.
         assert _room_context_blocks(app, "coder", room) == []
         blocks = _delta_prompts(llm, since)
         assert len(blocks) == 1
@@ -767,8 +727,6 @@ def test_second_turn_gets_no_repeat_of_answered_message(tmp_path: Path) -> None:
         app.turn(room, "@coder go")
         assert len(_delta_prompts(llm, seeded)) == 1
         seen = len(llm.prompts)
-        # The first turn's user row was marked read on success: the next
-        # turn delivers nothing already answered.
         app.turn(room, "@coder again")
         assert _delta_prompts(llm, seen) == []
     finally:
@@ -776,7 +734,6 @@ def test_second_turn_gets_no_repeat_of_answered_message(tmp_path: Path) -> None:
 
 
 def test_next_turn_gets_only_fresh_message(tmp_path: Path) -> None:
-    from thyca.conversations.runtime import ConversationManager
 
     llm = _CaptureLLM()
     app = _chat(tmp_path, llm)
@@ -819,11 +776,7 @@ def test_dm_turn_produces_no_room_context(tmp_path: Path) -> None:
 
 
 def test_deliver_excludes_current_envelope_from_delta(tmp_path: Path) -> None:
-    import asyncio
 
-    from thyca.bots.context import BotTurnScope
-    from thyca.bots.bus import new_span_id, new_trace_id
-    from thyca.bots.context import BotTurnContext
 
     llm = _CaptureLLM()
     app = _chat(tmp_path, llm)
@@ -844,7 +797,6 @@ def test_deliver_excludes_current_envelope_from_delta(tmp_path: Path) -> None:
         since = len(llm.prompts)
         reply = asyncio.run(app._deliver_envelope(envelope, ctx))
         assert reply == "ok reply"
-        # Nothing persisted — the wire carried exactly one delta.
         assert _room_context_blocks(app, "coder", room) == []
         blocks = _delta_prompts(llm, since)
         assert len(blocks) == 1
@@ -852,8 +804,6 @@ def test_deliver_excludes_current_envelope_from_delta(tmp_path: Path) -> None:
         assert "SECRET-DELEGATE-PAYLOAD" not in delta
         assert "user asks about deploy" in delta
         assert "ok reply" in delta
-        # Cursor stops at the delivered delta: the live envelope is not
-        # counted as read room history.
         cursor = app._runtime.room_cursor("coder", room)
         assert cursor is not None and cursor[0] == 2
     finally:
@@ -861,10 +811,7 @@ def test_deliver_excludes_current_envelope_from_delta(tmp_path: Path) -> None:
 
 
 def test_failed_turn_keeps_current_message_unread(tmp_path: Path) -> None:
-    import asyncio
 
-    from thyca.bots.context import BotTurnScope
-    from thyca.llms.llm_base import ChatReply
 
     class DownLLM:
         async def chat(self, messages, tools=None):
@@ -886,8 +833,6 @@ def test_failed_turn_keeps_current_message_unread(tmp_path: Path) -> None:
                 turn_cfg=app._current_cfg(), room_text="CTX",
                 room_cursor_after=(3, "fpcur"),
             ))
-        # The ephemeral delta was never persisted and the cursor never
-        # advanced: the failed turn journaled only its error-marked user row.
         assert app._runtime.room_cursor("coder", room) is None
         rows = _internal_rows(app, "coder", room)
         assert not [m for m in rows
@@ -896,7 +841,6 @@ def test_failed_turn_keeps_current_message_unread(tmp_path: Path) -> None:
         assert any((m.content or "") == "@coder go"
                    and (m.meta or {}).get("error", {}).get("code")
                    for m in rows if m.role == "user")
-        # A later success with the same after-cursor does advance it.
         scope2 = BotTurnScope(
             store=app._conversations.store, act=app._act, tools=app._tools,
             memory=app._memory, state=app._state, zone=app._zone,
@@ -913,22 +857,16 @@ def test_failed_turn_keeps_current_message_unread(tmp_path: Path) -> None:
 
 
 def test_registry_binding_cursor_roundtrip(tmp_path: Path) -> None:
-    import json
 
-    from thyca.bots.bus import Bus
-    from thyca.bots.registry import BotRegistry
-    from thyca.bots.runtime import BotRuntime
 
     registry = BotRegistry(tmp_path)
     runtime = BotRuntime(tmp_path, registry, Bus())
-    # First binding mints a stable canonical conversation id (no cursor yet).
     internal = runtime.internal_conversation("coder", "room1")
     binding = runtime.workspaces.store.get_binding("coder", "room1")
     assert binding is not None and binding.internal_conversation_id == internal.conversation_id
     assert runtime.room_cursor("coder", "room1") is None
     again = runtime.internal_conversation("coder", "room1")
     assert again.conversation_id == internal.conversation_id
-    # Roundtrip: cursor persists in the one current registry shape.
     runtime.set_room_cursor("coder", "room1", (3, "fpabc"))
     assert runtime.room_cursor("coder", "room1") == (3, "fpabc")
     raw = json.loads((tmp_path / "bots" / "coder" / "workspace"
@@ -936,17 +874,14 @@ def test_registry_binding_cursor_roundtrip(tmp_path: Path) -> None:
     entry = raw["windows"]["room1"]
     assert entry["conversation"] == internal.conversation_id
     assert (entry["room_cursor"], entry["room_fingerprint"]) == (3, "fpabc")
-    # No room_conversations.json mirror is ever written.
     assert not (tmp_path / "bots" / "coder" / "room_conversations.json").exists()
     assert not (tmp_path / "bots" / "coder"
                 / "room_conversations.json.bak").exists()
-    # No binding: nothing is created or written for a cursor.
     assert runtime.room_cursor("coder", "noroom") is None
     assert runtime._workspaces.store.get_binding("coder", "noroom") is None
     runtime.set_room_cursor("coder", "noroom", (1, "x"))
     assert runtime.room_cursor("coder", "noroom") is None
     assert runtime._workspaces.store.get_binding("coder", "noroom") is None
-    # None cursor writes nothing.
     before = (tmp_path / "bots" / "coder" / "workspace"
               / "registry.json").read_bytes()
     runtime.set_room_cursor("coder", "room1", None)
@@ -955,9 +890,7 @@ def test_registry_binding_cursor_roundtrip(tmp_path: Path) -> None:
 
 
 def test_failed_bot_turn_keeps_user_row_with_error_marker(tmp_path: Path) -> None:
-    import pytest as _pytest
 
-    from thyca.llms.llm_base import ChatReply
 
     class FlakyLLM:
         def __init__(self) -> None:
@@ -980,23 +913,17 @@ def test_failed_bot_turn_keeps_user_row_with_error_marker(tmp_path: Path) -> Non
         room = _seed_room_pair(app)
         with _pytest.raises(RuntimeError):
             app.turn(room, "@coder go")
-        from thyca.conversations.runtime import ConversationManager
 
         store = ConversationManager(store=app._conversations.store)
         store.load(room)
         user_rows = [m for m in store.current.messages
                      if m.role == "user" and (m.content or "") == "@coder go"]
         assert len(user_rows) == 1
-        # Store equivalent of the legacy in-place stamp: the failure is a
-        # trailing system marker; trace projection reads it as failed.
         markers = [m for m in store.current.messages
                    if m.role == "system"
                    and isinstance((m.meta or {}).get("error"), dict)]
         assert len(markers) == 1
         assert markers[0].meta["error"]["code"] == "chat_unavailable"
-        from thyca.conversations.store.turn_pipeline import project_for_trace
-        from thyca.conversations.store.contracts import _view
-        from thyca.conversations.store.runtime import resolve_ref
 
         _ref = resolve_ref(app._root, room)
         _projected = project_for_trace(_view(
@@ -1008,10 +935,7 @@ def test_failed_bot_turn_keeps_user_row_with_error_marker(tmp_path: Path) -> Non
         _pusers = [m for m in _projected.messages
                    if m.role == "user" and (m.content or "") == "@coder go"]
         assert (_pusers[0].meta or {})["error"]["code"] == "chat_unavailable"
-        # The failed turn delivered nothing, so no cursor advanced: the
-        # ephemeral delta was never marked read (no pre-write on failure).
         assert app._runtime.room_cursor("coder", room) is None
-        # Next turn still sees the kept user row as unread delta.
         since = len(llm.prompts)
         app.turn(room, "@coder retry?")
         blocks = _delta_prompts(llm, since)

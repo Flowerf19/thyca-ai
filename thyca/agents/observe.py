@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from thyca.core.protocol import Message, ToolCall, ToolResult
 from thyca.conversations.runtime import ConversationManager
+from thyca.core.protocol import Message, ToolCall, ToolResult
 
 from .meta import assistant_meta, reasoning, reasoning_details, tool_message
 from .stage import Stage
@@ -53,8 +53,6 @@ class Observe:
         if stage.reply is None:
             raise ValueError("Stage.reply is required")
         meta = assistant_meta(stage, kind="llm")
-        # Same None->"" normalization the terminal assistant() applies: one
-        # assistant encoding on the tool path too.
         assistant = Message(
             role="assistant",
             content=stage.reply.content or "",
@@ -93,8 +91,6 @@ class Observe:
 
     def context_limit(self, stage: Stage) -> str:
         text = "context limit reached"
-        # Minimal meta on purpose: the backstop fires before think(), so
-        # stage.reply/usage/cost would still describe the previous round.
         meta: dict = {"kind": "llm", "status": "context_limit"}
         for key in ("bot_id", "trace_id", "parent_span_id", "span_id"):
             value = getattr(stage, key, None)

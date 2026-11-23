@@ -23,8 +23,6 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 MEM_JS = ROOT / "thyca" / "webui" / "ui" / "memories" / "js" / "memories.js"
 
-# Elements auto-vivify per selector; innerHTML/textContent stay plain strings
-# the scenarios read back. Listeners are captured so tests can fire them.
 _HARNESS = r"""
 import fs from 'node:fs';
 const elementRegistry = new Map();
@@ -117,8 +115,6 @@ const LEAF = {
 };
 """
 
-# Eval runs AFTER the scenario's setup: loadStats() fires during the page
-# script's own boot, so hooks must already answer by then.
 _EVAL = r"""
 const source = fs.readFileSync(process.env.MEM_JS, 'utf8');
 const marker = 'mount(ctx) {';
@@ -516,7 +512,7 @@ def test_scope_switch_drops_stale_answers(scope_race: dict) -> None:
         "/api/memory/stats?bot_id=coder",
         "/api/memory/stats?bot_id=researcher",
     ]
-    assert scope_race["stale"]["total"] == 0   # boot stats still in place
+    assert scope_race["stale"]["total"] == 0
     assert scope_race["finalTotal"] == 2
     assert scope_race["scope"] == "researcher"
     assert scope_race["route"]["search"] == "?bot=researcher"
@@ -533,8 +529,7 @@ def test_leaf_actions_post_the_right_endpoints(actions: dict) -> None:
         "url": "/api/memory/update",
         "body": {"memory_id": "s1", "topic": "Trang một", "summary": "dòng một hai"},
     }
-    assert actions["confirms"] == 1            # only Quên asks
-    # Reinforce refreshes the leaf's own meta; forget + update reload stats.
+    assert actions["confirms"] == 1
     assert actions["expires"] == "2026-10-20T00:00:00Z"
     assert "hết hạn" in actions["meta"]
     reloads = actions["gets"][actions["getsAfterBoot"]:]
@@ -571,24 +566,21 @@ def test_scope_comes_from_sidebar_clicks_and_url(routing: dict) -> None:
     assert routing["scoped"]["cardHidden"] is False
     assert "Coder" in routing["scoped"]["card"]
 
-    # Same bot again toggles back to the team journal.
     assert routing["toggled"]["scope"] == ""
     assert routing["toggled"]["cardHidden"] is True
     assert "?bot=" not in routing["toggled"]["url"]
 
-    # Drawer sessions open the owning bot's scope, not the chat page.
     assert routing["fromSession"]["scope"] == "researcher"
     assert routing["fromSession"]["url"].endswith("?bot=researcher")
     assert "Researcher" in routing["fromSession"]["card"]
 
-    # Bỏ lọc clears the filter without leaving the page.
     assert routing["cleared"]["scope"] == ""
     assert routing["cleared"]["cardHidden"] is True
     assert "?bot=" not in routing["cleared"]["url"]
 
     assert routing["gets"].count("/api/memory/stats?bot_id=coder") == 1
     assert "/api/memory/stats?bot_id=researcher" in routing["gets"]
-    assert routing["teamRenders"] > 0     # sidebar highlight follows scope
+    assert routing["teamRenders"] > 0
 
 
 def test_bot_deep_link_scopes_the_journal(deeplink: dict) -> None:

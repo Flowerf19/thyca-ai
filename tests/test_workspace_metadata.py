@@ -7,12 +7,21 @@ import threading
 from pathlib import Path
 
 import pytest
+from seeded_config import seeded_config
 
 from thyca.app.chat_app import ChatApp
+from thyca.app.private_followups import PrivateFollowupService
 from thyca.bots.card import BotCard
+from thyca.bots.private_followups import Pending, PrivateFollowupStore
+from thyca.bots.scheduler import _solo_room, tick
+from thyca.bots.status import workspace_status
 from thyca.configs import load, save
-from seeded_config import seeded_config
+from thyca.conversations.runtime import ConversationBusy
+from thyca.conversations.runtime.wire import conversation_summary
+from thyca.core.channel import ActorRef, ChannelEvent
+from thyca.core.protocol import utc_now_ts
 from thyca.llms.llm_base import ChatReply
+from thyca.serve.trace import turns_from_conversation
 
 
 def _chat(tmp_path: Path, connect=None) -> ChatApp:
@@ -69,7 +78,6 @@ def test_scheduler_skip_busy_no_row(tmp_path: Path) -> None:
             target=lambda: app.turn(dm["conversation_id"], "busy"), daemon=True)
         t.start()
         assert started.wait(10)
-        from thyca.conversations.runtime import ConversationBusy
         with pytest.raises(ConversationBusy):
             app.scheduled_turn("coder", "tick while busy")
         mid = len(app.get_payload(dm["conversation_id"])["messages"])
@@ -82,7 +90,6 @@ def test_scheduler_skip_busy_no_row(tmp_path: Path) -> None:
 
 
 def test_scheduler_tick_uses_scheduled_turn(tmp_path: Path) -> None:
-    from thyca.bots.scheduler import tick
 
     seen: list[tuple[str, str]] = []
 
@@ -113,7 +120,6 @@ def test_conversation_wire_metadata(tmp_path: Path) -> None:
     try:
         _coder(app)
         group = app.create(bots=["thyca", "coder"])
-        from thyca.conversations.runtime.wire import conversation_summary
         row = conversation_summary(app._conversations.store.load(group["conversation_id"]))
         assert row["channel"] == "webui" and row["window_id"] == group["conversation_id"]
         detail = app.get_payload(group["conversation_id"])
@@ -123,7 +129,6 @@ def test_conversation_wire_metadata(tmp_path: Path) -> None:
 
 
 def test_turn_summary_channel_window(tmp_path: Path) -> None:
-    from thyca.serve.trace import turns_from_conversation
 
     app = _chat(tmp_path, _LLM())
     try:
@@ -150,8 +155,6 @@ def test_private_resume_row_requests_zero(tmp_path: Path) -> None:
             "coder", "task-aabb1122", "coder")
         app.bot_dm("coder")
         group = app.create(bots=["thyca", "coder"])
-        from thyca.bots.private_followups import PrivateFollowupStore
-        from thyca.app.private_followups import PrivateFollowupService
 
         store = PrivateFollowupStore(tmp_path)
         dm = app.bot_dm("coder")
@@ -173,8 +176,6 @@ def test_private_resume_row_requests_zero(tmp_path: Path) -> None:
 
 
 def test_workspace_status_pending_and_helpers(tmp_path: Path) -> None:
-    from thyca.bots.status import workspace_status
-    from thyca.bots.private_followups import Pending
 
     snap = {"state": "idle", "room_id": "g1", "trace_id": None,
             "span_id": None, "phase": None, "waiting_on": None}
@@ -201,7 +202,6 @@ def test_workspace_status_pending_and_helpers(tmp_path: Path) -> None:
 
 
 def test_bots_list_reconstructs_waiting(tmp_path: Path) -> None:
-    from thyca.bots.private_followups import PrivateFollowupStore
 
     app = _chat(tmp_path, _LLM())
     try:
@@ -228,7 +228,6 @@ def test_bots_list_reconstructs_waiting(tmp_path: Path) -> None:
 
 
 def test_solo_room_fallback_unchanged() -> None:
-    from thyca.bots.scheduler import _solo_room
 
     calls = []
 
@@ -266,7 +265,6 @@ def test_scheduler_skips_when_bot_busy_in_other_room(tmp_path: Path) -> None:
             daemon=True)
         t.start()
         assert started.wait(10)
-        from thyca.conversations.runtime import ConversationBusy
         with pytest.raises(ConversationBusy):
             app.scheduled_turn("coder", "tick")
         dm_after = app.get_payload(app.bot_dm("coder")["conversation_id"])["messages"]
@@ -280,7 +278,6 @@ def test_scheduler_skips_when_bot_busy_in_other_room(tmp_path: Path) -> None:
 
 
 def test_scheduled_turn_leaves_pending_untouched(tmp_path: Path) -> None:
-    from thyca.bots.private_followups import PrivateFollowupStore
 
     app = _chat(tmp_path, _LLM())
     try:
@@ -304,7 +301,6 @@ def test_scheduled_turn_leaves_pending_untouched(tmp_path: Path) -> None:
 
 
 def test_waiting_status_reconstructed_after_restart(tmp_path: Path) -> None:
-    from thyca.bots.private_followups import PrivateFollowupStore
 
     app = _chat(tmp_path, _LLM())
     _coder(app)
@@ -329,8 +325,6 @@ def test_waiting_status_reconstructed_after_restart(tmp_path: Path) -> None:
 
 
 def test_workspace_status_ignores_terminal_pending(tmp_path: Path) -> None:
-    from thyca.bots.status import workspace_status
-    from thyca.bots.private_followups import Pending
 
     p = Pending(
         pending_id="pf-1", bot_id="coder", work_id="task-aabb1122",
@@ -346,8 +340,6 @@ def test_workspace_status_ignores_terminal_pending(tmp_path: Path) -> None:
 @pytest.mark.parametrize("sender", ["thyca", "coder"])
 def test_trusted_work_ref_on_user_and_assistant_rows(
         tmp_path: Path, sender: str) -> None:
-    from thyca.core.channel import ActorRef, ChannelEvent
-    from thyca.core.protocol import utc_now_ts
 
     app = _chat(tmp_path, _LLM())
     try:
@@ -384,7 +376,6 @@ def test_trusted_work_ref_on_user_and_assistant_rows(
 @pytest.mark.parametrize("sender", ["thyca", "coder"])
 def test_scheduled_turn_never_consumes_user_pending(
         tmp_path: Path, sender: str) -> None:
-    from thyca.bots.private_followups import PrivateFollowupStore
 
     app = _chat(tmp_path, _LLM())
     try:

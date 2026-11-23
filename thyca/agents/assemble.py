@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+from thyca.conversations.runtime.wire import is_sidecar_message
+from thyca.core.protocol import Message
 from thyca.llms.prompt_manager import PromptManager
 from thyca.memories.active import ActiveSnapshot
-from thyca.core.protocol import Message
-from thyca.conversations.runtime.wire import is_sidecar_message
 
 from .stage import Stage
 
@@ -21,12 +21,6 @@ class Assemble:
     def assemble(self, stage: Stage, user_msg: str, *, append_user: bool = True) -> None:
         if append_user and not isinstance(user_msg, str):
             raise ValueError("user_msg must be a string")
-        # Sidecar rows are transcript-only (assistant with null content and no
-        # tool calls): strict providers 400 on them, so they never reach the
-        # model. Canonical predicate lives in conversations/runtime/wire (shared with trace).
-        # Compaction markers are the only history system rows the model may
-        # see; stale hot prompts stay dropped. Markers are hoisted right
-        # after the fresh hot prompt below.
         markers = [
             message
             for message in stage.messages

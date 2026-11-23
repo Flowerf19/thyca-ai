@@ -1,14 +1,9 @@
-// Chat boot: fetch roster + conversations, initial render, chat-only event wiring.
-// Shared shell wiring (menu, splitter, dialogs, motion, idle, roster sync)
-// lives in ../share/shell-app.js; shared fetch/state in ../share/data.js.
 'use strict';
 
-/* @mention regex is built from the live roster — no hardcoded ids. */
 const mentionPattern = () => new RegExp('@(' + bots.map(b => b.id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|') + ')\\b', 'i');
 
-// Boot chat from the route: ?g= opens a group, ?bot= opens that bot's DM.
 async function boot(ctx) {
-  try { await ctx.shellReady; }        // one shared roster/conversation load for the app
+  try { await ctx.shellReady; }
   catch (err) {
     $('#message-list').innerHTML = `<article class="conversation-empty"><h2>Không kết nối được máy chủ</h2><p>${escapeHTML(err.message)}</p></article>`;
     return;
@@ -30,7 +25,7 @@ async function boot(ctx) {
   else $('#message-list').innerHTML = '<article class="conversation-empty"><h2>Chưa có bot nào</h2><p>Đăng ký một bot để bắt đầu trò chuyện.</p></article>';
 }
 
-$('#run-demo').hidden = true;            // prototype-only button; real turns go through the composer
+$('#run-demo').hidden = true;
 $('#stop-button').onclick = stopRun;
 
 $('#composer').onsubmit = e => {
@@ -57,10 +52,8 @@ $('#mention-popup').onclick = e => { const item = e.target.closest('[data-mentio
 $('#attach-file').onclick = () => $('#file-input').click(); $('#file-input').onchange = e => { attachment = e.target.files[0]; if (!attachment) return; $('#file-chip span').textContent = attachment.name; $('#file-chip').hidden = false; toast('Tệp đính kèm chưa được backend hỗ trợ.'); }; $('#remove-file').onclick = () => { attachment = null; $('#file-chip').hidden = true; $('#file-input').value = ''; };
 $('#message-list').addEventListener('click', async e => {
   const retry = e.target.closest('[data-retry]'); const copy = e.target.closest('[data-copy]');
-  if (retry && !runs.has(currentConversation)) sendTurn('', retry.dataset.retry, { retry: true });   // API: retry:true re-runs the last user message
+  if (retry && !runs.has(currentConversation)) sendTurn('', retry.dataset.retry, { retry: true });
   if (copy) { const text = $('.live-copy', copy.closest('article')).innerText; try { await navigator.clipboard.writeText(text); toast('Đã sao chép phản hồi.'); } catch { toast('Trình duyệt chưa cho phép sao chép.'); } }
-  // Card answers: label chips ride the composer send path; consent chips
-  // POST the option id to this DM's private-followup endpoint.
   const labelChip = e.target.closest('[data-card-label]');
   if (labelChip && !labelChip.disabled) answerCardLabel(labelChip.dataset.cardLabel, labelChip);
   const consentChip = e.target.closest('[data-pf-choice]');
@@ -68,7 +61,6 @@ $('#message-list').addEventListener('click', async e => {
 });
 $('#conversation-scroll').addEventListener('scroll', () => $('#to-bottom').hidden = isNearBottom()); $('#to-bottom').onclick = () => toBottom(true);
 
-/* Public adapter for tests/demos: shared shell surface + chat turn control. */
 window.ThycaPrototype = Object.assign(window.ThycaShell || {}, { sendTurn, stop: stopRun });
 
 ThycaRouter.register('chat', { title: 'Sổ trò chuyện', stylesheet: '/ui/chat/chatcss/chat.css', mount(ctx) {

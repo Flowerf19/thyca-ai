@@ -7,7 +7,7 @@ errors distinct from chunk-not-found, and preserve explicit limit=0.
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -16,17 +16,13 @@ import pytest
 from thyca.core.protocol import ToolCall
 from thyca.memories.archive_store import ArchiveError
 from thyca.memories.facade import MemoryFacade
+from thyca.memories.heading import legacy_entry_id
 from thyca.tools.gateway import ToolGateway
 from thyca.tools.memory_tools import register_memory_tools
 from thyca.tools.registry import ToolRegistry
 from thyca.tools.task_store import TaskStore
 
 TZ = ZoneInfo("Asia/Ho_Chi_Minh")
-# Derived from the real clock: these tests exercise the *unindexed
-# today* path, and ArchivedMemory decides "today" by the real date at
-# reindex time — a hardcoded past day silently turns the fixture into
-# an archived file and the typed error surfaces from the indexer
-# instead (this test went red the day after its hardcoded date).
 TODAY = datetime.now(TZ).date().isoformat()
 
 
@@ -36,7 +32,7 @@ def _now() -> datetime:
 
 
 def _fresh_exp() -> str:
-    return (datetime.now(timezone.utc) + timedelta(days=365)).strftime(
+    return (datetime.now(UTC) + timedelta(days=365)).strftime(
         "%Y-%m-%dT%H:%M:%SZ")
 
 
@@ -69,10 +65,8 @@ def test_expired_today_chunk_is_rejected_not_renewed(tmp_path: Path) -> None:
     before = path.read_text(encoding="utf-8")
     with pytest.raises(ArchiveError, match="chunk expired:"):
         facade.get(chunk_id=f"{TODAY}#eeeeeeee#1", now=_now())
-    # No auto-renewal: the file bytes are untouched.
     assert path.read_text(encoding="utf-8") == before
     assert "2020-01-01T00:00:00Z" in before
-    # No usage recorded for the rejected read.
     assert facade.archive.store.usage.get_map() == {}
 
 
@@ -121,7 +115,6 @@ def test_today_undecodable_file_keeps_typed_error(tmp_path: Path) -> None:
 def test_duplicate_legacy_titles_resolve_second_occurrence(
     tmp_path: Path,
 ) -> None:
-    from thyca.memories.heading import legacy_entry_id
 
     day_path = str(tmp_path / "memory" / f"{TODAY}.md")
     first = legacy_entry_id(day_path, "same title", 1)

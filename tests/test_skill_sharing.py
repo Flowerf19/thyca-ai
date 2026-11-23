@@ -9,9 +9,29 @@ hardlinks preserved. Bash/MCP/network untouched with explicit bypass.
 """
 from __future__ import annotations
 
+import asyncio
+import json
+import os
 from pathlib import Path
 
 import pytest
+
+from thyca.bots.admin_tools.skill_share import register_skill_share_tools
+from thyca.bots.card import BotCard
+from thyca.bots.context import BotTurnContext, bind_bot_turn_context, reset_bot_turn_context
+from thyca.bots.policy import BotPolicy
+from thyca.bots.registry import BotRegistry
+from thyca.core.channel import WindowRef
+from thyca.core.protocol import ToolCall
+from thyca.memories.identity import bind_bot_id, reset_bot_id
+from thyca.memories.visibility import MemoryView, bound_memory_view
+from thyca.skills.sharing import SharingCorrupt, SharingService
+from thyca.tools.builtin import register_file_tools
+from thyca.tools.gateway import ToolGateway
+from thyca.tools.gateway.policy import PolicyDenied
+from thyca.tools.path_guard import PathDenied, PathGuard
+from thyca.tools.registry import ToolRegistry
+from thyca.tools.task_store import TaskStore
 
 
 def _skill_body(name: str, desc: str) -> str:
@@ -33,7 +53,6 @@ def _write_private(tmp_path: Path, bot: str, name: str, desc: str = "private") -
 
 
 def _registry(tmp_path: Path):
-    from thyca.bots.registry import BotRegistry
 
     reg = BotRegistry(tmp_path)
     reg.ensure_thyca()
@@ -41,7 +60,6 @@ def _registry(tmp_path: Path):
 
 
 def test_existing_team_hidden_until_share(tmp_path: Path) -> None:
-    from thyca.bots.card import BotCard
 
     reg = _registry(tmp_path)
     reg.create(BotCard(bot_id="coder", name="coder", role="C",
@@ -52,9 +70,6 @@ def test_existing_team_hidden_until_share(tmp_path: Path) -> None:
 
 
 def test_share_unshare_persists_across_restart_and_bot_views(tmp_path: Path) -> None:
-    from thyca.bots.card import BotCard
-    from thyca.bots.registry import BotRegistry
-    from thyca.skills.sharing import SharingService
 
     reg = _registry(tmp_path)
     reg.create(BotCard(bot_id="coder", name="coder", role="C",
@@ -66,7 +81,6 @@ def test_share_unshare_persists_across_restart_and_bot_views(tmp_path: Path) -> 
     assert svc.share("weather") is True
     assert "weather" in reg.skill_index_text("coder")
     assert "weather" in reg.skill_index_text("helper")
-    # Restart: new registry instance over same root still sees shared.
     reg2 = BotRegistry(tmp_path)
     assert "weather" in reg2.skill_index_text("coder")
     assert "weather" in reg2.skill_index_text("helper")
@@ -77,23 +91,14 @@ def test_share_unshare_persists_across_restart_and_bot_views(tmp_path: Path) -> 
 
 
 def test_forged_child_and_missing_authority_denied(tmp_path: Path) -> None:
-    import asyncio
 
-    from thyca.memories.identity import bind_bot_id, reset_bot_id
-    from thyca.skills.sharing import SharingService
-    from thyca.tools.gateway import ToolGateway
-    from thyca.tools.registry import ToolRegistry
-    from thyca.tools.task_store import TaskStore
 
     _registry(tmp_path)
     _write_team(tmp_path, "weather")
     registry = ToolRegistry()
-    # Wire the real management tool over the real sharing service.
-    from thyca.bots.admin_tools.skill_share import register_skill_share_tools
 
     register_skill_share_tools(registry, SharingService(tmp_path))
     gateway = ToolGateway(registry, TaskStore())
-    from thyca.core.protocol import ToolCall
 
     async def _call_as(bot, args):
         token = bind_bot_id(bot)
@@ -103,8 +108,6 @@ def test_forged_child_and_missing_authority_denied(tmp_path: Path) -> None:
         finally:
             reset_bot_id(token)
 
-    # Forged child stays denied; extra caller fields never grant access
-    # (schema rejects them, handler denies plain child calls as content).
     denied = asyncio.run(_call_as("coder", {"action": "share", "name": "weather"}))
     assert "denied" in denied.content.lower()
     assert SharingService(tmp_path).list_shared() == []
@@ -112,7 +115,6 @@ def test_forged_child_and_missing_authority_denied(tmp_path: Path) -> None:
                                             "caller": "thyca", "bot_id": "thyca"}))
     assert forged.is_error
     assert SharingService(tmp_path).list_shared() == []
-    # Missing identity is denied and changes no state; only Thyca is allowed.
     for action in ("list", "share", "unshare"):
         args = {"action": action} if action == "list" else {"action": action, "name": "weather"}
         missing_denied = asyncio.run(_call_as(None, args))
@@ -124,9 +126,6 @@ def test_forged_child_and_missing_authority_denied(tmp_path: Path) -> None:
 
 
 def test_own_private_readable_foreign_denied(tmp_path: Path) -> None:
-    from thyca.bots.card import BotCard
-    from thyca.memories.identity import bind_bot_id, reset_bot_id
-    from thyca.tools.path_guard import PathDenied, PathGuard
 
     reg = _registry(tmp_path)
     reg.create(BotCard(bot_id="coder", name="coder", role="C",
@@ -148,17 +147,7 @@ def test_own_private_readable_foreign_denied(tmp_path: Path) -> None:
 
 
 def test_shared_write_denied_own_edit_allowed(tmp_path: Path) -> None:
-    import asyncio
 
-    from thyca.bots.card import BotCard
-    from thyca.memories.identity import bind_bot_id, reset_bot_id
-    from thyca.skills.sharing import SharingService
-    from thyca.tools.builtin import register_file_tools
-    from thyca.tools.path_guard import PathGuard
-    from thyca.tools.registry import ToolRegistry
-    from thyca.tools.gateway import ToolGateway
-    from thyca.tools.task_store import TaskStore
-    from thyca.core.protocol import ToolCall
 
     reg = _registry(tmp_path)
     reg.create(BotCard(bot_id="coder", name="coder", role="C",
@@ -188,16 +177,7 @@ def test_shared_write_denied_own_edit_allowed(tmp_path: Path) -> None:
 
 
 def test_thyca_edit_preserves_share(tmp_path: Path) -> None:
-    import asyncio
 
-    from thyca.memories.identity import bind_bot_id, reset_bot_id
-    from thyca.skills.sharing import SharingService
-    from thyca.tools.builtin import register_file_tools
-    from thyca.tools.gateway import ToolGateway
-    from thyca.tools.path_guard import PathGuard
-    from thyca.tools.registry import ToolRegistry
-    from thyca.tools.task_store import TaskStore
-    from thyca.core.protocol import ToolCall
 
     _registry(tmp_path)
     shared_md = _write_team(tmp_path, "weather", "v1")
@@ -218,15 +198,11 @@ def test_thyca_edit_preserves_share(tmp_path: Path) -> None:
 
 
 def test_symlink_hardlink_special_rejected_ordinary_hardlink_kept(tmp_path: Path) -> None:
-    from thyca.memories.identity import bind_bot_id, reset_bot_id
-    from thyca.tools.path_guard import PathDenied, PathGuard
 
     _registry(tmp_path)
     real = _write_team(tmp_path, "weather", "real")
-    # Ordinary unrelated hardlink outside skill roots stays usable.
     outside = tmp_path / "notes.md"
     outside.write_text("hello", encoding="utf-8")
-    import os
 
     try:
         os.link(outside, tmp_path / "notes-hard.md")
@@ -234,7 +210,6 @@ def test_symlink_hardlink_special_rejected_ordinary_hardlink_kept(tmp_path: Path
         pytest.skip("hardlinks unsupported here")
     guard = PathGuard(tmp_path)
     assert guard.deny_read(str(tmp_path / "notes-hard.md")).is_file()
-    # Symlinked skill file rejected.
     link_dir = tmp_path / "skills-team" / "linked"
     link_dir.mkdir(parents=True)
     link_md = link_dir / "SKILL.md"
@@ -251,8 +226,6 @@ def test_symlink_hardlink_special_rejected_ordinary_hardlink_kept(tmp_path: Path
 
 
 def test_links_disallow_skill(tmp_path: Path) -> None:
-    from thyca.bots.registry import BotRegistry
-    from thyca.skills.sharing import SharingService
 
     _registry(tmp_path)
     target = tmp_path / "real-skill" / "SKILL.md"
@@ -260,11 +233,8 @@ def test_links_disallow_skill(tmp_path: Path) -> None:
     target.write_text(_skill_body("weather", "real"), encoding="utf-8")
     link_dir = tmp_path / "skills-team" / "weather"
     link_dir.symlink_to(target.parent, target_is_directory=True)
-    # Share first: the name grant succeeds, but the linked dir still stays
-    # out of every index.
     assert SharingService(tmp_path).share("weather") is True
     reg = BotRegistry(tmp_path)
-    # Symlinked skill dir must not appear as usable shared skill.
     assert "weather" not in reg.skill_index_text("coder")
     lines = reg.skill_index_text("thyca").splitlines()
     assert not any(line.startswith("- weather ") or
@@ -272,11 +242,6 @@ def test_links_disallow_skill(tmp_path: Path) -> None:
 
 
 def test_slice2_path_guard_memory_controls_retained(tmp_path: Path) -> None:
-    # Dirty slice-2 regression must stay green: pinned private raw-memory
-    # denial with filtered own-entry exemption.
-    from thyca.core.channel import WindowRef
-    from thyca.memories.visibility import MemoryView, bound_memory_view
-    from thyca.tools.path_guard import PathDenied, PathGuard
 
     (tmp_path / "memory").mkdir(parents=True)
     raw = tmp_path / "memory" / "2026-11-08.md"
@@ -285,31 +250,26 @@ def test_slice2_path_guard_memory_controls_retained(tmp_path: Path) -> None:
     group_view = MemoryView(
         WindowRef(window_id="g", channel_id="webui", kind="group",
                   participants=("coder", "thyca")), "coder", tmp_path)
-    with bound_memory_view(group_view):
-        with pytest.raises(PathDenied):
-            guard.deny_read(str(raw))
+    with bound_memory_view(group_view), pytest.raises(PathDenied):
+        guard.deny_read(str(raw))
     pinned = MemoryView(window=None, bot_id="coder", thyca_dir=tmp_path,
                         denied_origins=frozenset({"g"}))
-    with bound_memory_view(pinned):
-        with pytest.raises(PathDenied):
-            guard.deny_read(str(raw))
+    with bound_memory_view(pinned), pytest.raises(PathDenied):
+        guard.deny_read(str(raw))
 
 
 def test_shared_collisions_and_invalid_metadata(tmp_path: Path) -> None:
-    from thyca.bots.card import BotCard
 
     reg = _registry(tmp_path)
     reg.create(BotCard(bot_id="coder", name="coder", role="C",
                        description="D", persona="P"))
     _write_private(tmp_path, "coder", "dup", "private copy")
     _write_team(tmp_path, "dup", "team copy")
-    from thyca.skills.sharing import SharingService
 
     SharingService(tmp_path).share("dup")
     index = reg.skill_index_text("coder")
     assert "private copy" in index
     assert "team copy" not in index
-    # Invalid shared skill shows diagnostic, not hidden denial.
     bad_dir = tmp_path / "skills-team" / "bad"
     bad_dir.mkdir(parents=True, exist_ok=True)
     (bad_dir / "SKILL.md").write_text("no frontmatter\n", encoding="utf-8")
@@ -319,19 +279,7 @@ def test_shared_collisions_and_invalid_metadata(tmp_path: Path) -> None:
 
 
 def test_gateway_real_shared_read_and_thyca_manage(tmp_path: Path) -> None:
-    # Real gateway: child reads shared via checked descriptor, Thyca manages.
-    import asyncio
 
-    from thyca.bots.card import BotCard
-    from thyca.memories.identity import bind_bot_id, reset_bot_id
-    from thyca.skills.sharing import SharingService
-    from thyca.tools.builtin import register_file_tools
-    from thyca.tools.gateway import ToolGateway
-    from thyca.tools.path_guard import PathGuard
-    from thyca.tools.registry import ToolRegistry
-    from thyca.tools.task_store import TaskStore
-    from thyca.core.protocol import ToolCall
-    from thyca.bots.admin_tools.skill_share import register_skill_share_tools
 
     reg = _registry(tmp_path)
     reg.create(BotCard(bot_id="coder", name="coder", role="C",
@@ -363,7 +311,6 @@ def _write_state_text(tmp_path: Path, text: str) -> None:
 
 
 def _corrupt_case_root(tmp_path: Path, case: str) -> Path:
-    from thyca.bots.card import BotCard
 
     root = tmp_path / case
     root.mkdir(parents=True, exist_ok=True)
@@ -376,18 +323,11 @@ def _corrupt_case_root(tmp_path: Path, case: str) -> Path:
 
 
 def _check_corrupt_state(root: Path) -> None:
-    from thyca.memories.identity import bind_bot_id, reset_bot_id
-    from thyca.skills.sharing import SharingCorrupt, SharingService
-    from thyca.tools.path_guard import PathDenied, PathGuard
-
-    from thyca.bots.registry import BotRegistry
 
     reg = BotRegistry(root)
-    # The child keeps its own skill and sees a diagnostic, never a crash.
     index = reg.skill_index_text("coder")
     assert "own private" in index
     assert "(sharing state invalid:" in index
-    # A shared read is refused while state is untrusted.
     guard = PathGuard(root)
     token = bind_bot_id("coder")
     try:
@@ -395,7 +335,6 @@ def _check_corrupt_state(root: Path) -> None:
             guard.deny_read(str(root / "skills-team" / "weather" / "SKILL.md"))
     finally:
         reset_bot_id(token)
-    # Thyca's own index never crashes on corrupt sharing state.
     assert isinstance(reg.skill_index_text("thyca"), str)
     with pytest.raises(SharingCorrupt):
         SharingService(root).list_shared()
@@ -408,7 +347,6 @@ def test_corrupt_json_state_blocks_shared_keeps_private(tmp_path: Path) -> None:
 
 
 def test_bad_version_state_blocks_shared_keeps_private(tmp_path: Path) -> None:
-    import json
 
     root = _corrupt_case_root(tmp_path, "bad-version")
     _write_state_text(root, json.dumps({"version": 999, "shared": []}))
@@ -416,7 +354,6 @@ def test_bad_version_state_blocks_shared_keeps_private(tmp_path: Path) -> None:
 
 
 def test_invalid_name_state_blocks_shared_keeps_private(tmp_path: Path) -> None:
-    import json
 
     root = _corrupt_case_root(tmp_path, "bad-name")
     _write_state_text(root, json.dumps({"version": 1, "shared": ["BAD NAME"]}))
@@ -430,7 +367,6 @@ def test_directory_state_is_corrupt_not_empty(tmp_path: Path) -> None:
 
 
 def test_fifo_state_is_corrupt_not_empty(tmp_path: Path) -> None:
-    import os
 
     root = _corrupt_case_root(tmp_path, "fifo-state")
     try:
@@ -470,18 +406,7 @@ def test_thyca_global_invalid_does_not_hide_private(tmp_path: Path) -> None:
 
 
 def test_root_symlink_end_to_end(tmp_path: Path) -> None:
-    import asyncio
-    import os
 
-    from thyca.memories.identity import bind_bot_id, reset_bot_id
-    from thyca.skills.sharing import SharingService
-    from thyca.tools.builtin import register_file_tools
-    from thyca.tools.gateway import ToolGateway
-    from thyca.tools.path_guard import PathDenied, PathGuard
-    from thyca.tools.registry import ToolRegistry
-    from thyca.tools.task_store import TaskStore
-    from thyca.bots.registry import BotRegistry
-    from thyca.core.protocol import ToolCall
 
     real = tmp_path / "real"
     (real / "bots" / "coder" / "skills" / "mine").mkdir(parents=True)
@@ -505,22 +430,18 @@ def test_root_symlink_end_to_end(tmp_path: Path) -> None:
     guard = PathGuard(real)
     token = bind_bot_id("coder")
     try:
-        # Own private and shared reads pass through the root symlink.
         assert guard.deny_read(
             str(link / "bots" / "coder" / "skills" / "mine" / "SKILL.md")).is_file()
         assert guard.deny_read(
             str(link / "skills-team" / "weather" / "SKILL.md")).is_file()
-        # Unshared team and foreign private stay denied through the alias.
         with pytest.raises(PathDenied):
             guard.deny_read(str(link / "skills-team" / "lurker" / "SKILL.md"))
         with pytest.raises(PathDenied):
             guard.deny_read(str(link / "bots" / "thyca" / "skills"))
-        # Own-private write passes, shared write stays denied.
         assert guard.deny_write(
             str(link / "bots" / "coder" / "skills" / "mine" / "SKILL.md"))
         with pytest.raises(PathDenied):
             guard.deny_write(str(link / "skills-team" / "weather" / "SKILL.md"))
-        # A symlink under the root stays denied even through the alias.
         outside = tmp_path / "outside" / "SKILL.md"
         outside.parent.mkdir(parents=True)
         outside.write_text(_skill_body("evil", "evil"), encoding="utf-8")
@@ -531,7 +452,6 @@ def test_root_symlink_end_to_end(tmp_path: Path) -> None:
     finally:
         reset_bot_id(token)
 
-    # End-to-end read through the real file-tool handler and checked reader.
     registry = ToolRegistry()
     register_file_tools(registry, PathGuard(real), None)
     gateway = ToolGateway(registry, TaskStore())
@@ -546,15 +466,6 @@ def test_root_symlink_end_to_end(tmp_path: Path) -> None:
 
 
 def test_bot_policy_skill_matrix_matches_path_guard(tmp_path: Path) -> None:
-    from thyca.bots.card import BotCard
-    from thyca.bots.context import (BotTurnContext, bind_bot_turn_context,
-                                    reset_bot_turn_context)
-    from thyca.bots.policy import BotPolicy
-    from thyca.core.protocol import ToolCall
-    from thyca.memories.identity import bind_bot_id, reset_bot_id
-    from thyca.skills.sharing import SharingService
-    from thyca.tools.gateway.policy import PolicyDenied
-    from thyca.tools.path_guard import PathDenied, PathGuard
 
     reg = _registry(tmp_path)
     reg.create(BotCard(bot_id="coder", name="coder", role="C",
@@ -583,7 +494,6 @@ def test_bot_policy_skill_matrix_matches_path_guard(tmp_path: Path) -> None:
             else:
                 with pytest.raises(PolicyDenied):
                     policy.check(ToolCall(id="t", name=name, arguments=args))
-            # The handler guard agrees with the gateway policy.
             if name == "read":
                 if allowed:
                     assert guard.deny_read(args["path"]).is_file()
@@ -611,15 +521,12 @@ def test_bot_policy_skill_matrix_matches_path_guard(tmp_path: Path) -> None:
 
 
 def test_share_rejects_regular_file(tmp_path: Path) -> None:
-    from thyca.skills.sharing import SharingService
 
     _registry(tmp_path)
-    # A plain file where a skill dir should be is a typo, not a skill.
     (tmp_path / "skills-team").mkdir(parents=True, exist_ok=True)
     (tmp_path / "skills-team" / "flat").write_text("not a dir", encoding="utf-8")
     with pytest.raises(ValueError, match="no such team skill"):
         SharingService(tmp_path).share("flat")
-    # A symlinked skill dir still grants by name; the gates stay closed.
     target = tmp_path / "real-skill"
     target.mkdir(parents=True)
     (target / "SKILL.md").write_text(
@@ -633,11 +540,7 @@ def test_share_rejects_regular_file(tmp_path: Path) -> None:
 
 
 def test_hardlink_inside_skill_root_denied(tmp_path: Path) -> None:
-    import os
 
-    from thyca.memories.identity import bind_bot_id, reset_bot_id
-    from thyca.skills.sharing import SharingService
-    from thyca.tools.path_guard import PathDenied, PathGuard
 
     _registry(tmp_path)
     shared_md = _write_team(tmp_path, "weather", "shared body")
@@ -654,7 +557,6 @@ def test_hardlink_inside_skill_root_denied(tmp_path: Path) -> None:
             guard.deny_read(str(alias))
     finally:
         reset_bot_id(token)
-    # Thyca is denied too: link safety applies to every reader.
     token = bind_bot_id("thyca")
     try:
         with pytest.raises(PathDenied):
@@ -664,10 +566,7 @@ def test_hardlink_inside_skill_root_denied(tmp_path: Path) -> None:
 
 
 def test_special_file_inside_skill_root_denied(tmp_path: Path) -> None:
-    import os
 
-    from thyca.memories.identity import bind_bot_id, reset_bot_id
-    from thyca.tools.path_guard import PathDenied, PathGuard
 
     _registry(tmp_path)
     _write_team(tmp_path, "weather", "shared body")

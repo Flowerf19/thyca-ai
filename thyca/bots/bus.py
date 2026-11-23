@@ -10,7 +10,7 @@ from __future__ import annotations
 import queue
 import secrets
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from thyca.bots.artifacts import BusArtifactStore
 from thyca.core.protocol import utc_now_ts
@@ -19,21 +19,10 @@ ENVELOPE_KINDS = frozenset(
     {"delegate", "message", "step", "status", "result", "help_request"}
 )
 
-#: Technical default (team-context layer 3): the prompt-facing body of an
-#: envelope is an excerpt of at most this many chars. The full body is
-#: kept in the bus artifact store keyed by ``span_id`` and fetched on
-#: demand via ``bot_fetch``; large content should travel as ``refs``
-#: (file paths / memory entry ids / span ids) instead of body text.
 EXCERPT_CHARS = 1000
 
-#: Technical default: max hops for one root trace_id. Recorded here (not a
-#: business rule): it only bounds infinite bot↔bot ping-pong, never content.
 MAX_HOPS = 16
 
-#: Technical defaults for by-reference payloads (CBE-3 bounds): at most
-#: this many refs per envelope (the room transcript row already caps at
-#: 8, so every render layer agrees), each clipped to this many chars at
-#: send. Refs are pointers (paths / entry ids / span ids), never bodies.
 MAX_REFS = 8
 MAX_REF_CHARS = 512
 
@@ -44,9 +33,6 @@ class BusError(RuntimeError):
 
 @dataclass(frozen=True)
 class Envelope:
-    # Privacy travels on the envelope before enqueue/lease: a send issued
-    # inside a private turn is marked at send time and every log/mailbox
-    # consumer must honor it. Transport-local only, never serialized.
     sender: str
     recipient: str
     kind: str
@@ -56,14 +42,7 @@ class Envelope:
     ts: str
     payload: str
     private_chain: bool = False
-    # This envelope's own span: room rows for it carry this id, and the
-    # recipient turn's rows parent to it (FE delegation tree).
     span_id: str | None = None
-    # By-reference payloads (CBE-3): file paths, memory entry ids, or
-    # span ids the recipient resolves itself. ``payload`` stays the
-    # prompt-facing excerpt (<= EXCERPT_CHARS); when the sender's body
-    # was longer, the full text lives in the artifact store under
-    # ``span_id`` and ``truncated`` says so.
     refs: tuple[str, ...] = ()
     truncated: bool = False
 
@@ -110,7 +89,6 @@ class Bus:
         self._boxes: dict[str, queue.Queue[Envelope]] = {}
         self._hops: dict[str, int] = {}
         self._log: list[BusEvent] = []
-        #: Full bodies of excerpted envelopes, keyed by span_id (CBE-3).
         self.artifacts = artifacts if artifacts is not None else BusArtifactStore()
 
     def register(self, bot_id: str) -> None:
@@ -140,8 +118,6 @@ class Bus:
         if not recipient or not isinstance(recipient, str):
             raise BusError("recipient must be a non-empty bot id")
         if sender == recipient:
-            # A bot messaging itself is always an identity mix-up (it
-            # thinks it is someone else); never queue the envelope.
             raise BusError(f"sender and recipient are the same bot: {sender!r}")
         if not isinstance(payload, str):
             raise BusError("payload must be text")
@@ -151,10 +127,6 @@ class Bus:
             if isinstance(ref, str) and ref.strip()
         )[:MAX_REFS]
         own_span = span_id or new_span_id()
-        # Excerpt-cap the prompt-facing body; keep the full text in the
-        # bounded artifact store so prompts never carry large payloads.
-        # The store records sender+recipient: bot_fetch may only return
-        # the body to one of those two parties.
         truncated = len(payload) > EXCERPT_CHARS
         if truncated:
             self.artifacts.put(
@@ -185,7 +157,6 @@ class Bus:
             self._hops[envelope.trace_id] = hops
             self._boxes[recipient].put(envelope)
             self._log.append(BusEvent(envelope=envelope, hops=hops))
-            # Bound process-lifetime growth; readers only need the tail.
             del self._log[:-500]
         return envelope
 
@@ -194,7 +165,6 @@ class Bus:
         with self._lock:
             box = self._boxes.get(bot_id)
             if box is None:
-                # Unregistered bots have no mailbox: nothing to deliver.
                 return []
         out: list[Envelope] = []
         try:
@@ -257,16 +227,13 @@ class Bus:
             box.put(item)
         return removed
 
-    # Remove every queued and logged copy of one span (private-chain
-    # lease failure): a private request that could not run must never
-    # reach a later unpinned room drain.
     def expunge_envelope(self, span_id: str | None) -> bool:
         """Drop one envelope by span from mailbox and log; report removal."""
         if not isinstance(span_id, str) or not span_id:
             return False
         removed = False
         with self._lock:
-            for bot_id, box in list(self._boxes.items()):
+            for _bot_id, box in list(self._boxes.items()):
                 kept: list[Envelope] = []
                 try:
                     while True:

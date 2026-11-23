@@ -4,15 +4,17 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+import pytest as _pytest
+from seeded_config import seeded_config
 
 from thyca.app.chat_app import ChatApp
+from thyca.bots.card import BotCard
 from thyca.bots.registry import RegistryError
 from thyca.configs import load, save
-from seeded_config import seeded_config
+from thyca.conversations.runtime import ConversationRuntime
 from thyca.core.protocol import Message
 from thyca.llms.llm_base import ChatReply
 from thyca.serve.trace import aggregate, turns_from_conversation
-from thyca.conversations.runtime import ConversationRuntime
 
 
 def _chat(tmp_path: Path, connect=None) -> ChatApp:
@@ -21,7 +23,6 @@ def _chat(tmp_path: Path, connect=None) -> ChatApp:
 
 
 def _coder(app: ChatApp) -> None:
-    from thyca.bots.card import BotCard
 
     app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
                              description="Codes.", persona="You code."))
@@ -35,7 +36,6 @@ def test_create_accepts_bots_and_payload_carries_them(tmp_path: Path) -> None:
         assert detail["bots"] == ["thyca", "coder"]
         assert detail["kind"] == "group"
         assert app.get_payload(detail["conversation_id"])["bots"] == ["thyca", "coder"]
-        # No bots: Thyca's DM (phase 2B), not a plain conversation.
         plain = app.create()
         assert plain["bots"] == ["thyca"]
         assert plain["dm"] == "thyca"
@@ -77,9 +77,7 @@ def test_create_single_bot_resolves_to_that_dm(tmp_path: Path) -> None:
         assert first["conversation_id"] == second["conversation_id"]
         assert first["dm"] == "coder"
         assert first["kind"] == "dm"
-        # Duplicate ids in one call dedupe to the same DM.
         assert app.create(bots=["coder", "coder"])["conversation_id"] == first["conversation_id"]
-        # Two-bot calls always mint fresh groups.
         g1 = app.create(bots=["thyca", "coder"])["conversation_id"]
         g2 = app.create(bots=["thyca", "coder"])["conversation_id"]
         assert g1 != g2
@@ -104,7 +102,6 @@ def test_add_remove_bot_round_trip(tmp_path: Path) -> None:
     app = _chat(tmp_path)
     try:
         _coder(app)
-        # Add/remove runs on a group (create() with no bots is Thyca's DM).
         created = app.create(bots=["thyca", "coder"])
         assert created["kind"] == "group"
         assert app.set_room_bots(created["conversation_id"], "coder", "remove") == ["thyca"]
@@ -208,7 +205,6 @@ def test_wire_kind_dm_group_legacy(tmp_path: Path) -> None:
         assert app.get_payload(dm["conversation_id"])["kind"] == "dm"
         group = app.create(bots=["thyca", "coder"])
         assert app.get_payload(group["conversation_id"])["kind"] == "group"
-        # Legacy conversation without any meta line reads as group.
         raw = app._conversations.create()
         assert app.get_payload(raw.conversation_id)["kind"] == "group"
         assert app.get_payload(raw.conversation_id)["bots"] == ["thyca"]
@@ -217,7 +213,6 @@ def test_wire_kind_dm_group_legacy(tmp_path: Path) -> None:
 
 
 def test_create_rejects_stray_string_accepts_empty(tmp_path: Path) -> None:
-    import pytest as _pytest
 
     app = _chat(tmp_path)
     try:

@@ -18,8 +18,6 @@ from thyca.llms.openai_chat import _chat_url, _to_openai_message
 BASE_URL = "https://api.example.com/v1"
 MODEL = "golden-model"
 
-# Shared transcript (identical in test_wire_golden_responses.py): system +
-# user text + assistant with one tool_call + one tool result.
 TRANSCRIPT = [
     Message(role="system", content="You are a test assistant."),
     Message(role="user", content="What is 2+2?"),
@@ -31,7 +29,6 @@ TRANSCRIPT = [
     Message(role="tool", content="4", tool_call_id="call_1"),
 ]
 
-# Recorded 2026-09-29 by running _build_payload once; frozen since.
 EXPECTED_CHAT = (
     b'{"max_tokens":16384,'
     b'"messages":[{"content":"You are a test assistant.","role":"system"},'

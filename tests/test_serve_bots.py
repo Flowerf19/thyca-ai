@@ -11,12 +11,12 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 import pytest
+from seeded_config import seeded_config
 
 from thyca.app.chat_app import ChatApp
 from thyca.bots.card import BotCard
 from thyca.bots.registry import RegistryError
 from thyca.configs import load, save
-from seeded_config import seeded_config
 from thyca.llms.llm_base import ChatReply
 from thyca.memories.facade import MemoryFacade
 from thyca.serve import default_webui, make_server
@@ -81,8 +81,6 @@ def test_bot_write_routes_are_removed_but_roster_and_dm_remain(
     before = card_path.read_bytes()
     server, thread = _start(tmp_path, app)
     try:
-        # There is no PATCH handler at all any longer (bot settings are
-        # POST); the method itself is unsupported (501 HTML, not JSON).
         patch = Request(
             f"http://127.0.0.1:{server.server_address[1]}/api/bots/coder",
             data=json.dumps({"name": "Changed"}).encode("utf-8"),

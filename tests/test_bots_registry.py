@@ -106,7 +106,6 @@ def test_registry_create_pause_restore_delete(tmp_path: Path) -> None:
         registry.create(card)
     paused = registry.set_paused("coder", True)
     assert paused.paused is True
-    # Team index skips paused bots.
     assert "coder" not in registry.team_index_text()
     registry.set_paused("coder", False)
     assert "coder" in registry.team_index_text()
@@ -169,8 +168,6 @@ def test_registry_skill_index_private_wins(tmp_path: Path) -> None:
     assert "private copy" in index
     assert "team copy" not in index
 
-
-# --- TWIN.md rename (2026-10-13): legacy BOT.md readable, writes canonical --
 
 def test_legacy_bot_md_card_stays_readable(tmp_path: Path) -> None:
     folder = tmp_path / "bots" / "coder"

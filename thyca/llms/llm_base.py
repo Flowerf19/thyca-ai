@@ -31,7 +31,6 @@ def _extract_openai(raw: dict) -> tuple[int | None, int | None, int | None, int 
 
 
 def _extract_responses(raw: dict) -> tuple[int | None, int | None, int | None, int | None, int | None]:
-    # Responses API shape (verified live): input/output counters.
     prompt = _coerce_int(raw.get("input_tokens"))
     completion = _coerce_int(raw.get("output_tokens"))
     total = _coerce_int(raw.get("total_tokens"))
@@ -70,8 +69,6 @@ def normalize_usage(raw: dict | None, provider: str) -> dict | None:
     elif provider == "openai_responses":
         prompt, cached, completion, total, reasoning = _extract_responses(raw)
     else:
-        # OpenAI-only is deliberate: unknown providers fall through to the
-        # generic snake_case counters, never to vendor-specific shapes.
         prompt, cached, completion, total, reasoning = _extract_generic(raw)
     if prompt is None and completion is None and total is None:
         return None

@@ -1,4 +1,3 @@
-/* Markdown body styles — shared wherever LLM text renders (chat, memory…). */
 .markdown-body > :first-child{margin-block-start:0}
 .markdown-body > :last-child{margin-block-end:0}
 .markdown-body p,.markdown-body ul,.markdown-body ol,.markdown-body blockquote,.markdown-body pre,.markdown-body .md-table-wrap{margin-block:.7rem}

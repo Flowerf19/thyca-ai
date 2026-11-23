@@ -2,22 +2,29 @@ from __future__ import annotations
 
 import asyncio
 import os
+import signal
 import subprocess
 import sys
+from contextlib import asynccontextmanager
 from datetime import timedelta
+from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 from mcp.types import CallToolResult, ImageContent, ListToolsResult, TextContent, Tool
 
+from thyca.app.toolchain import report_spawn_diags
 from thyca.configs import McpServerCfg
 from thyca.core.protocol import ToolCall
+from thyca.tools.gateway import ToolGateway
 from thyca.tools.mcp import (
     CALL_TIMEOUT,
+    START_TIMEOUT,
     MCPManager,
     MCPProcess,
-    START_TIMEOUT,
+    ServerEntry,
+    StartupDiagnostic,
     format_mcp_status,
     join_text_blocks,
     merge_env,
@@ -25,7 +32,6 @@ from thyca.tools.mcp import (
     resolve_command,
     summarize_error,
 )
-from thyca.tools.gateway import ToolGateway
 from thyca.tools.registry import ToolRegistry
 from thyca.tools.task_store import TaskStore
 
@@ -246,7 +252,6 @@ async def test_startup_cleanup_failure_does_not_abort_other_servers() -> None:
 
 @pytest.mark.asyncio
 async def test_shutdown_closes_remaining_servers_after_failure() -> None:
-    from thyca.tools.mcp import ServerEntry
 
     class CloseFails:
         async def aclose(self) -> None:
@@ -262,8 +267,8 @@ async def test_shutdown_closes_remaining_servers_after_failure() -> None:
     manager = MCPManager()
     remaining = Closes()
     manager._entries = {
-        "a": ServerEntry(cfg=_server_cfg(), status="live", proc=CloseFails()),  # type: ignore[arg-type]
-        "b": ServerEntry(cfg=_server_cfg(), status="live", proc=remaining),  # type: ignore[arg-type]
+        "a": ServerEntry(cfg=_server_cfg(), status="live", proc=CloseFails()),  # type: ignore[arg-type] -- reason: intentional invalid-type or test-double argument
+        "b": ServerEntry(cfg=_server_cfg(), status="live", proc=remaining),  # type: ignore[arg-type] -- reason: intentional invalid-type or test-double argument
     }
 
     await manager.shutdown()
@@ -427,7 +432,6 @@ async def test_echo_shutdown_from_other_task(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_killed_child_call_is_informative_and_stays_flagged(tmp_path: Path) -> None:
-    import signal
 
     script = _write_echo(tmp_path, "doomed_echo.py")
     manager = MCPManager()
@@ -442,9 +446,8 @@ async def test_killed_child_call_is_informative_and_stays_flagged(tmp_path: Path
         os.kill(int(out.stdout.strip().split()[0]), signal.SIGKILL)
         await asyncio.sleep(0.5)
         proc = manager._live[0][0]
-        with pytest.raises(RuntimeError, match="doomed.*failed"):
+        with pytest.raises(RuntimeError, match=r"doomed.*failed"):
             await asyncio.wait_for(proc.call("ping", {}), timeout=15)
-        # Flagged, not a silent zombie: the next call is informative too.
         with pytest.raises(RuntimeError, match="doomed"):
             await asyncio.wait_for(proc.call("ping", {}), timeout=15)
     finally:
@@ -455,7 +458,7 @@ async def test_killed_child_call_is_informative_and_stays_flagged(tmp_path: Path
 async def test_recorded_failure_surfaces_after_session_gone() -> None:
     proc = MCPProcess("gone", "unused", [], {})
     proc._failure = RuntimeError("child exited")
-    with pytest.raises(RuntimeError, match="gone.*child exited"):
+    with pytest.raises(RuntimeError, match=r"gone.*child exited"):
         await proc.call("ping", {})
 
 
@@ -475,11 +478,8 @@ async def test_dup_tool_name_first_wins_with_skip_diagnostic() -> None:
     await manager.shutdown()
 
 
-# Moved from test_b4_unification.py / test_b4_p2.py (B4 batch).
 def test_m4_resolve_command_narrow_match() -> None:
-    import sys
 
-    from thyca.tools.mcp import resolve_command
 
     assert resolve_command("python3foo") == "python3foo"
     assert resolve_command("python3") == sys.executable
@@ -513,7 +513,7 @@ async def test_sync_stops_removed_server_and_reports_names() -> None:
     assert removed == ["tavily__ping"]
     assert manager._live == []
     assert manager.tool_specs() == []
-    assert proc._session is None  # aclosed
+    assert proc._session is None
     await manager.shutdown()
 
 
@@ -543,7 +543,6 @@ async def test_sync_respawns_on_env_change() -> None:
     old = manager._live[0][0]
     diags, removed = await manager.sync({"t": _server_cfg(env={"K": "2"})})
     assert [diag.ok for diag in diags] == [True]
-    # Same catalog names stay registered as stubs→live; nothing to unregister.
     assert removed == []
     assert manager._live[0][0] is not old
     assert started == ["1", "2"]
@@ -607,16 +606,14 @@ async def test_failed_servers_tracks_startup_errors_unwraps_groups_and_clears() 
     await manager.spawn_all({"tavily": _server_cfg()})
     failed = manager.failed_servers()
     assert "tavily" in failed
-    assert "RuntimeError: unable to get local issuer certificate line2" == failed["tavily"]
+    assert failed["tavily"] == "RuntimeError: unable to get local issuer certificate line2"
     summary = manager.prompt_summary()
     assert "tavily" in summary and "unable to get local issuer certificate line2" in summary
 
-    # Removing from config clears its diagnostic even before another spawn.
     await manager.sync({})
     assert manager.failed_servers() == {}
     assert manager.prompt_summary() == ""
 
-    # Recovering on sync clears the failed entry as well.
     await manager.sync({"tavily": _server_cfg()})
     assert "tavily" in manager.failed_servers()
     state["broken"] = False
@@ -628,7 +625,6 @@ async def test_failed_servers_tracks_startup_errors_unwraps_groups_and_clears() 
 
 @pytest.mark.asyncio
 async def test_process_start_timeout_cancels_hung_run(monkeypatch: pytest.MonkeyPatch) -> None:
-    from contextlib import asynccontextmanager
 
     cleaned = {"exited": False}
 
@@ -657,7 +653,7 @@ async def test_process_start_timeout_cancels_hung_run(monkeypatch: pytest.Monkey
     monkeypatch.setattr("thyca.tools.mcp.process.ClientSession", HungClientSession)
 
     proc = MCPProcess("hung", "unused", [], {}, start_timeout=timedelta(seconds=0.05))
-    with pytest.raises(TimeoutError, match="startup timed out after 0.05s"):
+    with pytest.raises(TimeoutError, match=r"startup timed out after 0\.05s"):
         await proc.start()
     assert cleaned["exited"] is True
     assert proc._task is None
@@ -795,10 +791,7 @@ def test_format_mcp_status_and_summarize_error_bounds() -> None:
 
 
 def test_report_spawn_diags_emits_single_warning_line_per_failure() -> None:
-    from io import StringIO
 
-    from thyca.app.toolchain import report_spawn_diags
-    from thyca.tools.mcp import StartupDiagnostic
 
     buf = StringIO()
     report_spawn_diags(
@@ -849,7 +842,6 @@ async def test_spawn_all_runs_connects_in_parallel() -> None:
     by_name = {diag.server: diag for diag in diags}
     assert by_name["hung"].ok is False
     assert by_name["echo"].ok is True
-    # Sequential would be ~0.35s+; parallel stays near the hung timeout.
     assert elapsed < 0.35
     await manager.shutdown()
 
@@ -903,7 +895,6 @@ async def test_stub_handler_after_live_then_failed_reconnect() -> None:
     diags, removed = await manager.sync({"echo": _server_cfg(command="true", env={"K": "2"})})
     assert [diag.ok for diag in diags] == [False]
     assert removed == []
-    # Catalog kept → stubs, not cold prompt failure.
     assert manager.failed_servers() == {}
     assert manager.prompt_summary() == ""
     specs = manager.tool_specs()
@@ -932,7 +923,6 @@ async def test_handler_waits_while_connecting_then_forwards() -> None:
     specs = manager.tool_specs()
     assert specs[0].name == "echo__ping"
 
-    # Kick a reconnect and call the tool before settle completes.
     release.clear()
     await manager.schedule({"echo": _server_cfg(command="true", env={"K": "2"})})
     assert manager._entries["echo"].status == "connecting"
@@ -976,7 +966,6 @@ async def test_stub_to_live_recovery_on_sync() -> None:
 
     manager = MCPManager(process_factory=make)
     await manager.spawn_all({"echo": _server_cfg(command="true")})
-    # Failed reconnect keeps last_tools stubs.
     state["broken"] = True
     await manager.sync({"echo": _server_cfg(command="true", env={"retry": "1"})})
     stub = manager.tool_specs()[0]

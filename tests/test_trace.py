@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from pathlib import Path
+from pathlib import Path as _Path
 
-from thyca.core.protocol import Message, ToolCall
 from thyca.conversations.runtime import ConversationRuntime
+from thyca.core.protocol import Message, ToolCall
 from thyca.serve.trace import aggregate, turns_from_conversation
 
 TS = "2026-08-26T09:12:03Z"
@@ -176,8 +177,6 @@ def test_aggregate_by_model_and_unknown_cost() -> None:
     assert models["gpt-4o-mini"]["cost_usd"] == 0.00001
     assert models["foo/bar"]["cost_usd"] is None
     assert data["models"] == ["foo/bar", "gpt-4o-mini"]
-    # "Gần nhất" needs the newest turn per model; the rows above carry
-    # different dates, so each model reports its own.
     assert models["gpt-4o-mini"]["last_started_at"] == TS
     assert models["foo/bar"]["last_started_at"] == "2026-08-25T09:12:03Z"
     days = {row["day"]: row for row in data["by_day"]}
@@ -214,7 +213,6 @@ def test_multi_bot_slice_breakdown_attributes_each_bot() -> None:
         ],
     )
     (turn,) = turns_from_conversation(conversation)
-    # Legacy single-bot fields unchanged: first bot + whole-slice totals.
     assert turn.bot_id == "thyca"
     assert turn.requests == 4
     assert turn.prompt_tokens == 180
@@ -229,7 +227,6 @@ def test_multi_bot_slice_breakdown_attributes_each_bot() -> None:
     assert breakdown["helper"]["cost_usd"] == 0.012
     assert breakdown["helper"]["latency_ms"] == 60
     assert breakdown["buddy"]["total_tokens"] == 22
-    # Turn totals == sum of breakdown.
     assert sum(e["requests"] for e in turn.bot_breakdown) == turn.requests
     assert sum(e["prompt_tokens"] or 0 for e in turn.bot_breakdown) == turn.prompt_tokens
     assert sum(e["total_tokens"] or 0 for e in turn.bot_breakdown) == turn.total_tokens
@@ -268,7 +265,6 @@ def test_single_bot_breakdown_matches_turn_and_legacy_unknown() -> None:
     by_bot = {r["bot_id"]: r for r in aggregate([turn])["by_bot"]}
     assert by_bot["coder"]["requests"] == 2
     assert by_bot["coder"]["cost_usd"] == turn.cost_usd
-    # No bot_id anywhere: breakdown carries None, aggregate keeps "unknown".
     legacy = turns_from_conversation(_conversation(
         "2026-08-26T09-12-03_leg1",
         [Message(role="user", content="go", ts=TS),
@@ -298,7 +294,6 @@ def test_error_marker_forces_failed_and_payload() -> None:
 
 
 def test_error_marker_wins_over_trailing_assistant() -> None:
-    # A turn that died mid-loop after persisting round 1 must not read completed.
     mid = _conversation(
         "2026-08-26T09-12-03_abcn",
         [
@@ -333,25 +328,20 @@ def test_row_requests_truthful_counting() -> None:
         "2026-08-26T09-12-03_mixd",
         [
             Message(role="user", content="go", ts=TS),
-            # Plain llm row: one real call.
             Message(role="assistant", content="a", ts=TS2,
                     meta={"kind": "llm", "bot_id": "thyca"}),
-            # Bus envelope row (sender side): no call.
             Message(role="assistant", content="fwd", ts=TS2,
                     meta={"bot_id": "thyca", "kind": "delegate",
                           "bus_event": True}),
-            # Legacy bus message (pre-marker): no model/usage + parent.
             Message(role="assistant", content="old fwd", ts=TS2,
                     meta={"bot_id": "thyca", "kind": "message",
                           "parent_span_id": "sp_1"}),
-            # Aggregated internal turn of 4 rounds.
             Message(role="assistant", content="done", ts=TS2,
                     meta={"bot_id": "coder", "kind": "result",
                           "model": "m",
                           "usage": {"prompt_tokens": 4, "cached_tokens": 0,
                                     "completion_tokens": 4, "total_tokens": 8},
                           "requests": 4}),
-            # App-written card: its model call sits in an aggregate.
             Message(role="assistant", content="", ts=TS2,
                     meta={"bot_id": "coder", "kind": "card",
                           "card": {"type": "question"}}),
@@ -370,7 +360,6 @@ def test_row_requests_truthful_counting() -> None:
 
 
 def test_turns_carry_conversation_channel_fields(tmp_path=None) -> None:
-    from pathlib import Path as _Path
 
     def _s(sid, bots, dm, messages):
         return ConversationRuntime(sid, _Path(f"{sid}.jsonl"), messages, bots=bots, dm_bot=dm)
@@ -399,7 +388,6 @@ def test_turns_carry_conversation_channel_fields(tmp_path=None) -> None:
 def test_row_tool_calls_truthful_counting() -> None:
     """Root rows count len(tool_calls); aggregated rows report their own
     tool_call_count (never plus their body list); bus/card/context-stop 0."""
-    from thyca.core.protocol import ToolCall
 
     def call(cid):
         return ToolCall(id=cid, name="read", arguments={})
@@ -408,26 +396,21 @@ def test_row_tool_calls_truthful_counting() -> None:
         "2026-08-26T09-12-03_mixt",
         [
             Message(role="user", content="go", ts=TS),
-            # Root row with two real tool calls.
             Message(role="assistant", content="a", ts=TS2,
                     tool_calls=[call("c1"), call("c2")],
                     meta={"kind": "llm", "bot_id": "thyca"}),
-            # Aggregated internal turn: meta count wins over the body list.
             Message(role="assistant", content="done", ts=TS2,
                     tool_calls=[call("c9")],
                     meta={"bot_id": "coder", "kind": "result",
                           "model": "m", "requests": 4, "tool_call_count": 5}),
-            # Bus envelope row: no calls.
             Message(role="assistant", content="fwd", ts=TS2,
                     tool_calls=[call("cb")],
                     meta={"bot_id": "thyca", "kind": "delegate",
                           "bus_event": True}),
-            # App-written card: no calls.
             Message(role="assistant", content="", ts=TS2,
                     tool_calls=[call("cc")],
                     meta={"bot_id": "coder", "kind": "card",
                           "card": {"type": "question"}}),
-            # Context-stop marker: no calls.
             Message(role="assistant", content="stop", ts=TS2,
                     tool_calls=[call("cs")],
                     meta={"kind": "llm", "status": "context_limit"}),

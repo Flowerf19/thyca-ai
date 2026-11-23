@@ -8,7 +8,6 @@ MINI = {"gpt-4o-mini": PricingCfg(input=0.15, cache=0.075, output=0.60)}
 
 
 def test_cost_for_known_model_matches_table() -> None:
-    # ((100-20)*0.15 + 20*0.075 + 10*0.60) / 1e6
     assert cost_for("gpt-4o-mini", USAGE, MINI) == round(
         (80 * 0.15 + 20 * 0.075 + 10 * 0.60) / 1_000_000, 6
     )

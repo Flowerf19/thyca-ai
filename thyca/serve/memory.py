@@ -40,7 +40,6 @@ def memory_endpoint(facade: MemoryFacade, kind: str, payload: dict) -> tuple[int
                 return 400, {"error": "invalid importance"}
             expires = facade.reinforce(sid, importance_value)
             return 200, {"ok": True, "expires_at": expires}
-        # kind == "update": pass through; MemoryFacade.update owns validation.
         topic = payload.get("topic")
         summary = payload.get("summary")
         content = payload.get("content")

@@ -10,13 +10,13 @@ from thyca.agents.events import TurnEvent
 from thyca.agents.observe import Observe
 from thyca.agents.stage import Stage
 from thyca.agents.think import ChatReply
-from thyca.core.protocol import Message, ToolCall, ToolResult
+from thyca.bots.timeline import CanonicalConversationStore, WorkspaceTimeline
 from thyca.conversations.runtime import ConversationManager
+from thyca.core.channel import WindowRef
+from thyca.core.protocol import Message, ToolCall, ToolResult
 
-# Build a canonical-timeline manager holding one execution conversation.
+
 def _canonical_manager(root: Path, limits=None) -> ConversationManager:
-    from thyca.bots.timeline import CanonicalConversationStore, WorkspaceTimeline
-    from thyca.core.channel import WindowRef
 
     timeline = WorkspaceTimeline(root, "thyca")
     window = WindowRef(
@@ -28,7 +28,6 @@ def _canonical_manager(root: Path, limits=None) -> ConversationManager:
     manager = ConversationManager(store=store, limits=limits)
     manager.load(conversation_id)
     return manager
-
 
 
 @dataclass
@@ -396,9 +395,6 @@ def test_skill_events_wire_never_carries_path(tmp_path: Path) -> None:
         assert "create-skill/SKILL.md" not in json.dumps(payload)
 
 
-# --- F13: None/raising dispatchers keep partials + consistent transcript ---
-
-
 class _FlakyDispatcher:
     """Dispatcher with per-call behavior: result, None, or raise."""
 
@@ -465,7 +461,7 @@ def test_f13_none_dispatcher_transcript_has_no_dangling_calls(tmp_path: Path) ->
     stage = Stage(reply=ChatReply(content=None, tool_calls=_calls("c1")), round=1)
 
     asyncio.run(Act(dispatcher).act(stage))
-    Observe(conversations).observe(stage)  # must not raise: every call has a result
+    Observe(conversations).observe(stage)
 
     persisted = conversations.current.messages
     assert persisted[-2].role == "assistant" and len(persisted[-2].tool_calls or []) == 1

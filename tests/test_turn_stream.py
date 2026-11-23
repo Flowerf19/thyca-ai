@@ -23,21 +23,21 @@ def node() -> str:
     return binary
 
 
-_PREAMBLE = f"""
-import {{ installDom, loadScripts, CHAT_CHAIN }} from './tests/webui_dom.mjs';
+_PREAMBLE = """
+import { installDom, loadScripts, CHAT_CHAIN } from './tests/webui_dom.mjs';
 installDom();
-const {{ readNdjson }} = loadScripts(CHAT_CHAIN, 'return {{ readNdjson }};');
-async function decode(raw, splitAt = -1) {{
+const { readNdjson } = loadScripts(CHAT_CHAIN, 'return { readNdjson };');
+async function decode(raw, splitAt = -1) {
   const bytes = new TextEncoder().encode(raw);
   const parts = splitAt >= 0 ? [bytes.slice(0, splitAt), bytes.slice(splitAt)] : [bytes];
   let i = 0;
-  const body = {{ getReader: () => ({{
-    read: async () => (i < parts.length ? {{ done: false, value: parts[i++] }} : {{ done: true, value: undefined }}),
-  }}) }};
+  const body = { getReader: () => ({
+    read: async () => (i < parts.length ? { done: false, value: parts[i++] } : { done: true, value: undefined }),
+  }) };
   const events = [];
   await readNdjson(body, (e) => events.push(e));
   return events;
-}}
+}
 """
 
 

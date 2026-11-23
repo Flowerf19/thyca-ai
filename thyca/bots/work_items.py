@@ -8,7 +8,7 @@ inference.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from thyca.bots.tasks import OpenTask
@@ -32,7 +32,6 @@ class WorkItem:
     share_policy: str | None = None
     latest_checkpoint_entry: str | None = None
     pending_private_id: str | None = None
-    # Source rows the projection rendered from (never duplicated).
     runtime_task: Any = None
     memory_row: Any = None
 
@@ -72,7 +71,7 @@ def project_work_items(
         if target is not None:
             items[items.index(target)] = WorkItem(
                 **{**target.__dict__,
-                   "runtime_refs": target.runtime_refs + (task.key or task.task,),
+                   "runtime_refs": (*target.runtime_refs, task.key or task.task),
                    "current_window": task.room or target.current_window,
                    "waiting_on": task.waiting_on or target.waiting_on,
                    "runtime_task": task}
@@ -112,7 +111,6 @@ def overlay_private_followups(
     title, or readiness. The owner's own DM sees the received/ready
     state. Any other window gets the items unchanged.
     """
-    from dataclasses import replace
 
     if pending is None or window is None:
         return list(items)

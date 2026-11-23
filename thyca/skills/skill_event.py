@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .store import NAME_MAX, _NAME_RE
+from .store import _NAME_RE, NAME_MAX
 
 _FALLBACK = "skill"
 
@@ -75,7 +75,6 @@ def skill_name_for_call(call: object, skills_root: Path | None) -> str | None:
     path = arguments.get("path") if isinstance(arguments, dict) else None
     if not isinstance(path, str):
         return None
-    # Containment (and both resolve() calls) live in classify_skill_read.
     return classify_skill_read(skills_root, Path(path))
 
 

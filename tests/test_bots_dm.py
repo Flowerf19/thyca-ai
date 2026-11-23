@@ -6,12 +6,18 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+import pytest
+import pytest as _pytest
+from seeded_config import seeded_config
+
 from thyca.app.chat_app import ChatApp
 from thyca.bots.card import BotCard
+from thyca.bots.registry import RegistryError
 from thyca.bots.scheduler import tick
 from thyca.configs import load, save
-from seeded_config import seeded_config
+from thyca.conversations.runtime import ConversationNotFound
 from thyca.llms.llm_base import ChatReply
+from thyca.serve.conversations_api import bot_dm as dm_endpoint
 
 
 def _chat(tmp_path: Path, connect=None) -> ChatApp:
@@ -41,13 +47,9 @@ def test_bot_dm_is_lazy_singleton_and_marked(tmp_path: Path) -> None:
         assert first["conversation_id"] == second["conversation_id"]
         assert first["dm"] == "coder"
         assert first["bots"] == ["coder"]
-        # The list payload carries the marker too, so FE can pin it
-        # (blank conversations are pruned from lists, so give the DM a turn).
         app.turn(first["conversation_id"], "hello dm")
         listed = {s["conversation_id"]: s for s in app.list_payload()["conversations"]}
         assert listed[first["conversation_id"]]["dm"] == "coder"
-        # DM identity survives a metadata write (store is append-only,
-        # so a participant rewrite is the survival proof).
         store = app._conversations.store
         conversation = store.load(first["conversation_id"])
         store.append_bots(conversation.path, ["coder"])
@@ -60,9 +62,7 @@ def test_bot_dm_is_lazy_singleton_and_marked(tmp_path: Path) -> None:
 def test_bot_dm_unknown_bot_raises(tmp_path: Path) -> None:
     app = _chat(tmp_path, connect=_LLM())
     try:
-        import pytest
 
-        from thyca.bots.registry import RegistryError
 
         with pytest.raises(RegistryError):
             app.bot_dm("ghost")
@@ -74,8 +74,6 @@ def test_bot_dm_ignores_unmarked_solo_room(tmp_path: Path) -> None:
     app = _chat(tmp_path, connect=_LLM())
     try:
         _make_bot(app)
-        # Raw unmarked solo room (pre-CBE-5 style): phase 2B treats it as
-        # an ordinary group, never adopts it as the DM.
         raw = app._conversations.create()
         app._conversations.store.append_bots(raw.path, ["coder"])
         assert app._conversations.store.load(raw.conversation_id).dm_bot is None
@@ -91,7 +89,6 @@ def test_scheduled_result_lands_in_dm_not_in_room(tmp_path: Path) -> None:
     app = _chat(tmp_path, connect=_LLM())
     try:
         _make_bot(app, schedule="* * * * *")
-        # A shared room the bot also works in.
         room = app.create(bots=["thyca", "coder"])["conversation_id"]
         app.turn(room, "hi coder in room")
         dm_id = app.bot_dm("coder")["conversation_id"]
@@ -108,8 +105,6 @@ def test_scheduled_result_lands_in_dm_not_in_room(tmp_path: Path) -> None:
             and row["content"] == "bot reply"
             for row in dm_rows
         ), "scheduled result must be appended into the bot DM by the app"
-        # Room work stays in the room: the room turn did not leak into the DM
-        # before the scheduled fire (user row text differs).
         assert all("hi coder in room" not in str(row.get("content") or "")
                    for row in dm_rows)
     finally:
@@ -117,9 +112,6 @@ def test_scheduled_result_lands_in_dm_not_in_room(tmp_path: Path) -> None:
 
 
 def test_dm_route_shape(tmp_path: Path) -> None:
-    # Route-level: GET /api/bots/<id>/dm returns the DM detail; the
-    # handler is exercised through conversations_api.bot_dm with a stub.
-    from thyca.serve.conversations_api import bot_dm as dm_endpoint
 
     app = _chat(tmp_path, connect=_LLM())
     try:
@@ -135,15 +127,15 @@ def test_dm_route_shape(tmp_path: Path) -> None:
                 self.payload = payload
 
         handler = Handler()
-        dm_endpoint(handler, app, "coder")  # type: ignore[arg-type]
+        dm_endpoint(handler, app, "coder")  # type: ignore[arg-type] -- reason: intentional invalid-type or test-double argument
         assert handler.status == 200
         assert handler.payload["kind"] == "dm"
         assert handler.payload["bot_id"] == "coder"
         assert handler.payload["bots"] == ["coder"]
-        assert json.dumps(handler.payload)  # serializable, no internals
+        assert json.dumps(handler.payload)
 
         missing = Handler()
-        dm_endpoint(missing, app, "ghost")  # type: ignore[arg-type]
+        dm_endpoint(missing, app, "ghost")  # type: ignore[arg-type] -- reason: intentional invalid-type or test-double argument
         assert missing.status == 404
     finally:
         app.shutdown()
@@ -154,10 +146,9 @@ def test_bot_dm_lookup_does_not_prune_blank_group(tmp_path: Path) -> None:
     try:
         _make_bot(app)
         _make_bot(app, bot_id="helper")
-        dm = app.bot_dm("coder")  # DM exists from here on.
-        group = app.create(bots=["coder", "helper"])  # blank group
+        dm = app.bot_dm("coder")
+        group = app.create(bots=["coder", "helper"])
         assert app.bot_dm("coder")["conversation_id"] == dm["conversation_id"]
-        # Store equivalent of the file check: the blank group still loads.
         assert app._conversations.store.load(group["conversation_id"]).conversation_id == group["conversation_id"]
     finally:
         app.shutdown()
@@ -169,12 +160,9 @@ def test_first_bot_dm_prunes_previous_blank(tmp_path: Path) -> None:
         _make_bot(app)
         stray = app._conversations.create()
         assert app._conversations.store.load(stray.conversation_id).conversation_id == stray.conversation_id
-        dm = app.bot_dm("coder")  # first lookup: create path prunes.
+        dm = app.bot_dm("coder")
         assert dm["dm"] == "coder"
-        # Store equivalent of the file check: the blank door is deleted.
-        from thyca.conversations.runtime import ConversationNotFound
 
-        import pytest as _pytest
 
         with _pytest.raises(ConversationNotFound):
             app._conversations.store.load(stray.conversation_id)

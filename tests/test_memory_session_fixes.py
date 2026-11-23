@@ -9,17 +9,18 @@ from pathlib import Path
 
 import pytest
 
-from thyca.core.protocol import Message, ToolCall
+from thyca.conversations.runtime import ConversationManager, ConversationNotFound
+from thyca.conversations.runtime.wire import conversation_summary
+from thyca.conversations.store.runtime import ensure_runtime_store
+from thyca.core.protocol import ToolCall
 from thyca.memories.active import ActiveMemory, ActiveMemoryError, ActiveState
 from thyca.memories.archive_store import ArchiveError, Hit
 from thyca.memories.archived import ArchivedMemory
 from thyca.memories.chunk import Chunker
+from thyca.memories.facade import MemoryFacade
 from thyca.memories.writer import MemoryWriter
 from thyca.serve.memory import memory_endpoint
-from thyca.conversations.runtime import ConversationManager, ConversationNotFound
-from thyca.conversations.runtime.wire import conversation_summary
 from thyca.tools.gateway import ToolGateway
-from thyca.memories.facade import MemoryFacade
 from thyca.tools.memory_tools import register_memory_tools
 from thyca.tools.registry import ToolRegistry
 from thyca.tools.task_store import TaskStore
@@ -37,9 +38,6 @@ def _seed_duplicate_daily(root: Path, day: str = "2026-08-13") -> Path:
         encoding="utf-8",
     )
     return path
-
-
-# --- F3: duplicate ids mutated wholesale ---
 
 
 def test_duplicate_id_forget_touches_first_match_only(tmp_path: Path) -> None:
@@ -63,9 +61,6 @@ def test_duplicate_id_reinforce_touches_first_match_only(tmp_path: Path) -> None
     assert "2027-09-12" not in first_after
 
 
-# --- F8: serve drops mistyped fields ---
-
-
 def test_mistyped_update_rejected_not_dropped(tmp_path: Path) -> None:
     facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
     sid = facade.remember("cafe", "orig-summary", content="orig-details")
@@ -87,9 +82,6 @@ def test_mistyped_update_rejected_not_dropped(tmp_path: Path) -> None:
     )
     assert status == 400
     assert next((tmp_path / "memory").glob("*.md")).read_text(encoding="utf-8") == before
-
-
-# --- F16: remember indent + blanks ---
 
 
 def test_remember_multiline_chunks_like_update(tmp_path: Path) -> None:
@@ -131,9 +123,6 @@ def test_remember_rejects_blanks_like_update(tmp_path: Path) -> None:
         facade.writer.update_memory(sid, topic="   ", body_lines=None)
 
 
-# --- F17: invisible-leaf counts ---
-
-
 def test_expired_leaf_count_matches_get(tmp_path: Path) -> None:
     (tmp_path / "memory").mkdir(parents=True, exist_ok=True)
     (tmp_path / "memory" / "2026-08-10.md").write_text(
@@ -159,9 +148,6 @@ def test_expired_leaf_count_matches_get(tmp_path: Path) -> None:
     assert counted.has_more is False
 
 
-# --- F18: raw UnicodeDecodeError ---
-
-
 def test_non_utf8_daily_raises_typed_errors(tmp_path: Path) -> None:
     (tmp_path / "memory").mkdir(parents=True, exist_ok=True)
     (tmp_path / "memory" / "2026-08-10.md").write_bytes(b"\xff\xfe invalid \x80 bytes\n")
@@ -176,9 +162,6 @@ def test_non_utf8_daily_raises_typed_errors(tmp_path: Path) -> None:
     today_path.write_bytes(b"\xff\xfe invalid \x80 bytes\n")
     with pytest.raises(ActiveMemoryError):
         active.refresh(ActiveState(day=day, today_path=today_path), now)
-
-
-# --- F19: negative limit ---
 
 
 def test_negative_and_zero_limits_clamped(tmp_path: Path) -> None:
@@ -204,9 +187,6 @@ def test_negative_and_zero_limits_clamped(tmp_path: Path) -> None:
     assert len(archived.store.trigram_search(norm, None, 2, now_ts)) == 2
 
 
-# --- F20: reinforce ValueError leak ---
-
-
 def test_reinforce_bad_importance_typed_both_layers(tmp_path: Path) -> None:
     facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
     sid = facade.remember("cafe", "orig-summary")
@@ -223,9 +203,6 @@ def test_reinforce_bad_importance_typed_both_layers(tmp_path: Path) -> None:
     )
     assert status == 400
     assert "invalid literal" not in body["error"]
-
-
-# --- F22: purge swaps symlinks ---
 
 
 def test_purge_leaves_symlink_daily_alone(tmp_path: Path) -> None:
@@ -254,14 +231,7 @@ def test_purge_leaves_symlink_daily_alone(tmp_path: Path) -> None:
     assert target.read_text(encoding="utf-8") == before
 
 
-# --- F28/F29/F32 deleted subjects: file-stat race in list_paths, compact of
-# a file-deleted session, and file rewrite tmp handling no longer exist on
-# the conversation store (list_paths reads AdminStore, rewrite is refused).
-
-
-# Check that a deleted empty door reports not found from its stored stamp.
 def test_summary_of_deleted_empty_session_is_not_found(tmp_path: Path) -> None:
-    from thyca.conversations.store.runtime import ensure_runtime_store
 
     ensure_runtime_store(tmp_path)
     manager = ConversationManager(tmp_path / "sessions")
@@ -269,9 +239,6 @@ def test_summary_of_deleted_empty_session_is_not_found(tmp_path: Path) -> None:
     manager.store.delete(conversation.conversation_id)
     with pytest.raises(ConversationNotFound):
         conversation_summary(conversation)
-
-
-# --- M4-safe-half: limit edges + non-str inputs ---
 
 
 async def test_memory_tool_limit_edges_never_raise(tmp_path: Path) -> None:
@@ -296,7 +263,6 @@ async def test_memory_tool_limit_edges_never_raise(tmp_path: Path) -> None:
             )
         )
         assert not recent.is_error, limit
-    # F7-strict: mistyped limits are rejected, not truncated or defaulted.
     for limit in (2.5, "abc"):
         result = await gateway.submit(
             ToolCall(
@@ -318,9 +284,6 @@ def test_non_str_search_inputs_warn(tmp_path: Path) -> None:
 
 
 async def test_tool_non_str_timeline_day_rejected(tmp_path: Path) -> None:
-    # F7-strict: mistyped tool args are rejected by the registry; the
-    # warnings path survives only for direct facade calls (see
-    # test_non_str_search_inputs_warn).
     facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
     registry = ToolRegistry()
     register_memory_tools(registry, facade)

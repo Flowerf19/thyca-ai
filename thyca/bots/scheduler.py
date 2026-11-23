@@ -11,6 +11,9 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from thyca.conversations.runtime import ConversationBusy
+
+
 class CronError(ValueError):
     """Cron expression could not be parsed."""
 
@@ -89,7 +92,6 @@ def due(schedule: str | None, now: datetime) -> bool:
     if not match_field(month_e, now.month, 1, 12):
         return False
     dom_ok = match_field(dom_e, now.day, 1, 31)
-    # datetime.weekday(): Mon=0..Sun=6 → cron: Mon=1..Sat=6, Sun=0.
     cron_dow = (now.weekday() + 1) % 7
     dow_ok = _dow_matches(dow_e, cron_dow)
     if _restricted(dom_e) and _restricted(dow_e):
@@ -103,7 +105,6 @@ def tick(app, now: datetime | None = None, *, idle_s: int = 900) -> dict:
     Returns ``{"swept": {...}, "fired": [{bot_id, room, reply}...], "skipped": [...]}``.
     Never raises for one bot's failure; failures land in ``skipped``.
     """
-    from thyca.conversations.runtime import ConversationBusy
 
     moment = now or datetime.now().astimezone()
     report: dict = {"swept": {}, "fired": [], "skipped": []}
@@ -165,7 +166,7 @@ def _solo_room(app, bot_id: str) -> str:
     if callable(bot_dm):
         return bot_dm(bot_id)["conversation_id"]
     for conversation in app._conversations.list_conversations():
-        bots = conversation.bots if conversation.bots else ["thyca"]
+        bots = conversation.bots or ["thyca"]
         if bots == [bot_id]:
             return conversation.conversation_id
     return app.create(bots=[bot_id])["conversation_id"]

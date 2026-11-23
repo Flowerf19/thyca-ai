@@ -14,12 +14,23 @@ from __future__ import annotations
 
 import hashlib
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any
 
 from thyca.app.turn_options import resolve_bot_cfg, resolve_bot_provider
+from thyca.conversations.runtime import ConversationManager
+from thyca.conversations.runtime.wire import updated_at
+from thyca.core.protocol import utc_now_ts
 from thyca.llms.llm_factory import ConnectFactory
+from thyca.memories import habits as mem_habits
+from thyca.memories import jobs as mem_jobs
+from thyca.memories import profile as mem_profile
+from thyca.memories.facade import MemoryFacade
+from thyca.memories.habits import habit_observations
+from thyca.memories.identity import bind_bot_id, reset_bot_id
+from thyca.memories.profile import format_card_line
 
 if TYPE_CHECKING:
     from thyca.app.webui_channel import WindowRef
@@ -88,11 +99,7 @@ class BackgroundJobsService:
         TURN-CURATE: the runtime skips this hook entirely when the agent
         recorded a checkpoint in the segment (it already wrote what
         matters before compacting itself via the ``compact`` tool)."""
-        from thyca.memories import jobs as mem_jobs
 
-        # Bot-specific extraction requires the bot's valid card: a missing
-        # or invalid card (or settings) must surface through the caller's
-        # best-effort handler, never silently fall back to global config.
         card = self._deps.bots.require(bot_id)
         provider = resolve_bot_provider(turn_cfg, card)
         connect = self._deps.injected_connect or ConnectFactory.create(
@@ -103,8 +110,6 @@ class BackgroundJobsService:
             transcript = mem_jobs.transcript_tail(list(messages))
             if not transcript.strip():
                 return
-            from thyca.memories import habits as mem_habits
-            from thyca.memories.identity import bind_bot_id, reset_bot_id
 
             facade = self.job_facade()
             bot_user_path = self._deps.bots.bot_dir(bot_id) / "USER.md"
@@ -128,8 +133,6 @@ class BackgroundJobsService:
                     facade, extracted, default_bot=bot_id,
                     open_tasks=open_tasks, chat=room_id,
                 )
-            # Phase 1E habit sweep (best-effort, never breaks the flush):
-            # newly-qualified habit labels append to this bot's own USER.md.
             try:
                 sweep_token = bind_bot_id(bot_id)
                 try:
@@ -148,7 +151,6 @@ class BackgroundJobsService:
 
     def _search_bot_memory(self, text: str, bot_id: str) -> list[str]:
         """Bounded memory hits for a bot, read as the bot itself (CBE-4)."""
-        from thyca.memories.identity import bind_bot_id, reset_bot_id
 
         token = bind_bot_id(bot_id)
         try:
@@ -161,7 +163,6 @@ class BackgroundJobsService:
 
     def _memory_task_rows(self, bot_id: str) -> list:
         """Raw open-task catalog rows for one bot (WS-3 projection)."""
-        from thyca.memories.identity import bind_bot_id, reset_bot_id
 
         token = bind_bot_id(bot_id)
         try:
@@ -175,7 +176,6 @@ class BackgroundJobsService:
 
         Lazily built and cached: the constructor reindexes, so sharing one
         instance beats rebuilding it per sweep. Locks are shared process-wide."""
-        from thyca.memories.facade import MemoryFacade
 
         facade = self._job_facade
         if facade is None:
@@ -188,24 +188,16 @@ class BackgroundJobsService:
 
     def sweep_idle_conversations(self, idle_s: int = 900) -> dict:
         """Sweep idle canonical bot timelines once, under their workspace lease."""
-        from thyca.core.protocol import utc_now_ts
-        from thyca.memories import jobs as mem_jobs
-        from thyca.conversations.runtime import ConversationManager
-        from thyca.conversations.runtime.wire import updated_at
 
         now_ts = utc_now_ts()
         running = set(self._deps.turns.snapshot())
         base_cfg = self._deps.current_cfg()
-        # Every bot, including Thyca, is swept only through canonical
-        # workspace timelines; public room transcripts are read models.
         bot_report: dict[str, dict] = {}
 
         async def _sweep_workspace_window(
             bot_id: str, window_id: str, bot_cfg
         ):
             async with self._deps.runtime.workspaces.lease(bot_id):
-                # Bindings and transcript may have changed while waiting
-                # for the lease. Never compact a pre-lease snapshot.
                 binding = self._deps.runtime.workspaces.store.get_binding(
                     bot_id, window_id)
                 if binding is None or binding.internal_conversation_id is None:
@@ -279,8 +271,6 @@ class BackgroundJobsService:
                 if result is not None:
                     key, entry = result
                     bot_report[key] = entry
-        # TURN-CURATE: shared-profile aggregation (Thyca reviews per-bot
-        # profile blocks and writes the merged set via profile_update).
         try:
             profiles_aggregated = self.aggregate_team_profiles()
         except Exception:
@@ -290,7 +280,6 @@ class BackgroundJobsService:
 
     def _user_direct_profile_observations(self) -> list[dict]:
         """kind='habit' observations the user stated directly (no owner)."""
-        from thyca.memories.habits import habit_observations
 
         try:
             records = habit_observations(self.job_facade(), None)
@@ -301,7 +290,6 @@ class BackgroundJobsService:
         ]
 
     def _profile_card_line(self, bot_id: str) -> str:
-        from thyca.memories.profile import format_card_line
 
         try:
             card = self._deps.bots.require(bot_id)
@@ -320,7 +308,6 @@ class BackgroundJobsService:
         immediately when bot profile files changed. Best-effort: never
         raises.
         """
-        from thyca.memories import profile as mem_profile
 
         try:
             paths = {}
@@ -368,8 +355,6 @@ class BackgroundJobsService:
                 blocks, user_direct, current_profile, self._profile_card_line
             )
             detail = self._deps.scheduled_turn("thyca", prompt)
-            # Migration cleanup: the legacy ## Habits auto block drops only
-            # when every legacy line already lives in the ## Profile block.
             try:
                 mem_profile.maybe_strip_legacy_block(
                     shared, lock_for=self.job_facade().writer.lock_for

@@ -17,8 +17,6 @@ import threading
 from collections import OrderedDict
 from dataclasses import dataclass
 
-#: Technical defaults (retention only, never content rules): enough room
-#: for a busy room's recent delegations without unbounded process growth.
 MAX_ARTIFACTS = 500
 MAX_TOTAL_CHARS = 4 * 1024 * 1024
 

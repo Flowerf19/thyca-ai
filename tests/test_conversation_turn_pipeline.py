@@ -9,14 +9,24 @@ Trace tool-row expansion it must keep.
 from __future__ import annotations
 
 import io
+import json as _json
 import queue
 import uuid
 from pathlib import Path
 
 import pytest
+from seeded_config import seeded_config
 
+import thyca.conversations.store as store
 from thyca.agents.events import TurnEvent
 from thyca.agents.reply import ContentDelta
+from thyca.app.chat_app import InvalidTurnOption, InvalidTurnText, TurnCancelled
+from thyca.conversations.runtime import (
+    ConversationBusy,
+    ConversationCorrupt,
+    ConversationError,
+    ConversationNotFound,
+)
 from thyca.conversations.store import (
     AdminStore,
     AgentStore,
@@ -35,12 +45,13 @@ from thyca.conversations.store import (
     trace_turns_for,
     trace_turns_projected,
 )
+from thyca.conversations.store.contracts import _view
 from thyca.core.conversation import ConversationRef
 from thyca.core.protocol import Message, ToolCall
+from thyca.llms.llm_base import LLMError
 from thyca.serve.bridge import SENTINEL, bridge_worker, pump_stream
 from thyca.serve.errors import public_turn_error
 from thyca.serve.turn_state import TurnHub, TurnState
-from thyca.conversations.runtime import ConversationBusy, ConversationCorrupt, ConversationError, ConversationNotFound
 
 
 def _root_id(root: Path) -> str:
@@ -75,24 +86,18 @@ def switched(tmp_path: Path):
     yield tmp_path
 
 
-# Build projected trace turns for one door through the runtime store.
 def _trace_turns(root: Path, ref, actor: str):
     return trace_turns_projected(
         assemble_history(root, ref, actor, intent=_read_intent()))
 
 
-# Build one projected trace detail for one door through the runtime store.
 def _trace_detail(root: Path, ref, actor: str, turn_index: int):
     return trace_detail_for(
         project_for_trace(assemble_history(root, ref, actor, intent=_read_intent())),
         turn_index)
 
 
-# ---------- error mapping: 400/404/409/503 preserved + store covered ----------
-
 def test_public_turn_error_preserves_contract_and_maps_store() -> None:
-    from thyca.app.chat_app import InvalidTurnOption, InvalidTurnText, TurnCancelled
-    from thyca.llms.llm_base import LLMError
 
     assert public_turn_error(InvalidTurnText('empty')) == (
         400, 'invalid_text', 'invalid text: empty')
@@ -121,11 +126,8 @@ def test_public_turn_error_preserves_contract_and_maps_store() -> None:
     status, code, message = public_turn_error(glob)
     assert (status, code, message) == (
         503, 'conversation_unavailable', 'conversation unavailable')
-    # Sanitized: the bot id never leaks into the public message.
     assert 'coder' not in message
 
-
-# ---------- failed-turn markers + projected trace ----------
 
 def test_error_marker_appends_without_rewrite_and_trace_fails(switched: Path) -> None:
     ref = _dm(switched, 'coder')
@@ -140,15 +142,13 @@ def test_error_marker_appends_without_rewrite_and_trace_fails(switched: Path) ->
     assert seq == 3
 
     history = agents.read(ref, 'coder').messages
-    assert [m.content for m in history] == before + ['boom unavailable']
+    assert [m.content for m in history] == [*before, 'boom unavailable']
     assert history[0].content == 'run this'
     assert (history[0].meta or {}).get('error') is None
     marker = history[-1]
     assert marker.role == 'system'
     assert marker.meta == {'error': {'code': 'llm_error', 'message': 'boom unavailable'}}
 
-    # Chat detail keeps the marker row; trace projection stamps the user.
-    from seeded_config import seeded_config
 
     conversation = assemble_history(
         switched, ref, 'coder', intent=_read_intent())
@@ -163,11 +163,8 @@ def test_error_marker_appends_without_rewrite_and_trace_fails(switched: Path) ->
     payload = _trace_detail(switched, ref, 'coder', 0)
     assert payload['status'] == 'failed'
     assert payload['error'] == {'code': 'llm_error', 'message': 'boom unavailable'}
-    # Trace detail carries the tool-call shape (always present with
-    # include_args), chat detail never does.
     assert all('tool_calls' in item for item in payload['messages'])
     assert all('tool_calls' not in item for item in detail['messages'])
-    # A failed turn never reads as completed.
 
 
 def test_project_for_trace_is_memory_only_and_drops_orphan_markers(switched: Path) -> None:
@@ -178,7 +175,6 @@ def test_project_for_trace_is_memory_only_and_drops_orphan_markers(switched: Pat
     conversation = assemble_history(
         switched, ref, 'coder', intent=_read_intent())
     projected = project_for_trace(conversation)
-    # No markers: identical object, no copy.
     assert projected is conversation
 
     record_turn_error(
@@ -194,7 +190,6 @@ def test_project_for_trace_is_memory_only_and_drops_orphan_markers(switched: Pat
     assert len(projected.messages) == len(conversation.messages) - 1
     assert (projected.messages[0].meta or {})['error'] == {
         'code': 'llm_error', 'message': 'down'}
-    # Stored bytes untouched by the projection.
     assert (agents.read(ref, 'coder').messages[0].meta or {}).get('error') is None
 
 
@@ -212,8 +207,6 @@ def test_second_failure_appends_second_marker(switched: Path) -> None:
     turns = _trace_turns(switched, ref, 'coder')
     assert len(turns) == 1 and turns[0].status == 'failed'
 
-
-# ---------- retry without truncation ----------
 
 def test_retry_reports_last_user_without_mutation(switched: Path) -> None:
     ref = _dm(switched, 'coder')
@@ -235,17 +228,8 @@ def test_retry_reports_last_user_without_mutation(switched: Path) -> None:
     rerun = prepare_retry(switched, ref, intent=_write_intent(), actor='coder')
     assert rerun.has_user is True
     assert rerun.message_count == 4
-    # No truncation: the failed assistant row is still history.
-    assert [m.content for m in agents.read(ref, 'coder').messages] == before + ['boom']
+    assert [m.content for m in agents.read(ref, 'coder').messages] == [*before, 'boom']
 
-
-# ---------- sidecar kinds ----------
-
-
-
-
-
-# ---------- trace slices + tool-row expansion ----------
 
 def test_trace_slices_mirror_turn_slices(switched: Path) -> None:
     ref = _dm(switched, 'coder')
@@ -269,10 +253,7 @@ def test_trace_slices_mirror_turn_slices(switched: Path) -> None:
 
 
 def test_trace_tool_row_expansion_stays_in_trace_only(switched: Path) -> None:
-    from seeded_config import seeded_config
 
-    # Stored rows are plain (the store rejects tool_calls): chat
-    # stays lean while trace always carries the call shape.
     ref = _dm(switched, 'coder')
     AgentStore(switched).append(ref, 'coder', _msg('user', 'ping'))
     AgentStore(switched).append(ref, 'coder', _msg('assistant', 'pong'))
@@ -284,8 +265,6 @@ def test_trace_tool_row_expansion_stays_in_trace_only(switched: Path) -> None:
     assert all('tool_call_id' in item for item in trace_stored['messages'])
     assert all('meta' in item for item in trace_stored['messages'])
 
-    # Render layer: arguments ride only the trace shape (chat keeps
-    # id/name so replay can label the call, never the input JSON).
     call = ToolCall(id='call-1', name='read', arguments={'path': 'a.txt'})
     conversation = assemble_history_like(
         [Message(role='user', content='open a'),
@@ -304,7 +283,6 @@ def test_trace_tool_row_expansion_stays_in_trace_only(switched: Path) -> None:
 
 
 def assemble_history_like(messages: list[Message]):
-    from thyca.conversations.store.contracts import _view
 
     return _view(
         ConversationRef.dm('coder'),
@@ -312,8 +290,6 @@ def assemble_history_like(messages: list[Message]):
         tuple(messages),
     )
 
-
-# ---------- TurnState busy/cancel/follow on store ids ----------
 
 def test_turnstate_busy_cancel_follow_on_store_ids(switched: Path) -> None:
     ref = _dm(switched, 'coder')
@@ -326,13 +302,11 @@ def test_turnstate_busy_cancel_follow_on_store_ids(switched: Path) -> None:
         turns.claim(group.id)
     status, code, _message = public_turn_error(ConversationBusy(group.id))
     assert (status, code) == (409, 'session_busy')
-    # Another conversation stays free while the first is claimed.
     assert isinstance(turns.claim(ref.id), TurnHub)
     turns.release(ref.id)
     turns.release(group.id)
     assert turns.hub(group.id) is None
 
-    # Follow: the hub replays buffered events to a late subscriber.
     hub = turns.claim(group.id)
     hub.publish(TurnEvent(type='turn.accepted', bot_id='thyca'))
     hub.publish(TurnEvent(type='llm.started', round=1, bot_id='thyca'))
@@ -352,14 +326,13 @@ def test_turnstate_busy_cancel_follow_on_store_ids(switched: Path) -> None:
 
 
 def test_bridge_worker_cancel_maps_to_single_cancelled_terminal() -> None:
-    from thyca.app.chat_app import TurnCancelled
 
     class CancelApp:
         def turn(self, *args, **kwargs):
             raise TurnCancelled()
 
     items: queue.Queue = queue.Queue()
-    bridge_worker(CancelApp(), 's', 'hi', items, {'disconnected': False})  # type: ignore[arg-type]
+    bridge_worker(CancelApp(), 's', 'hi', items, {'disconnected': False})  # type: ignore[arg-type] -- reason: intentional invalid-type or test-double argument
     assert items.get(timeout=2) == ('cancelled', None)
     assert items.get(timeout=2) is SENTINEL
 
@@ -378,7 +351,6 @@ class _FakeHandler:
         self.json_sent.append((status, body))
 
     def lines(self) -> list[dict]:
-        import json as _json
 
         return [_json.loads(line.decode('utf-8'))
                 for line in self.buf.getvalue().splitlines() if line.strip()]
@@ -411,7 +383,6 @@ def test_pump_stream_pre_accept_errors_are_http_json() -> None:
 
 
 def test_pump_stream_single_terminal_and_failed_cancel_shapes() -> None:
-    # Completed: exactly one turn.completed, extras after it are dropped.
     handler = _FakeHandler()
     items: queue.Queue = queue.Queue()
     state = {'disconnected': False}
@@ -426,8 +397,6 @@ def test_pump_stream_single_terminal_and_failed_cancel_shapes() -> None:
         'turn.accepted', 'llm.content', 'turn.completed']
     assert lines[-1] == {'type': 'turn.completed', 'detail': {'reply': 'done'}}
 
-    # Failed: single turn.failed with the mapped code/message.
-    from thyca.llms.llm_base import LLMError
 
     handler = _FakeHandler()
     items = queue.Queue()
@@ -440,7 +409,6 @@ def test_pump_stream_single_terminal_and_failed_cancel_shapes() -> None:
     assert lines[-1]['code'] == 'llm_error'
     assert [item['type'] for item in lines].count('turn.failed') == 1
 
-    # Cancelled: single turn.cancelled.
     handler = _FakeHandler()
     items = queue.Queue()
     items.put(TurnEvent(type='turn.accepted', bot_id='thyca'))
@@ -449,7 +417,6 @@ def test_pump_stream_single_terminal_and_failed_cancel_shapes() -> None:
     pump_stream(handler, items, {'disconnected': False})
     assert _drain(handler)[-1] == {'type': 'turn.cancelled'}
 
-    # Sentinel with no terminal: constant public failure, never a hang.
     handler = _FakeHandler()
     items = queue.Queue()
     items.put(TurnEvent(type='turn.accepted', bot_id='thyca'))
@@ -462,10 +429,8 @@ def test_pump_stream_single_terminal_and_failed_cancel_shapes() -> None:
 
 
 def test_public_store_exports_turn_pipeline_api() -> None:
-    import thyca.conversations.store as store
 
     for name in ('record_turn_error', 'prepare_retry',
                  'project_for_trace', 'trace_turns_projected'):
         assert callable(getattr(store, name)), name
-    # append_turn_error stays exported (Phase 2); record_turn_error routes it.
     assert store.append_turn_error is append_turn_error

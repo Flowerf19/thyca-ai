@@ -24,18 +24,14 @@ if TYPE_CHECKING:
 _TIMEOUT_DEFAULT = 30
 _TIMEOUT_BACKGROUND_DEFAULT = 1800
 
-# The agent must never kill the serve process hosting its own turn: stopping
-# serve mid-turn (e.g. `thyca --serve --stop` after editing mcpServers)
-# SIGTERMs the parent, so the turn never completes. Config edits already
-# apply on the next turn; a human restarts serve outside chat when needed.
 _SELF_KILL_BINARIES = frozenset(
     {"reboot", "shutdown", "poweroff", "halt", "init", "telinit"}
 )
 _SYSTEMCTL_ACTIONS = frozenset({"reboot", "poweroff", "halt", "kexec"})
-_KILL_THYCA_BINARIES = frozenset({"pkill", "killall"})  # pgrep stays allowed: read-only diagnostics
+_KILL_THYCA_BINARIES = frozenset({"pkill", "killall"})
 _WRAPPER_BINARIES = frozenset({"sudo", "env", "nohup", "nice", "timeout", "command"})
 _SEGMENT_SPLIT = re.compile(r"&&|\|\||[;|`\n()&]+")
-_DURATION_RE = re.compile(r"\d+[smhd]?")  # timeout/nice durations: 5, 5s, 2m ...
+_DURATION_RE = re.compile(r"\d+[smhd]?")
 
 
 def _self_kill_target(command: str) -> str | None:
@@ -104,8 +100,6 @@ def kill_process_group(pid: int) -> None:
 
 def bash_spec(background: BackgroundProcs | None = None) -> ToolSpec:
     async def handler(args: dict) -> str:
-        # Schema types arrive pre-checked by the registry (X3); only the
-        # non-blank command rule stays here as domain validation.
         command = args["command"]
         if not command.strip():
             raise ValueError("command must be a non-empty string")
@@ -136,8 +130,6 @@ def bash_spec(background: BackgroundProcs | None = None) -> ToolSpec:
             assert entry is not None
             return Detached(entry, message)
         if background is not None:
-            # The gateway owns the soft timeout now: wait for the proc up to
-            # the hard cap; slow commands become tracked executions there.
             raw = args.get("timeout")
             hard = _TIMEOUT_BACKGROUND_DEFAULT if raw is None else parse_timeout(raw)
             bid = await background.start(command, hard, os.getcwd(), id=eid)

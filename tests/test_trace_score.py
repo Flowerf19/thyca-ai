@@ -24,10 +24,6 @@ from test_team_frontend import _unit_renderer_source
 ROOT = Path(__file__).resolve().parents[1]
 TRACE_JS = ROOT / "thyca" / "webui" / "ui" / "trace" / "js" / "trace.js"
 
-# Global surface for trace.js: real util.js semantics for $/$$/escapeHTML/
-# icon, a per-id element registry, and the data-layer globals the page
-# expects (getBot/avatar/paletteStyle/getJson/toast/bootShell). window gets
-# no formatMarkdown: the escaped-paragraph fallback is what this file pins.
 STUBS = r"""
 class El {
   constructor(tag = 'div') {
@@ -128,13 +124,13 @@ def test_skill_call_keeps_raw_name_and_skill(node: str) -> None:
     )
     skill_step, plain_step = html.split("|")
     assert '<p class="tl-step-title">codereview' in skill_step
-    assert "tool read" in skill_step          # raw name kept in meta
+    assert "tool read" in skill_step
     assert "120 ms" in skill_step
-    assert "c1" in skill_step                 # call id in the meta bits
+    assert "c1" in skill_step
     assert "&quot;path&quot;: &quot;SKILL.md&quot;" in skill_step
     assert "out1" in skill_step
     assert '<p class="tl-step-title">read' in plain_step
-    assert "tool read" not in plain_step      # no redundant meta for name==skill
+    assert "tool read" not in plain_step
     assert "5 ms" in plain_step
 
 
@@ -192,14 +188,12 @@ def test_activity_steps_keep_real_message_order(node: str) -> None:
     html = _eval_trace(node, f"console.log(JSON.stringify(timelineHtml({json.dumps(detail)})))")
     order = [
         html.index("tl-item-user"),
-        html.index(">bash<"),           # first round's first step
+        html.index(">bash<"),
         html.index(">done<") if ">done<" in html else html.index("done"),
     ]
     assert order[0] < order[1] < order[2]
-    # Four calls, each its own numbered step — never merged by name.
     assert html.count('class="tl-step-num"') == 4
     assert "01" in html and "04" in html
-    # The naming assistant renders as the quiet sidecar line, not a bubble.
     assert "Đổi tên phiên" in html
     assert "tl-meta" in html
 
@@ -232,7 +226,7 @@ def test_step_input_shows_arguments_json(node: str) -> None:
         f"console.log(JSON.stringify(stepHtml(1, {json.dumps(call)}, null)))",
     )
     assert '<p class="tl-io-label">Input</p>' in html
-    assert "&quot;limit&quot;: 3" in html  # escaped pretty JSON in the pre
+    assert "&quot;limit&quot;: 3" in html
 
 
 def test_missing_tool_name_falls_back_to_tool(node: str) -> None:
@@ -246,7 +240,6 @@ def test_missing_tool_name_falls_back_to_tool(node: str) -> None:
 def test_step_output_distinguishes_missing_empty_zero_false(node: str) -> None:
     """Missing result = the placeholder; empty string = '(trống)'; a
     recorded 0/false renders verbatim — the falsy trap stays closed."""
-    call = {"id": "c1", "name": "bash"}
     out = _eval_trace(
         node,
         "console.log(JSON.stringify(["
@@ -294,7 +287,6 @@ def test_missing_latency_absent_but_zero_stays_zero(node: str) -> None:
     zero, missing = out
     assert "0 ms" in zero
     assert " ms" not in missing
-    # The call id still rides the meta line on both.
     assert "c1" in zero and "c2" in missing
 
 
@@ -367,7 +359,6 @@ def test_first_user_and_final_assistant_render_in_order(node: str) -> None:
     assert "hello" in html and "first assistant" in html
     assert "final answer" in html
     assert html.index("hello") < html.index("final answer")
-    # The whitespace-only assistant message still keeps its item shell.
     assert html.count("tl-item-assistant") == 3
 
 

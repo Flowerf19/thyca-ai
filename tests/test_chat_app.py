@@ -2,25 +2,62 @@
 from __future__ import annotations
 
 import asyncio
+import asyncio as aio
 import threading
 import time
 from dataclasses import replace
 from datetime import timedelta
+from io import StringIO
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from mcp.types import CallToolResult, ListToolsResult, TextContent, Tool
+from seeded_config import seeded_config
 from test_serve_chat import FakeLLM, ScriptedLLM, _chat
 
+import thyca.app.chat_app as chat_mod
+from thyca.agents.act import Act
+from thyca.agents.assemble import Assemble
 from thyca.agents.events import TurnEvent
-from thyca.app.chat_app import ChatApp
-from thyca.configs import McpServerCfg, default_config, load, save
-from seeded_config import seeded_config
-from thyca.llms.llm_base import ChatReply, LLMError
+from thyca.agents.loop import AgentLoop
+from thyca.agents.meta import compaction_meta
+from thyca.agents.observe import Observe
+from thyca.agents.think import Think
+from thyca.app.chat_app import (
+    ChatApp,
+    InvalidTurnOption,
+    InvalidTurnText,
+    TurnCancelled,
+    TurnInFlight,
+)
+from thyca.app.loop_turns import _LoopTurns
+from thyca.app.toolchain import build_agent_loop
+from thyca.app.turn_options import (
+    MODEL_MAX,
+    SYSTEM_TEXT_MAX,
+    _clean_turn_text,
+    overlay_turn_cfg,
+    validate_turn_options,
+)
+from thyca.bots.card import BotCard
+from thyca.bots.registry import RegistryError
+from thyca.bots.timeline import CanonicalConversationStore, WorkspaceTimeline
+from thyca.configs import Config, McpServerCfg, ModelCfg, default_config, load, save
+from thyca.conversations.runtime import (
+    ConversationBusy,
+    ConversationError,
+    ConversationManager,
+    NoLiveResponder,
+)
+from thyca.core.channel import WindowRef
+from thyca.core.protocol import Message, ToolCall
+from thyca.llms.llm_base import ChatReply
 from thyca.memories.active import ActiveMemory
 from thyca.memories.heading import parse_heading
-from thyca.core.protocol import Message, ToolCall
-from thyca.conversations.runtime import ConversationBusy, ConversationManager
+from thyca.serve.conversations_api import dm_turn_cancel
+from thyca.serve.trace import turns_from_conversation
+from thyca.serve.turn_state import TurnState
 from thyca.tools.mcp import MCPProcess
 
 
@@ -32,10 +69,7 @@ def _naming_pairs(events: list[TurnEvent]) -> list[tuple[str, bool | None]]:
     ]
 
 
-# Build a canonical-timeline manager holding one execution conversation.
 def _canonical_manager(root: Path) -> ConversationManager:
-    from thyca.bots.timeline import CanonicalConversationStore, WorkspaceTimeline
-    from thyca.core.channel import WindowRef
 
     timeline = WorkspaceTimeline(root, "thyca")
     window = WindowRef(
@@ -67,10 +101,8 @@ def test_turns_carry_no_title(tmp_path: Path) -> None:
         events: list[TurnEvent] = []
         turned = app.turn(created["conversation_id"], "kể thêm", event_sink=events.append)
         assert turned["reply"] == "pong again"
-        # No title on either payload and no naming events ever fire.
         assert "title" not in turned
         assert _naming_pairs(events) == []
-        # Only the two turn calls — no sidecar LLM call.
         assert len(llm.requests) == 2
         conversation = ConversationManager(tmp_path / "sessions").load(created["conversation_id"])
         assert [(item.role, item.content) for item in conversation.messages] == [
@@ -85,10 +117,7 @@ def test_turns_carry_no_title(tmp_path: Path) -> None:
         app.shutdown()
 
 
-
-
 def test_sidecar_meta_does_not_flip_failed_turn_status(tmp_path: Path) -> None:
-    from thyca.serve.trace import turns_from_conversation
 
     conversation = _canonical_manager(tmp_path)
     conversation.append(Message(role="user", content="alo", ts="2026-08-26T09:12:00Z"))
@@ -113,8 +142,6 @@ def test_sidecar_meta_does_not_flip_failed_turn_status(tmp_path: Path) -> None:
     assert turns[0].status == "loop_limit"
 
 
-
-
 def test_second_turn_needs_no_rename(tmp_path: Path) -> None:
     llm = ScriptedLLM(
         [
@@ -134,8 +161,6 @@ def test_second_turn_needs_no_rename(tmp_path: Path) -> None:
         assert len(llm.requests) == 2
     finally:
         app.shutdown()
-
-
 
 
 def test_memory_remember_injects_turn_conversation_id(tmp_path: Path) -> None:
@@ -213,15 +238,10 @@ def test_two_conversations_run_turns_in_parallel(tmp_path: Path) -> None:
                 await asyncio.to_thread(release.wait)
             return ChatReply(content=f"reply:{text}")
 
-    # One connect per turn is what the factory does; the injected one is
-    # shared, so make each chat call independent instead of stateful.
     app = _chat(tmp_path, Gated())
-    from thyca.bots.card import BotCard
 
     app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
                              description="Codes.", persona="You code."))
-    # Phase 2B: create() with no bots is Thyca's DM singleton, so the
-    # parallel conversation below is a group (parallelism is model-agnostic).
     slow_id = app.create()["conversation_id"]
     errors: list[BaseException] = []
     slow: dict = {}
@@ -236,8 +256,6 @@ def test_two_conversations_run_turns_in_parallel(tmp_path: Path) -> None:
     worker.start()
     assert first_started.wait(2)
     try:
-        # The second conversation is idle: its turn must complete while the first
-        # one is still parked in the provider call.
         other_id = app.create(bots=["thyca", "coder"])["conversation_id"]
         started_at = time.monotonic()
         quick = app.turn(other_id, "@coder fast")
@@ -250,8 +268,6 @@ def test_two_conversations_run_turns_in_parallel(tmp_path: Path) -> None:
     assert not errors
     assert slow["reply"] == "reply:slow"
     assert sorted(app.running_conversations()) == []
-    # Each turn wrote only its own transcript: sharing one conversation holder would
-    # have appended the slow reply into whichever conversation the fast turn loaded.
     store = ConversationManager(tmp_path / "sessions")
     slow_messages = [(item.role, item.content) for item in store.load(slow_id).messages]
     fast_messages = [(item.role, item.content) for item in store.load(other_id).messages]
@@ -280,7 +296,7 @@ def test_second_turn_on_same_conversation_is_busy(tmp_path: Path) -> None:
     def run_turn() -> None:
         try:
             app.turn(conversation_id, "first")
-        except BaseException as exc:  # surfaced by the assert below
+        except BaseException as exc:
             errors.append(exc)
 
     worker = threading.Thread(target=run_turn)
@@ -321,7 +337,6 @@ def test_create_keeps_blank_conversation_with_running_turn(
 
     monkeypatch.setattr(ActiveMemory, "refresh", gated_refresh)
     app = _chat(tmp_path, FakeLLM(ChatReply(content="late")))
-    from thyca.bots.card import BotCard
 
     app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
                              description="Codes.", persona="You code."))
@@ -332,18 +347,15 @@ def test_create_keeps_blank_conversation_with_running_turn(
     def run_turn() -> None:
         try:
             app.turn(running_id, "hi")
-        except BaseException as exc:  # surfaced by the assert below
+        except BaseException as exc:
             errors.append(exc)
 
     worker = threading.Thread(target=run_turn)
     worker.start()
     assert claimed.wait(2)
     try:
-        # Phase 2B: the no-bots create is the DM singleton (== running_id
-        # here), so the "fresh" conversation is a group.
         fresh = app.create(bots=["thyca", "coder"])
         assert fresh["conversation_id"] != running_id
-        # Store equivalent of the file check: the blank door still loads.
         assert app._conversations.store.load(running_id).conversation_id == running_id
     finally:
         release.set()
@@ -371,11 +383,7 @@ def test_turn_response_does_not_claim_to_be_running(tmp_path: Path) -> None:
 
 def test_corrupt_config_file_falls_back_to_passed_cfg(tmp_path: Path) -> None:
     """A corrupt on-disk config.json must not break init when a good cfg was passed."""
-    from test_serve_chat import FakeLLM
 
-    from thyca.app.chat_app import ChatApp
-    from thyca.configs import default_config
-    from thyca.llms.llm_base import ChatReply
 
     (tmp_path / "config.json").write_text("{not valid json", encoding="utf-8")
     cfg = default_config()
@@ -389,8 +397,6 @@ def test_corrupt_config_file_falls_back_to_passed_cfg(tmp_path: Path) -> None:
 def test_cancel_past_wait_reports_turn_in_flight(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import thyca.app.chat_app as chat_mod
-    from thyca.app.chat_app import TurnInFlight
 
     monkeypatch.setattr(chat_mod, "_CANCEL_WAIT_S", 0.05)
     release = threading.Event()
@@ -419,12 +425,9 @@ def test_cancel_past_wait_reports_turn_in_flight(
             time.sleep(0.01)
         with pytest.raises(TurnInFlight):
             app.cancel(created["conversation_id"])
-        # The cancel was still requested: the worker ends cancelled (or
-        # finishes once released) — either way the hub is released.
         release.set()
         worker.join(timeout=10)
         assert not worker.is_alive()
-        from thyca.app.chat_app import TurnCancelled
 
         assert all(isinstance(exc, TurnCancelled) for exc in errors)
         assert created["conversation_id"] not in app.running_conversations()
@@ -434,8 +437,6 @@ def test_cancel_past_wait_reports_turn_in_flight(
 
 
 def test_cancel_turn_in_flight_maps_to_409() -> None:
-    from thyca.app.chat_app import TurnInFlight
-    from thyca.serve.conversations_api import dm_turn_cancel
 
     class Handler:
         def __init__(self) -> None:
@@ -460,9 +461,7 @@ def test_cancel_turn_in_flight_maps_to_409() -> None:
 
 
 def test_compaction_usage_mutate_after_does_not_leak(tmp_path: Path) -> None:
-    from types import SimpleNamespace
 
-    from thyca.agents.meta import compaction_meta
 
     usage = {"prompt_tokens": 10, "completion_tokens": 5}
     meta = compaction_meta(
@@ -475,14 +474,12 @@ def test_compaction_usage_mutate_after_does_not_leak(tmp_path: Path) -> None:
 
 def test_turn_refreshes_live_gateway_soft_timeout(tmp_path: Path) -> None:
     """TASK-034: a saved softTimeoutS applies to the next turn, no restart."""
-    from dataclasses import replace
 
-    from thyca.configs import load, save
 
     app = _chat(tmp_path, FakeLLM(ChatReply(content="pong")))
     created = app.create()
     try:
-        assert app._gateway._soft_timeout_s == 60  # default at construction
+        assert app._gateway._soft_timeout_s == 60
         cfg = load(tmp_path / "config.json")
         save(replace(cfg, limits=replace(cfg.limits, softTimeoutS=5)), tmp_path / "config.json")
         app.turn(created["conversation_id"], "alo")
@@ -491,13 +488,7 @@ def test_turn_refreshes_live_gateway_soft_timeout(tmp_path: Path) -> None:
         app.shutdown()
 
 
-# Moved from test_b4_unification.py / test_b4_p2.py (B4 batch).
-import pytest
-from pathlib import Path
-
 def test_x2_turn_options_single_shape_check() -> None:
-    from thyca.app.chat_app import InvalidTurnOption
-    from thyca.app.turn_options import MODEL_MAX, validate_turn_options
 
     assert MODEL_MAX == 200
     assert validate_turn_options({"model": "m", "effort": "e", "retry": True}) == (
@@ -510,11 +501,7 @@ def test_x2_turn_options_single_shape_check() -> None:
 
 
 def test_x20_single_registry_lifecycle() -> None:
-    import asyncio as aio
 
-    from thyca.app.loop_turns import _LoopTurns
-    from thyca.serve.turn_state import TurnState
-    from thyca.conversations.runtime import ConversationBusy, ConversationError
 
     loop = aio.new_event_loop()
     try:
@@ -529,9 +516,9 @@ def test_x20_single_registry_lifecycle() -> None:
             turns.claim("s")
         assert view.request_cancel("missing") is False
         assert view.request_cancel("s") is True
-        other = view.begin("s")  # re-begin overwrites, like before
+        other = view.begin("s")
         assert turns.job("s") is other
-        view.end("s", job)  # mismatch: pinned job stays
+        view.end("s", job)
         assert turns.job("s") is other
         view.end("s", other)
         assert turns.job("s") is None
@@ -544,25 +531,17 @@ def test_x20_single_registry_lifecycle() -> None:
 
 
 def test_x21_shared_loop_wiring(tmp_path: Path) -> None:
-    from thyca.agents.act import Act
-    from thyca.agents.assemble import Assemble
-    from thyca.agents.loop import AgentLoop
-    from thyca.agents.observe import Observe
-    from thyca.agents.think import Think
-    from thyca.app.toolchain import build_agent_loop
-    from thyca.conversations.runtime import ConversationManager
 
     conversations = _canonical_manager(tmp_path)
 
     async def fake_chat(messages, tools=None):
-        from thyca.llms.llm_base import ChatReply
 
         return ChatReply(content="x")
 
     loop = build_agent_loop(
         conversations=conversations,
-        connect=fake_chat,  # type: ignore[arg-type]
-        act=Act(dispatcher=None),  # type: ignore[arg-type]
+        connect=fake_chat,  # type: ignore[arg-type] -- reason: intentional invalid-type or test-double argument
+        act=Act(dispatcher=None),  # type: ignore[arg-type] -- reason: intentional invalid-type or test-double argument
         tools=[],
         loop_max=3,
         model="m",
@@ -573,17 +552,6 @@ def test_x21_shared_loop_wiring(tmp_path: Path) -> None:
     assert isinstance(loop._think, Think)
     assert isinstance(loop._observe, Observe)
 
-
-
-
-# Moved from tests/test_b2_contracts.py (B2 batch).
-from thyca.app.chat_app import InvalidTurnOption, InvalidTurnText
-from thyca.app.turn_options import (
-    SYSTEM_TEXT_MAX,
-    _clean_turn_text,
-    overlay_turn_cfg,
-)
-from thyca.configs import Config, ModelCfg
 
 def test_f5_turn_effort_override_is_model_aware() -> None:
     """Fails pre-fix: per-turn junk effort sailed through overlay."""
@@ -602,25 +570,23 @@ def test_f5_turn_effort_override_is_model_aware() -> None:
 
 def test_f10_clean_turn_text_reasons() -> None:
     """Fails pre-fix: plain ValueError, and 'text must be a string' wording."""
-    with pytest.raises(InvalidTurnText, match="^invalid$"):
+    with pytest.raises(InvalidTurnText, match=r"^invalid$"):
         _clean_turn_text(5, retry=False)
-    with pytest.raises(InvalidTurnText, match="^empty$"):
+    with pytest.raises(InvalidTurnText, match=r"^empty$"):
         _clean_turn_text("   ", retry=False)
-    with pytest.raises(InvalidTurnText, match="^too long$"):
+    with pytest.raises(InvalidTurnText, match=r"^too long$"):
         _clean_turn_text("x" * 4001, retry=False)
     assert _clean_turn_text("  hi  ", retry=False) == "hi"
     assert _clean_turn_text(123, retry=True) == ""
 
 
 def test_system_turn_text_uses_larger_cap() -> None:
-    # System prompts (curation, profile aggregation) carry injected data
-    # beyond the user-message cap; the system cap still bounds them.
-    with pytest.raises(InvalidTurnText, match="^too long$"):
+    with pytest.raises(InvalidTurnText, match=r"^too long$"):
         _clean_turn_text("x" * (SYSTEM_TEXT_MAX + 1), retry=False,
                          text_max=SYSTEM_TEXT_MAX)
     assert _clean_turn_text("x" * 5000, retry=False,
                             text_max=SYSTEM_TEXT_MAX) == "x" * 5000
-    with pytest.raises(InvalidTurnText, match="^too long$"):
+    with pytest.raises(InvalidTurnText, match=r"^too long$"):
         _clean_turn_text("x" * 5000, retry=False)
 
 
@@ -799,7 +765,6 @@ def test_turn_mcp_status_clears_after_recovery(tmp_path: Path) -> None:
 
 
 def test_chat_app_starts_and_warns_when_mcp_times_out(tmp_path: Path) -> None:
-    from io import StringIO
 
     class HungSession(_TavilySession):
         async def initialize(self) -> object:
@@ -830,7 +795,6 @@ def test_chat_app_starts_and_warns_when_mcp_times_out(tmp_path: Path) -> None:
         stderr=stderr,
     )
     try:
-        # Boot only schedules; settle + warning happen on the first turn.
         assert stderr.getvalue() == ""
         created = app.create()
         turned = app.turn(created["conversation_id"], "hi")
@@ -869,16 +833,14 @@ def test_turn_injects_conversation_scoped_today(tmp_path: Path) -> None:
         )
         assert "OWN-UNIQUE" in system
         assert "FOREIGN-UNIQUE" not in system
-        assert "foreign-note" in system  # title survives in the index
-        assert f"{day}#bbbb2222" in system  # pullable id
+        assert "foreign-note" in system
+        assert f"{day}#bbbb2222" in system
         assert "<today_elsewhere>" in system
     finally:
         app.shutdown()
 
 
 def test_group_with_deleted_bot_stays_readable(tmp_path: Path) -> None:
-    from thyca.bots.card import BotCard
-    from thyca.bots.registry import RegistryError
 
     llm = FakeLLM(ChatReply(content="pong"))
     app = _chat(tmp_path, llm)
@@ -888,14 +850,12 @@ def test_group_with_deleted_bot_stays_readable(tmp_path: Path) -> None:
         group = app.create(bots=["coder", "helper"])
         gid = group["conversation_id"]
         app.turn(gid, "ping")
-        # Simulate an old orphan left in the database.
         app._bots.delete("coder")
         payload = app.get_payload(gid)
         assert payload["kind"] == "group" and payload["bots"] == ["coder", "helper"]
         assert "title" not in payload
         result = app.turn(gid, "hello")
         assert result["reply"] == "pong"
-        # Removing the deleted bot works; unknown ids still fail.
         assert app.set_room_bots(gid, "coder", "remove") == ["helper"]
         try:
             app.set_room_bots(gid, "ghost", "remove")
@@ -909,7 +869,6 @@ def test_group_with_deleted_bot_stays_readable(tmp_path: Path) -> None:
             pass
         else:
             raise AssertionError("expected RegistryError for unknown add")
-        # Compact skips the deleted member instead of failing.
         app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder", description="Codes.", persona="You code."))
         g2 = app.create(bots=["coder", "helper"])
         app.turn(g2["conversation_id"], "ping")
@@ -921,8 +880,6 @@ def test_group_with_deleted_bot_stays_readable(tmp_path: Path) -> None:
 
 
 def test_group_with_all_bots_deleted_turn_is_clear(tmp_path: Path) -> None:
-    from thyca.bots.card import BotCard
-    from thyca.conversations.runtime import NoLiveResponder
 
     llm = FakeLLM(ChatReply(content="pong"))
     app = _chat(tmp_path, llm)

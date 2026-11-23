@@ -1,4 +1,3 @@
-/* Expression studio dialog (avatar lab + idle gallery). */
 .palette-preview{display:flex;gap:7px;align-items:center;font-size:var(--fs-2xs);color:var(--muted);margin-left:auto}
 .swatch{width:17px;height:17px;border-radius:50%;border:1px solid #36291820}
 .expression-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
@@ -7,7 +6,6 @@
 .expression-tile small{font-size:var(--fs-2xs);color:var(--bot-muted)}
 .expression-tile[aria-pressed=true]{outline:2px solid var(--bot-mid);outline-offset:1px}
 .dialog-note{font:italic var(--fs-sm)/1.5 var(--serif);color:#8a7b61;margin:21px 0 0}
-/* Shape picker: label + 12 archetypes in 4 columns, wraps responsively. */
 .shape-row{display:grid;gap:8px;margin:12px 0 18px}
 .shape-label{font-size:var(--fs-xs);color:var(--muted)}
 .shape-picker{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;width:100%}
@@ -17,7 +15,6 @@
 .shape-picker [data-shape] strong{font:500 var(--fs-sm)/1.2 var(--serif);color:var(--bot-ink);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .shape-preview{flex-shrink:0}
 .shape-preview .seal-avatar{width:38px;height:38px}
-/* Expression studio: still thumbnails, one live character, a shared team clock. */
 #expressions-dialog{--dialog-max:clamp(740px,56vw,960px)}
 #expressions-dialog{position:relative}
 #expressions-dialog .expressions-close{position:absolute;top:12px;right:12px;z-index:6}

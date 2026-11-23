@@ -41,7 +41,6 @@ def test_path_helpers_default_and_xdg_env(monkeypatch: pytest.MonkeyPatch, tmp_p
     assert xdg_state_home() == fake_home / ".local" / "state"
     assert xdg_cache_home() == fake_home / ".cache"
 
-    # Relative XDG paths must be ignored per XDG Base Directory specification.
     monkeypatch.setenv("XDG_CONFIG_HOME", "relative/cfg")
     assert xdg_config_home() == fake_home / ".config"
 
@@ -54,6 +53,8 @@ def test_path_helpers_default_and_xdg_env(monkeypatch: pytest.MonkeyPatch, tmp_p
 def test_open_trusted_parent_resolves_symlinks_and_closes_fd(tmp_path: Path) -> None:
     real_user = tmp_path / "var" / "home" / "user"
     real_user.mkdir(parents=True)
+    for ancestor in (tmp_path / "var", tmp_path / "var" / "home", real_user):
+        ancestor.chmod(0o755)
     (tmp_path / "home").symlink_to(Path("var/home"))
 
     target_root = tmp_path / "home" / "user" / ".thyca"

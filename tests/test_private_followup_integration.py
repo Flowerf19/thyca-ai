@@ -5,17 +5,34 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re as _re
+import threading
+import unittest.mock as mock
 from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pytest
-
-from thyca.app.chat_app import ChatApp
-from thyca.bots.card import BotCard
-from thyca.configs import load, save
 from seeded_config import seeded_config
+
+from thyca.app.chat_app import ChatApp, TurnInFlight
+from thyca.bots.bus import Bus
+from thyca.bots.card import BotCard
+from thyca.bots.context import BotTurnContext, bind_bot_turn_context, reset_bot_turn_context
+from thyca.bots.private_followups import PrivateFollowupStore
+from thyca.bots.tasks import derive_open_tasks
+from thyca.bots.timeline import WorkspaceTimeline
+from thyca.bots.work_items import project_work_items
+from thyca.configs import load, save
+from thyca.conversations.runtime import ConversationBusy
+from thyca.core.channel import WindowRef
+from thyca.core.protocol import Message, ToolCall
 from thyca.llms.llm_base import ChatReply
+from thyca.memories.facade import MemoryFacade
+from thyca.memories.habits import strip_auto_habits
+from thyca.memories.visibility import MemoryView, bound_memory_view
+from thyca.serve.conversations_api import dm_private_followup, group_bots
+from thyca.tools.path_guard import PathDenied, PathGuard
 
 
 def _today(days_ago: int = 0) -> datetime:
@@ -49,7 +66,6 @@ def _coder(app: ChatApp) -> None:
 
 
 def _ctx(app, tmp_path, bot: str, room_id: str, span: str = "s1"):
-    from thyca.bots.context import BotTurnContext, bind_bot_turn_context
 
     window = app._webui.window_for(
         app._conversations.store.load(room_id))
@@ -60,7 +76,6 @@ def _ctx(app, tmp_path, bot: str, room_id: str, span: str = "s1"):
 
 
 def _unctx(token) -> None:
-    from thyca.bots.context import reset_bot_turn_context
     reset_bot_turn_context(token)
 
 
@@ -81,7 +96,6 @@ def _ask(app, tmp_path, work_id="task-aabb1122"):
 
 
 def _decide_via_route(app, dm_id, body):
-    from thyca.serve.conversations_api import dm_private_followup
 
     class _H:
         def __init__(self):
@@ -97,7 +111,6 @@ def _decide_via_route(app, dm_id, body):
 
 
 def _received(app, tmp_path, group, pid, bot="coder"):
-    from thyca.bots.private_followups import PrivateFollowupStore
 
     store = PrivateFollowupStore(tmp_path)
     store.mark_waiting(bot, pid) if store.get(
@@ -152,7 +165,6 @@ def test_stale_revision_and_wrong_dm_endpoint_errors(tmp_path: Path) -> None:
         assert h.code == 409, (h.code, h.body)
         h = _decide_via_route(app, group["conversation_id"], {
             "pending_id": pid, "revision": 1, "choice": "approve"})
-        # Hard cut: a group id cannot address the DM endpoint at all.
         assert h.code == 404, (h.code, h.body)
         h = _decide_via_route(app, dm["conversation_id"], {
             "pending_id": "pf-nope", "revision": 1, "choice": "approve"})
@@ -172,7 +184,6 @@ def test_terminal_late_dm_is_ordinary_turn(tmp_path: Path) -> None:
         dm = app.bot_dm("coder")
         group, pid = _ask(app, tmp_path)
         _received(app, tmp_path, group, pid)
-        from thyca.bots.private_followups import PrivateFollowupStore
         PrivateFollowupStore(tmp_path).decide(
             "coder", pid, action="done")
         detail = app.turn(dm["conversation_id"], "late answer")
@@ -191,9 +202,8 @@ def test_retry_dm_does_not_reconsume(tmp_path: Path) -> None:
     try:
         _coder(app)
         dm = app.bot_dm("coder")
-        group, pid = _ask(app, tmp_path)
+        _group, pid = _ask(app, tmp_path)
         app.turn(dm["conversation_id"], "the answer")
-        from thyca.bots.private_followups import PrivateFollowupStore
         p = PrivateFollowupStore(tmp_path).get("coder", pid)
         assert p.status == "received"
         first_ref = p.answer_event_id
@@ -219,7 +229,6 @@ def test_origin_membership_rejects_share(tmp_path: Path) -> None:
                  "redacted_text": "safe"}))
         finally:
             _unctx(token)
-        from thyca.serve.conversations_api import group_bots
 
         class _HB:
             def __init__(self):
@@ -238,13 +247,12 @@ def test_origin_membership_rejects_share(tmp_path: Path) -> None:
 
 
 def test_app_cancel_cancels_own_pending(tmp_path: Path) -> None:
-    from thyca.bots.private_followups import PrivateFollowupStore
 
     app = _chat(tmp_path, _LLM())
     try:
         _coder(app)
         dm = app.bot_dm("coder")
-        group, pid = _ask(app, tmp_path)
+        _group, pid = _ask(app, tmp_path)
         app.cancel(dm["conversation_id"])
         assert PrivateFollowupStore(tmp_path).get(
             "coder", pid).status == "cancelled"
@@ -271,7 +279,6 @@ def test_ask_private_denied_from_dm(tmp_path: Path) -> None:
 
 
 def test_drain_matching_restores_queue_on_predicate_error() -> None:
-    from thyca.bots.bus import Bus
 
     bus = Bus()
     bus.register("b")
@@ -294,9 +301,6 @@ def test_drain_matching_restores_queue_on_predicate_error() -> None:
 
 
 def test_group_view_denies_raw_private_paths(tmp_path: Path) -> None:
-    from thyca.core.channel import WindowRef
-    from thyca.memories.visibility import MemoryView, bound_memory_view
-    from thyca.tools.path_guard import PathDenied, PathGuard
 
     (tmp_path / "memory").mkdir()
     (tmp_path / "memory" / "2026-10-19.md").write_text("x", "utf-8")
@@ -315,7 +319,6 @@ def test_group_view_denies_raw_private_paths(tmp_path: Path) -> None:
 
 
 def test_group_view_strips_auto_habits_block() -> None:
-    from thyca.memories.habits import strip_auto_habits
 
     text = "# User\nname\n<!-- habits:auto:start -->\n- secret label\n<!-- habits:auto:end -->\nmanual tail\n"
     out = strip_auto_habits(text)
@@ -326,8 +329,6 @@ def test_group_view_strips_auto_habits_block() -> None:
 
 
 def test_app_cancel_idle_dm_cancels_own_pending(tmp_path: Path) -> None:
-    from thyca.bots.private_followups import PrivateFollowupStore
-    from thyca.bots.card import BotCard
 
     app = _chat(tmp_path, _LLM())
     try:
@@ -351,8 +352,6 @@ def test_app_cancel_idle_dm_cancels_own_pending(tmp_path: Path) -> None:
 
 
 def test_group_ambiguous_pending_cancel_conflicts(tmp_path: Path) -> None:
-    from thyca.bots.private_followups import PrivateFollowupStore
-    from thyca.app.chat_app import TurnInFlight
 
     app = _chat(tmp_path, _LLM())
     try:
@@ -367,7 +366,6 @@ def test_group_ambiguous_pending_cancel_conflicts(tmp_path: Path) -> None:
         store.create("helper", work_id="task-bbcc2233",
                      origin_window=group["conversation_id"], dm_window=helper_dm["conversation_id"],
                      question="other")
-        from thyca.conversations.runtime import ConversationBusy
         with pytest.raises((ConversationBusy, TurnInFlight)):
             app.cancel(group["conversation_id"])
         assert store.get("coder", pid).status == "waiting_private"
@@ -378,7 +376,6 @@ def test_group_ambiguous_pending_cancel_conflicts(tmp_path: Path) -> None:
 
 
 def test_crash_after_post_recovers_single_row(tmp_path: Path) -> None:
-    from thyca.bots.private_followups import PrivateFollowupStore
 
     app = _chat(tmp_path, _LLM())
     try:
@@ -402,7 +399,6 @@ def test_crash_after_post_recovers_single_row(tmp_path: Path) -> None:
                 raise RuntimeError("crash before finalize")
             return orig(self, bid, pid2, **kw)
 
-        import unittest.mock as mock
         with mock.patch.object(
                 PrivateFollowupStore, "finalize_resumed", _boom):
             h = _decide_via_route(app, dm["conversation_id"], {
@@ -432,7 +428,6 @@ def test_crash_after_post_recovers_single_row(tmp_path: Path) -> None:
 
 
 def test_concurrent_approve_single_row(tmp_path: Path) -> None:
-    import threading
     app = _chat(tmp_path, _LLM())
     try:
         _coder(app)
@@ -455,9 +450,11 @@ def test_concurrent_approve_single_row(tmp_path: Path) -> None:
                 "pending_id": pid, "revision": 1, "choice": "approve"}).code)
 
         ts = [threading.Thread(target=approve) for _ in range(2)]
-        for t in ts: t.start()
+        for t in ts:
+            t.start()
         barrier.wait()
-        for t in ts: t.join(30)
+        for t in ts:
+            t.join(30)
         rows = [m for m in app.get_payload(group["conversation_id"])["messages"]
                 if (m.get("meta") or {}).get("kind") == "private_resume"]
         assert len(rows) == 1
@@ -470,7 +467,6 @@ def test_legacy_singleton_task_owner_via_remember(tmp_path: Path) -> None:
     app = _chat(tmp_path, _LLM())
     try:
         _coder(app)
-        from thyca.memories.facade import MemoryFacade
         MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh").remember(
             "t", "b", task="task-aabb1122", bots=["coder"],
             now=_today())
@@ -490,7 +486,6 @@ def test_team_ambiguous_owner_denied(tmp_path: Path) -> None:
     app = _chat(tmp_path, _LLM())
     try:
         _coder(app)
-        from thyca.memories.facade import MemoryFacade
         MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh").remember(
             "t", "b", task="task-aabb1122", bots=["team", "coder"],
             now=_today())
@@ -507,7 +502,6 @@ def test_team_ambiguous_owner_denied(tmp_path: Path) -> None:
 
 
 def test_single_pending_origin_group_cancel(tmp_path: Path) -> None:
-    from thyca.bots.private_followups import PrivateFollowupStore
 
     app = _chat(tmp_path, _LLM())
     try:
@@ -540,7 +534,6 @@ def test_stale_keep_and_cancel_after_new_revision_409(
             h = _decide_via_route(app, dm["conversation_id"], {
                 "pending_id": pid, "revision": 1, "choice": choice})
             assert h.code == 409, (choice, h.code, h.body)
-        from thyca.bots.private_followups import PrivateFollowupStore
         p = PrivateFollowupStore(tmp_path).get("coder", pid)
         assert p.status == "received" and p.proposal_revision == 2
         assert p.proposed_redacted == "v2"
@@ -550,8 +543,6 @@ def test_stale_keep_and_cancel_after_new_revision_409(
 
 @pytest.mark.parametrize("sender", ["thyca", "coder"])
 def test_scripted_tool_call_pipeline(tmp_path: Path, sender: str) -> None:
-    from thyca.bots.private_followups import PrivateFollowupStore
-    from thyca.core.protocol import ToolCall
 
     tool_results: list[str] = []
     hot_dms: list[str] = []
@@ -581,7 +572,6 @@ def test_scripted_tool_call_pipeline(tmp_path: Path, sender: str) -> None:
                 hot_dms.append(joined)
                 if resumed["done"]:
                     return ChatReply(content="done")
-                import re as _re
                 m = _re.search(r"pf-[0-9a-f]+", joined)
                 if m:
                     return ChatReply(content=None, tool_calls=[ToolCall(
@@ -608,7 +598,6 @@ def test_scripted_tool_call_pipeline(tmp_path: Path, sender: str) -> None:
     app = _chat(tmp_path, llm)
     try:
         if sender == "coder":
-            from thyca.bots.card import BotCard
             app._bots.create(BotCard(
                 bot_id="coder", name="coder", role="Coder",
                 description="Codes.", persona="PERSONA-coder",
@@ -650,7 +639,6 @@ def test_scripted_tool_call_pipeline(tmp_path: Path, sender: str) -> None:
         assert any("SAFE-deploy" in m["content"] for m in group_msgs)
         assert not any("RAW-SECRET" in m["content"] for m in group_msgs)
         assert not any("deploy secret" in m["content"] for m in group_msgs)
-        from thyca.bots.tasks import derive_open_tasks
         room = app._conversations.store.load(group["conversation_id"])
         opens = derive_open_tasks(list(room.messages), [], bot_id=sender)
         assert isinstance(opens, list)
@@ -683,7 +671,6 @@ def test_earliest_owner_wins(tmp_path: Path) -> None:
     app = _chat(tmp_path, _LLM())
     try:
         _coder(app)
-        from thyca.memories.facade import MemoryFacade
         facade = MemoryFacade(
             tmp_path, timezone_name="Asia/Ho_Chi_Minh")
         facade.remember("t", "b", task="task-ccddee44",
@@ -702,8 +689,7 @@ def test_earliest_owner_wins(tmp_path: Path) -> None:
 
 
 def test_active_turn_cancel_closes_pending(tmp_path: Path) -> None:
-    import threading, time
-    from thyca.bots.private_followups import PrivateFollowupStore
+
 
     started = threading.Event()
     release = threading.Event()
@@ -718,7 +704,7 @@ def test_active_turn_cancel_closes_pending(tmp_path: Path) -> None:
     try:
         _coder(app)
         dm = app.bot_dm("coder")
-        group, pid = _ask(app, tmp_path)
+        _group, pid = _ask(app, tmp_path)
         err: list = []
 
         def run_turn():
@@ -742,20 +728,14 @@ def test_active_turn_cancel_closes_pending(tmp_path: Path) -> None:
 
 
 def test_task_open_memory_task_id_links_work_item(tmp_path: Path) -> None:
-    from thyca.bots.tasks import derive_open_tasks
-    from thyca.bots.work_items import project_work_items
-    from thyca.core.protocol import Message, ToolCall
 
     app = _chat(tmp_path, _LLM())
     try:
         _coder(app)
         group = app.create(bots=["thyca", "coder"])
-        # Tool rows live in the bot's canonical timeline, never the
-        # public store: seed and read them there (production path).
         room = app._conversations.store.load(group["conversation_id"])
         window = app._webui.window_for(room)
         app._runtime.workspaces.store.bind_window("coder", window)
-        from thyca.bots.timeline import WorkspaceTimeline
 
         timeline = WorkspaceTimeline(tmp_path, "coder")
         timeline.append_message(window, Message(
@@ -783,9 +763,6 @@ def test_task_open_memory_task_id_links_work_item(tmp_path: Path) -> None:
 
 
 def test_task_open_memory_task_id_pipeline(tmp_path: Path) -> None:
-    from thyca.bots.tasks import derive_open_tasks
-    from thyca.bots.work_items import project_work_items
-    from thyca.core.protocol import ToolCall
 
     calls = {"n": 0}
 
@@ -840,7 +817,6 @@ def test_task_open_bad_memory_task_id_rejected(tmp_path: Path) -> None:
 
 
 def test_ask_private_group_survives_first_dm(tmp_path: Path) -> None:
-    from thyca.bots.private_followups import PrivateFollowupStore
 
     app = _chat(tmp_path, _LLM())
     try:
@@ -862,8 +838,6 @@ def test_ask_private_group_survives_first_dm(tmp_path: Path) -> None:
 
 
 def test_pending_group_survives_other_bot_dm(tmp_path: Path) -> None:
-    from thyca.bots.card import BotCard
-    from thyca.bots.private_followups import PrivateFollowupStore
 
     app = _chat(tmp_path, _LLM())
     try:
@@ -887,9 +861,6 @@ def test_group_task_title_provenance_requires_explicit_link(tmp_path: Path) -> N
     This is not an automatic DM-to-group projection: the scripted model
     deliberately supplies those values in a later group turn.
     """
-    from thyca.bots.private_followups import PrivateFollowupStore
-    from thyca.bots.tasks import derive_open_tasks
-    from thyca.core.protocol import ToolCall
 
     class Scripted:
         emit_group_tasks = False

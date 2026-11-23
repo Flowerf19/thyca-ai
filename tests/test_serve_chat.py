@@ -3,26 +3,35 @@ from __future__ import annotations
 
 import asyncio
 import json
+import socket
+import sqlite3
+import sqlite3 as _sqlite3
 import threading
 import time
 from dataclasses import dataclass, field, replace
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from io import StringIO
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
-from thyca.agents.events import TurnEvent
-from thyca.serve.bridge import SENTINEL
-from thyca.app.chat_app import ChatApp
-from thyca.configs import ModelCfg, ProviderEntry, load, save
 from seeded_config import seeded_config
-from thyca.llms.llm_base import ChatReply, LLMError
+
+from thyca.agents.events import TurnEvent
+from thyca.app.chat_app import ChatApp
+from thyca.bots.card import BotCard
+from thyca.bots.timeline import WorkspaceTimeline
+from thyca.configs import ModelCfg, ProviderEntry, load, save
+from thyca.conversations.runtime import ConversationBusy, ConversationManager, ConversationRuntime
+from thyca.conversations.runtime.wire import conversation_detail, conversation_summary
+from thyca.conversations.store.admin import AdminStore
 from thyca.core.protocol import Message, ToolCall
-from thyca.serve import ServeError, default_webui, make_server
-from thyca.conversations.runtime import ConversationRuntime, ConversationBusy, ConversationManager
-from thyca.tools.mcp import StartupDiagnostic
+from thyca.llms.llm_base import ChatReply, LLMError
 from thyca.memories.facade import MemoryFacade
+from thyca.serve import default_webui, make_server
+from thyca.serve.bridge import SENTINEL
+from thyca.tools.mcp import StartupDiagnostic
 
 WEBUI = default_webui()
 
@@ -124,7 +133,6 @@ def _json_result(httpd, path: str) -> tuple[int, dict]:
 
 
 def test_bot_operations_endpoint_scope_options_and_read_only(tmp_path: Path) -> None:
-    from thyca.bots.card import BotCard
 
     app = _chat(tmp_path)
     try:
@@ -132,7 +140,7 @@ def test_bot_operations_endpoint_scope_options_and_read_only(tmp_path: Path) -> 
             bot_id="coder", name="Coder", role="Coder", description="Codes.",
             persona="You code.",
         ))
-        dm = app.create()
+        app.create()
         group = app.create(bots=["thyca", "coder"])
         timeline = tmp_path / "bots" / "coder" / "workspace" / "timeline.jsonl"
         assert not timeline.exists()
@@ -202,7 +210,6 @@ def test_bot_operations_endpoint_scope_options_and_read_only(tmp_path: Path) -> 
 
 
 def test_bot_operations_measurement_failure_is_sanitized_503(tmp_path: Path) -> None:
-    from thyca.bots.card import BotCard
 
     app = _chat(tmp_path)
     try:
@@ -232,7 +239,6 @@ def test_bot_operations_measurement_failure_is_sanitized_503(tmp_path: Path) -> 
 
 
 def test_bot_operations_missing_timeline_is_503_without_repair(tmp_path: Path) -> None:
-    from thyca.bots.card import BotCard
 
     app = _chat(tmp_path)
     try:
@@ -265,8 +271,6 @@ def test_bot_room_tasks_live_calls_exact_window_and_read_only(tmp_path: Path) ->
     open runtime tasks for exactly that bot+room: no memory tasks, no
     completed work, no private content — and reads create no bindings
     or timeline files."""
-    from thyca.agents.events import TurnEvent
-    from thyca.bots.card import BotCard
 
     app = _chat(tmp_path)
     try:
@@ -274,8 +278,6 @@ def test_bot_room_tasks_live_calls_exact_window_and_read_only(tmp_path: Path) ->
             bot_id="coder", name="Coder", role="Coder", description="Codes.",
             persona="You code.",
         ))
-        # Blank DMs survive the group-create prune; the reverse order
-        # would discard the blank group (discard_empty).
         dm = app.create()
         group = app.create(bots=["thyca", "coder"])
         httpd, thread = _start(tmp_path, app)
@@ -286,8 +288,6 @@ def test_bot_room_tasks_live_calls_exact_window_and_read_only(tmp_path: Path) ->
                 "phase": None, "since": None, "updated_at": None,
                 "calls": [], "tasks": [], "waiting_on": None,
             }
-            # Simulate an in-flight turn: two concurrent same-name calls
-            # (one tool, one skill) plus a call in another room.
             tracker = app._agent_status
             tracker.begin_turn("coder", group["conversation_id"], span_id="sp-1")
             tracker.observe_event("coder", "sp-1", TurnEvent(
@@ -307,28 +307,21 @@ def test_bot_room_tasks_live_calls_exact_window_and_read_only(tmp_path: Path) ->
                 {"kind": "tool", "name": "read", "active": 1},
             ]
             assert live["waiting_on"] is None
-            # The dm-room "other" call does not leak into this room's
-            # exact payload; the DM owner sees none of coder's calls.
             assert _json(httpd, f"/api/bots/thyca/groups/{group["conversation_id"]}/tasks")["calls"] == []
             assert _json(httpd, "/api/bots/thyca/dm/tasks")["calls"] == []
-            # A DM addressed as a group never resolves: 404, not a leak.
             status, body = _json_result(
                 httpd, f"/api/bots/coder/groups/group-{'0' * 32}/tasks")
             assert status == 404 and body == {"error": "conversation not found"}
-            # One finish removes one colliding call; the second clears it.
             tracker.observe_event("coder", "sp-1", TurnEvent(
                 type="tool.finished", round=1, call_id="c1", name="read",
                 ok=True, bot_id="coder"))
             assert _json(httpd, f"/api/bots/coder/groups/{group["conversation_id"]}/tasks")["calls"] == [
                 {"kind": "skill", "name": "read", "active": 1}
             ]
-            # Read-only: no workspace binding or timeline file was created.
             assert app._runtime.workspaces.store.get_binding("coder", group["conversation_id"]) is None
             assert not (tmp_path / "bots" / "coder" / "workspace" / "timeline.jsonl").exists()
-            # Membership and shape errors follow the operations conventions.
             status, body = _json_result(httpd, f"/api/bots/ghost/groups/{group["conversation_id"]}/tasks")
             assert status == 404, body
-            # A well-formed but missing group id reaches the handler.
             missing = f"group-{'0' * 32}"
             status, body = _json_result(httpd, f"/api/bots/coder/groups/{missing}/tasks")
             assert status == 404 and body == {"error": "conversation not found"}
@@ -347,9 +340,7 @@ def test_bot_room_tasks_live_calls_exact_window_and_read_only(tmp_path: Path) ->
 def test_bot_room_tasks_corrupt_conversation_is_unavailable_not_empty(tmp_path: Path) -> None:
     """A corrupt store door reads as 503 (unavailable), never as an empty
     task list: unreadable state must not imply 'no tasks'."""
-    import sqlite3
 
-    from thyca.bots.card import BotCard
 
     app = _chat(tmp_path)
     try:
@@ -357,12 +348,10 @@ def test_bot_room_tasks_corrupt_conversation_is_unavailable_not_empty(tmp_path: 
             bot_id="coder", name="Coder", role="Coder", description="Codes.",
             persona="You code.",
         ))
-        dm = app.create()
+        app.create()
         group = app.create(bots=["thyca", "coder"])
         httpd, thread = _start(tmp_path, app)
         try:
-            # Corrupt the group door's stored metadata in place; the
-            # store then refuses that door instead of reading it empty.
             conn = sqlite3.connect(tmp_path / "conversations.db")
             try:
                 conn.execute(
@@ -374,7 +363,6 @@ def test_bot_room_tasks_corrupt_conversation_is_unavailable_not_empty(tmp_path: 
                 conn.close()
             status, body = _json_result(httpd, f"/api/bots/coder/groups/{group["conversation_id"]}/tasks")
             assert status == 503 and body == {"error": "bot information unavailable"}
-            # The untouched room still reads normally (idle, exact window).
             idle = _json(httpd, "/api/bots/thyca/dm/tasks")
             assert idle["calls"] == [] and idle["state"] == "idle"
         finally:
@@ -384,7 +372,6 @@ def test_bot_room_tasks_corrupt_conversation_is_unavailable_not_empty(tmp_path: 
 
 
 def _seed_room(tmp_path: Path, conversation_id: str, messages: list) -> None:
-    from thyca.conversations.runtime import ConversationManager
 
     manager = ConversationManager(tmp_path / "sessions")
     manager.load(conversation_id)
@@ -395,7 +382,6 @@ def _seed_room(tmp_path: Path, conversation_id: str, messages: list) -> None:
 def _bind_journal(app, bot_id: str, room_id: str, *, prefix: str = "ev"):
     """Bind a bot window and return (window, journal writer) using the same
     canonical journal APIs the runtime turn loop writes through."""
-    from thyca.bots.timeline import WorkspaceTimeline
 
     room = app._conversations.store.load(room_id)
     window = app._webui.window_for(room)
@@ -415,9 +401,6 @@ def test_bot_room_tasks_pocket_lists_runtime_units_not_tool_calls(tmp_path: Path
     completion records) for the exact window: starting a tool/skill
     creates no task row, and the serializer carries no memory-catalog
     links."""
-    from thyca.agents.events import TurnEvent
-    from thyca.bots.card import BotCard
-    from thyca.core.protocol import Message, ToolCall
 
     app = _chat(tmp_path)
     try:
@@ -429,25 +412,21 @@ def test_bot_room_tasks_pocket_lists_runtime_units_not_tool_calls(tmp_path: Path
         group = app.create(bots=["thyca", "coder"])
         _, _, journal = _bind_journal(app, "coder", group["conversation_id"])
         for message in [
-            # task_open survives its ack (keyed by the returned span).
             Message(role="assistant", content="",
                     tool_calls=[ToolCall(id="t1", name="task_open",
                                          arguments={"title": "port parser"})]),
             Message(role="tool", content=json.dumps({"ok": True, "span_id": "sp-t1"}),
                     tool_call_id="t1"),
-            # Open delegate waits on its recipient.
             Message(role="assistant", content="",
                     tool_calls=[ToolCall(id="d1", name="bot_delegate",
                                          arguments={"bot_id": "thyca",
                                                     "task": "review diff"})]),
-            # Queued delegate stays open as queued.
             Message(role="assistant", content="",
                     tool_calls=[ToolCall(id="d2", name="bot_send",
                                          arguments={"bot_id": "thyca", "kind": "delegate",
                                                     "message": "migrate notes"})]),
             Message(role="tool", content=json.dumps({"ok": True, "queued": 1}),
                     tool_call_id="d2"),
-            # A failed task_open never opened a task.
             Message(role="assistant", content="",
                     tool_calls=[ToolCall(id="t9", name="task_open",
                                          arguments={"title": "doomed"})]),
@@ -457,7 +436,6 @@ def test_bot_room_tasks_pocket_lists_runtime_units_not_tool_calls(tmp_path: Path
             journal(message)
         httpd, thread = _start(tmp_path, app)
         try:
-            # Merely starting a tool creates a call, never a task row.
             tracker = app._agent_status
             tracker.begin_turn("coder", group["conversation_id"], span_id="sp-1")
             tracker.observe_event("coder", "sp-1", TurnEvent(
@@ -473,9 +451,6 @@ def test_bot_room_tasks_pocket_lists_runtime_units_not_tool_calls(tmp_path: Path
             for task in payload["tasks"]:
                 assert set(task) == {"title", "status", "waiting_on"}
             assert "read" not in [task["title"] for task in payload["tasks"]]
-            # Read-only: the pocket read wrote nothing — the journal is
-            # byte-identical before and after, and no binding was created
-            # for a bot that never ran here.
             journal_path = tmp_path / "bots" / "coder" / "workspace" / "timeline.jsonl"
             digest = journal_path.read_bytes()
             again = _json(httpd, f"/api/bots/coder/groups/{group["conversation_id"]}/tasks")
@@ -491,8 +466,6 @@ def test_bot_room_tasks_pocket_lists_runtime_units_not_tool_calls(tmp_path: Path
 def test_bot_room_tasks_completion_records_close_tasks(tmp_path: Path) -> None:
     """Result/error records linked to an open task close it: the pocket
     shows only still-open units, never completed work."""
-    from thyca.bots.card import BotCard
-    from thyca.core.protocol import Message, ToolCall
 
     app = _chat(tmp_path)
     try:
@@ -500,7 +473,7 @@ def test_bot_room_tasks_completion_records_close_tasks(tmp_path: Path) -> None:
             bot_id="coder", name="Coder", role="Coder", description="Codes.",
             persona="You code.",
         ))
-        dm = app.create()
+        app.create()
         group = app.create(bots=["thyca", "coder"])
         _, _, journal = _bind_journal(app, "coder", group["conversation_id"])
         for message in [
@@ -520,11 +493,9 @@ def test_bot_room_tasks_completion_records_close_tasks(tmp_path: Path) -> None:
             before = _json(httpd, f"/api/bots/coder/groups/{group["conversation_id"]}/tasks")
             assert [task["title"] for task in before["tasks"]] == ["port parser", "review diff"]
             for message in [
-                # Linked result event closes the task_open unit.
                 Message(role="assistant", content="done",
                         meta={"kind": "result", "span_id": "sp-9",
                               "parent_span_id": "sp-t1"}),
-                # Plain reply closes the delegate.
                 Message(role="tool", content=json.dumps({"ok": True, "reply": "looks good"}),
                         tool_call_id="d1"),
             ]:
@@ -540,8 +511,6 @@ def test_bot_room_tasks_completion_records_close_tasks(tmp_path: Path) -> None:
 def test_bot_room_tasks_pending_envelopes_are_window_exact(tmp_path: Path) -> None:
     """Queued envelopes owed in this window open pocket tasks; envelopes
     for other windows never leak in."""
-    from thyca.bots.card import BotCard
-    from thyca.core.protocol import Message
 
     app = _chat(tmp_path)
     try:
@@ -549,10 +518,8 @@ def test_bot_room_tasks_pending_envelopes_are_window_exact(tmp_path: Path) -> No
             bot_id="coder", name="Coder", role="Coder", description="Codes.",
             persona="You code.",
         ))
-        dm = app.create()
+        app.create()
         first = app.create(bots=["thyca", "coder"])
-        # Keep the first group non-blank so the second create does not
-        # prune it (discard_empty).
         _seed_room(tmp_path, first["conversation_id"], [Message(role="user", content="hello")])
         second = app.create(bots=["thyca", "coder"])
         bus = app._runtime._bus
@@ -585,8 +552,6 @@ def test_bot_room_tasks_never_shows_other_bots_or_private_rows(tmp_path: Path) -
     """Pocket attribution is per-bot canonical projection: a third bot's
     journal work, A2A bus rows and private-follow-up card rows in the
     shared room transcript never appear under this bot."""
-    from thyca.bots.card import BotCard
-    from thyca.core.protocol import Message, ToolCall
 
     app = _chat(tmp_path)
     try:
@@ -595,11 +560,9 @@ def test_bot_room_tasks_never_shows_other_bots_or_private_rows(tmp_path: Path) -
                 bot_id=bot_id, name=name, role="R", description="D.",
                 persona="You work.",
             ))
-        dm = app.create()
+        app.create()
         group = app.create(bots=["thyca", "coder", "helper"])
-        # Coder's own projection is empty.
         _bind_journal(app, "coder", group["conversation_id"], prefix="coder")
-        # Helper's real work lives only in helper's journal.
         _, _, helper_journal = _bind_journal(app, "helper", group["conversation_id"], prefix="helper")
         helper_journal(Message(
             role="assistant", content="",
@@ -608,8 +571,6 @@ def test_bot_room_tasks_never_shows_other_bots_or_private_rows(tmp_path: Path) -
         helper_journal(Message(
             role="tool", content=json.dumps({"ok": True, "span_id": "sp-h1"}),
             tool_call_id="h1"))
-        # Shared room rows: an A2A bus delegate row and a private-follow-up
-        # card row carrying question/answer/title text.
         _seed_room(tmp_path, group["conversation_id"], [
             Message(role="assistant", content="",
                     meta={"kind": "delegate", "bus_event": True, "bot_id": "helper",
@@ -631,7 +592,6 @@ def test_bot_room_tasks_never_shows_other_bots_or_private_rows(tmp_path: Path) -
             for secret in ("helper secret work", "Xác nhận riêng tư",
                            "Mật khẩu của bạn là gì?", "đáp án bí mật", "pf-1"):
                 assert secret not in raw
-            # Positive control: helper's own pocket shows helper's work.
             helper_tasks = _json(httpd, f"/api/bots/helper/groups/{group["conversation_id"]}/tasks")
             assert helper_tasks["tasks"] == [
                 {"title": "helper secret work", "status": "open", "waiting_on": None}
@@ -646,8 +606,6 @@ def test_bot_room_tasks_uses_projected_view_across_compaction(tmp_path: Path) ->
     """A view_reset basis omits pre-compaction rows from the bot's current
     projected view: work omitted there must not resurrect in the pocket,
     while tail work still lists."""
-    from thyca.bots.card import BotCard
-    from thyca.core.protocol import Message, ToolCall
 
     app = _chat(tmp_path)
     try:
@@ -655,7 +613,7 @@ def test_bot_room_tasks_uses_projected_view_across_compaction(tmp_path: Path) ->
             bot_id="coder", name="Coder", role="Coder", description="Codes.",
             persona="You code.",
         ))
-        dm = app.create()
+        app.create()
         group = app.create(bots=["thyca", "coder"])
         window, timeline, journal = _bind_journal(app, "coder", group["conversation_id"])
         journal(Message(role="assistant", content="",
@@ -664,8 +622,6 @@ def test_bot_room_tasks_uses_projected_view_across_compaction(tmp_path: Path) ->
         journal(Message(role="tool",
                         content=json.dumps({"ok": True, "span_id": "sp-old"}),
                         tool_call_id="t-old"))
-        # Compaction: the new basis carries only the tail; the old open
-        # task is omitted from the current projected view.
         tail = Message(role="assistant", content="",
                        tool_calls=[ToolCall(id="t-new", name="task_open",
                                             arguments={"title": "current work"})])
@@ -673,8 +629,6 @@ def test_bot_room_tasks_uses_projected_view_across_compaction(tmp_path: Path) ->
         httpd, thread = _start(tmp_path, app)
         try:
             payload = _json(httpd, f"/api/bots/coder/groups/{group["conversation_id"]}/tasks")
-            # The ack for t-new never arrived, yet the unit is open by its
-            # call id; the compacted-away unit does not resurrect.
             assert payload["tasks"] == [
                 {"title": "current work", "status": "open", "waiting_on": None}
             ]
@@ -687,8 +641,6 @@ def test_bot_room_tasks_uses_projected_view_across_compaction(tmp_path: Path) ->
 def test_bot_room_tasks_unreadable_journal_is_unavailable(tmp_path: Path) -> None:
     """A bound bot whose journal cannot be read (corrupt or missing) is
     503 unavailable — never an empty list implying 'no tasks'."""
-    from thyca.bots.card import BotCard
-    from thyca.core.protocol import Message, ToolCall
 
     app = _chat(tmp_path)
     try:
@@ -696,7 +648,7 @@ def test_bot_room_tasks_unreadable_journal_is_unavailable(tmp_path: Path) -> Non
             bot_id="coder", name="Coder", role="Coder", description="Codes.",
             persona="You code.",
         ))
-        dm = app.create()
+        app.create()
         group = app.create(bots=["thyca", "coder"])
         _, _, journal = _bind_journal(app, "coder", group["conversation_id"])
         journal(Message(role="assistant", content="",
@@ -726,8 +678,6 @@ def test_bot_room_tasks_same_call_id_across_windows_and_names(tmp_path: Path) ->
     """Sanitized-id collisions associate correctly: same id in two windows
     stays per-window, and a same-id different-name finish removes only its
     own call, out of order."""
-    from thyca.agents.events import TurnEvent
-    from thyca.bots.card import BotCard
 
     app = _chat(tmp_path)
     try:
@@ -735,7 +685,7 @@ def test_bot_room_tasks_same_call_id_across_windows_and_names(tmp_path: Path) ->
             bot_id="coder", name="Coder", role="Coder", description="Codes.",
             persona="You code.",
         ))
-        dm = app.create()
+        app.create()
         first = app.create(bots=["thyca", "coder"])
         _seed_room(tmp_path, first["conversation_id"], [Message(role="user", content="hello")])
         second = app.create(bots=["thyca", "coder"])
@@ -746,7 +696,6 @@ def test_bot_room_tasks_same_call_id_across_windows_and_names(tmp_path: Path) ->
         tracker.begin_turn("coder", second["conversation_id"], span_id="sp-b")
         tracker.observe_event("coder", "sp-b", TurnEvent(
             type="tool.started", round=1, call_id="c1", name="write", bot_id="coder"))
-        # Same-id different-name collision in the first window.
         tracker.observe_event("coder", "sp-a", TurnEvent(
             type="tool.started", round=1, call_id="c1", name="write", bot_id="coder"))
         httpd, thread = _start(tmp_path, app)
@@ -758,21 +707,18 @@ def test_bot_room_tasks_same_call_id_across_windows_and_names(tmp_path: Path) ->
             assert _json(httpd, f"/api/bots/coder/groups/{second["conversation_id"]}/tasks")["calls"] == [
                 {"kind": "tool", "name": "write", "active": 1},
             ]
-            # Out of order: the write finish removes only the write call.
             tracker.observe_event("coder", "sp-a", TurnEvent(
                 type="tool.finished", round=1, call_id="c1", name="write",
                 ok=True, bot_id="coder"))
             assert _json(httpd, f"/api/bots/coder/groups/{first["conversation_id"]}/tasks")["calls"] == [
                 {"kind": "tool", "name": "read", "active": 1},
             ]
-            # A named finish with no match removes nothing.
             tracker.observe_event("coder", "sp-a", TurnEvent(
                 type="tool.finished", round=1, call_id="c1", name="nope",
                 ok=True, bot_id="coder"))
             assert _json(httpd, f"/api/bots/coder/groups/{first["conversation_id"]}/tasks")["calls"] == [
                 {"kind": "tool", "name": "read", "active": 1},
             ]
-            # The other window is untouched throughout.
             assert _json(httpd, f"/api/bots/coder/groups/{second["conversation_id"]}/tasks")["calls"] == [
                 {"kind": "tool", "name": "write", "active": 1},
             ]
@@ -784,7 +730,6 @@ def test_bot_room_tasks_same_call_id_across_windows_and_names(tmp_path: Path) ->
 
 def test_bot_room_tasks_real_turn_wires_exact_conversation(tmp_path: Path) -> None:
     """A real in-flight turn is visible under its own conversation id only."""
-    from thyca.bots.card import BotCard
 
     started = threading.Event()
     release = threading.Event()
@@ -799,14 +744,13 @@ def test_bot_room_tasks_real_turn_wires_exact_conversation(tmp_path: Path) -> No
     try:
         app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
                                  description="Codes.", persona="You code."))
-        # coder's own DM: the turn responder is coder itself.
         first = app.bot_dm("coder")["conversation_id"]
         errors: list[BaseException] = []
 
         def run_turn() -> None:
             try:
                 app.turn(first, "hi")
-            except BaseException as exc:  # noqa: BLE001
+            except BaseException as exc:
                 errors.append(exc)
 
         worker = threading.Thread(target=run_turn)
@@ -876,7 +820,6 @@ def test_create_list_get_and_turn(tmp_path: Path) -> None:
             ("assistant", "pong"),
         ]
         assert llm.requests[0][-1].content == "ping"
-        # One turn makes one model call.
         assert len(llm.requests) == 1
     finally:
         _stop(httpd, thread)
@@ -889,7 +832,7 @@ def test_turn_errors(tmp_path: Path) -> None:
 
     httpd, thread = _start(tmp_path, _chat(tmp_path, Boom()))
     try:
-        created = _json(httpd, "/api/bots/thyca/dm")
+        _json(httpd, "/api/bots/thyca/dm")
         try:
             urlopen(
                 Request(
@@ -950,10 +893,7 @@ def test_turn_errors(tmp_path: Path) -> None:
             assert exc.code == 404
         else:
             raise AssertionError("expected 404")
-        # Store-door corruption reads as a constant 503, never as empty
-        # (same pattern as test_bot_room_tasks_corrupt_conversation_is_unavailable_not_empty).
         broken = ConversationManager(tmp_path / "sessions").create()
-        import sqlite3 as _sqlite3
 
         _conn = _sqlite3.connect(tmp_path / "conversations.db")
         try:
@@ -973,7 +913,6 @@ def test_turn_errors(tmp_path: Path) -> None:
             assert broken.conversation_id not in _body and "conversations.db" not in _body
         else:
             raise AssertionError("expected 503")
-        # The healthy DM door still reads normally (local scope only).
         healthy = _json(httpd, "/api/bots/thyca/dm")
         assert healthy["bot_id"] == "thyca"
     finally:
@@ -992,7 +931,6 @@ def test_create_during_in_flight_turn(tmp_path: Path) -> None:
             return ChatReply(content="late")
 
     app = _chat(tmp_path, Slow())
-    from thyca.bots.card import BotCard
 
     app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
                              description="Codes.", persona="You code."))
@@ -1020,13 +958,10 @@ def test_create_during_in_flight_turn(tmp_path: Path) -> None:
     maker.start()
     maker.join(2)
     assert not maker.is_alive(), "create blocked by in-flight turn lock"
-    # Phase 2B: the no-bots create is the same DM, so the concurrent
-    # create opens a group instead — still blank and non-blocking.
     group = app.create(bots=["thyca", "coder"])
     assert group["conversation_id"] != first
     created.update(group)
     assert created["messages"] == []
-    # Turn conversation must still receive the reply after create ran mid-flight.
     release.set()
     worker.join(timeout=5)
     assert not errors
@@ -1050,9 +985,7 @@ def test_chat_app_shutdown_idempotent(tmp_path: Path) -> None:
 
 
 def test_wire_carries_identity_not_title(tmp_path: Path) -> None:
-    from seeded_config import seeded_config
 
-    from thyca.conversations.runtime.wire import conversation_detail, conversation_summary
 
     path = tmp_path / "2026-08-24T10-56-24_abcd.jsonl"
     path.write_text("", encoding="utf-8")
@@ -1083,7 +1016,6 @@ def test_turns_carry_no_title(tmp_path: Path) -> None:
     second = app.turn(created["conversation_id"], "thêm")
     assert "title" not in second
     assert second["reply"] == "again"
-    # Only the two turn calls.
     assert len(llm.requests) == 2
     listed = app.list_payload()
     assert "title" not in listed["conversations"][0]
@@ -1125,7 +1057,6 @@ def test_stream_slow_turn_first_line_arrives_before_release(tmp_path: Path) -> N
         first = json.loads(response.readline().decode("utf-8"))
         assert response.status == 200
         assert first == {"type": "turn.accepted", "bot_id": "thyca"}
-        # Headers + first line went out while the Slow LLM is still blocked.
         assert release.is_set() is False
         release.set()
         lines = _stream_lines(response)
@@ -1193,7 +1124,7 @@ def test_stream_disconnect_does_not_cancel_turn(tmp_path: Path) -> None:
 def test_stream_pre_accept_errors_are_http_json(tmp_path: Path) -> None:
     httpd, thread = _start(tmp_path, _chat(tmp_path, FakeLLM(ChatReply(content="x"))))
     try:
-        created = _json(httpd, "/api/bots/thyca/dm")
+        _json(httpd, "/api/bots/thyca/dm")
         try:
             _stream(
                 httpd,
@@ -1265,9 +1196,6 @@ def test_stream_post_accept_llm_error_ends_with_single_failed(tmp_path: Path) ->
             }
         ]
         stored = ConversationManager(tmp_path / "sessions").load(created["bot_id"])
-        # Hard-cut: failed turn leaves user + trailing system error marker
-        # (append-only); the NDJSON single-failed-terminal contract above
-        # is unchanged.
         assert [(item.role, item.content) for item in stored.messages] == [
             ("user", "hi"),
             ("system", "provider HTTP 401: denied [redacted]"),
@@ -1279,7 +1207,7 @@ def test_stream_post_accept_llm_error_ends_with_single_failed(tmp_path: Path) ->
 def test_stream_headers_and_no_content_length(tmp_path: Path) -> None:
     httpd, thread = _start(tmp_path, _chat(tmp_path, FakeLLM(ChatReply(content="pong"))))
     try:
-        created = _json(httpd, "/api/bots/thyca/dm")
+        _json(httpd, "/api/bots/thyca/dm")
         response = _stream(
             httpd,
             "/api/bots/thyca/dm/turn/stream",
@@ -1313,7 +1241,7 @@ def test_stream_tool_events_ordered_and_clean(tmp_path: Path) -> None:
     )
     httpd, thread = _start(tmp_path, _chat(tmp_path, llm))
     try:
-        created = _json(httpd, "/api/bots/thyca/dm")
+        _json(httpd, "/api/bots/thyca/dm")
         response = _stream(
             httpd,
             "/api/bots/thyca/dm/turn/stream",
@@ -1351,7 +1279,6 @@ def test_stream_tool_events_ordered_and_clean(tmp_path: Path) -> None:
             "ok": False,
             "bot_id": "thyca",
         }
-        # Intermediate lines never carry user text, tool args, results, or stacks.
         blob = b"".join(raws[:-1]).decode("utf-8")
         assert "run the bash tool now" not in blob
         assert "echo hi" not in blob
@@ -1366,7 +1293,7 @@ def test_stream_sentinel_without_terminal_writes_fallback_failure(
 ) -> None:
     httpd, thread = _start(tmp_path, _chat(tmp_path, FakeLLM(ChatReply(content="pong"))))
     try:
-        created = _json(httpd, "/api/bots/thyca/dm")
+        _json(httpd, "/api/bots/thyca/dm")
 
         def sentinel_only_worker(app, conversation_id, text, items, state, **_kwargs):
             items.put(TurnEvent(type="turn.accepted"))
@@ -1390,7 +1317,6 @@ def test_stream_sentinel_without_terminal_writes_fallback_failure(
         _stop(httpd, thread)
 
 
-
 def test_chat_nav_opens_new_conversation() -> None:
     """The + button only opens the group picker — a conversation is POSTed when the
     dialog submits, and DM conversations are find-or-create through the bot."""
@@ -1403,20 +1329,15 @@ def test_chat_nav_opens_new_conversation() -> None:
     assert 'id="message-list"' in html
     assert 'id="composer"' in html
 
-    # Clicking + fills and shows the dialog — it must not hit the network.
-    # The button only exists in chat's static markup, so the shared sidebar
-    # guards before binding it.
     assert "const teamSharedCreate=$('#team-shared-create');" in sidebar
     open_body = sidebar[sidebar.index("teamSharedCreate.onclick"):]
     open_body = open_body[: open_body.index("\n")]
     assert "$('#group-dialog').showModal()" in open_body
     assert "getJson" not in open_body
-    # Submitting the form is what creates the conversation, then opens it.
     form_body = sidebar[sidebar.index("$('#group-form').onsubmit"):]
     assert "'/api/groups'" in form_body
     assert "method:'POST'" in form_body
     assert "loadConversation(groupKey(detail.group_id)" in form_body
-    # Picking a bot goes through the find-or-create DM, not a blank create.
     assert "/api/bots/${encodeURIComponent(id)}/dm" in chat
 
     provider = (WEBUI / "ui" / "provider" / "js" / "provider.js").read_text(encoding="utf-8")
@@ -1428,20 +1349,15 @@ def test_chat_nav_opens_new_conversation() -> None:
 
 def test_create_prunes_previous_blank(tmp_path: Path) -> None:
     app = _chat(tmp_path, FakeLLM(ChatReply(content="x")))
-    from thyca.bots.card import BotCard
 
     app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
                              description="Codes.", persona="You code."))
     first = app.create()
     assert app.list_payload()["conversations"] == []
-    # Phase 2B: repeated creates return the same DM singleton; a fresh
-    # group still prunes the previous blank group.
     assert app.create()["conversation_id"] == first["conversation_id"]
     g1 = app.create(bots=["thyca", "coder"])
     g2 = app.create(bots=["thyca", "coder"])
     assert g1["conversation_id"] != g2["conversation_id"]
-    # Hard cut: existence is the store door, never a JSONL file.
-    from thyca.conversations.store.admin import AdminStore
 
     door_ids = {row.ref.id for row in AdminStore(tmp_path).list(limit=500)[0]}
     assert g1["conversation_id"] not in door_ids
@@ -1470,7 +1386,6 @@ def test_conversation_payload_includes_context(tmp_path: Path) -> None:
             assert ctx["estimated_tokens"] == ctx["transcript_tokens"] + ctx["overhead_tokens"]
             assert ctx["context_tokens"] > 0
             assert abs(ctx["ratio"] - ctx["estimated_tokens"] / ctx["context_tokens"]) < 1e-9
-            # Hot prompt + tools schema are real turn overhead, not zero.
             assert ctx["overhead_tokens"] > 0
     finally:
         app.shutdown()
@@ -1620,30 +1535,22 @@ def test_chat_mobile_pick_pattern() -> None:
     assert 'id="mobile-overlay"' in html
     assert 'class="icon-button menu-button"' in html
     assert 'aria-controls="chat-sidebar"' in html
-    # Hidden on desktop, revealed under the 850px breakpoint.
     assert ".menu-button{display:none}" in base_css
     assert ".menu-button{display:inline-flex}" in base_css
     assert "screen-shell" not in html
-    # The pick-shell two-pane pattern is gone: under 850px the sidebar sits
-    # translated off-canvas until .mobile-open slides it over the content.
     assert "max-width:850px" in sidebar_css
     assert ".sidebar.mobile-open" in sidebar_css
     assert "function openMobile" in shell_app
     assert "function closeMobile" in shell_app
     assert "mobile-open" in shell_app
     assert "$('#mobile-overlay').onclick" in shell_app and "closeMobile()" in shell_app
-    # The menu button toggles the overlay on mobile; the wiring uses optional
-    # chaining so it stays safe if a page ever drops the element.
     assert "$('.menu-button')" in shell_app
     assert "$('.menu-button')?.setAttribute" in shell_app
     assert "matchMedia('(max-width:850px)')" in shell_app
-    # Opening a conversation (group row tap, deep link, drawer row) reveals the
-    # conversation by closing the overlay.
     load_conversation = chat[chat.index("async function loadConversation") : chat.index("async function selectBot")]
     assert "closeMobile()" in load_conversation
     assert "pick-shell" not in html + chat + shell_app
     assert "is-picking" not in html + chat + shell_app
-
 
 
 def test_retry_hook_emits_llm_retry_events(tmp_path: Path) -> None:
@@ -1659,7 +1566,6 @@ def test_retry_hook_emits_llm_retry_events(tmp_path: Path) -> None:
 
         async def chat(self, messages, tools=None):
             self.n += 1
-            # Only the first (turn) call simulates a transient retry notify.
             if self.n == 1 and self._hook:
                 self._hook(1, 3)
             return ChatReply(content="ok" if self.n == 1 else '"Tên phiên."')
@@ -1676,19 +1582,15 @@ def test_retry_hook_emits_llm_retry_events(tmp_path: Path) -> None:
 
 def test_aborted_static_and_body_keep_server_quiet(tmp_path: Path, capsys) -> None:
     """Client ngắt mid-response/mid-body (đổi Trace↔Chat): im lặng, server sống."""
-    import socket
 
     httpd, thread = _start(tmp_path, _chat(tmp_path, FakeLLM(ChatReply(content="x"))))
     try:
         port = httpd.server_address[1]
-        # 1. GET đóng ngay sau request: wfile.flush() cuối handle_one_request
-        #    dâng BrokenPipe lên handle_error (không qua _send).
         sock = socket.create_connection(("127.0.0.1", port), timeout=5)
         try:
             sock.sendall(b"GET /api/conversations HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")
         finally:
             sock.close()
-        # 2. POST khai Content-Length lớn rồi đóng giữa body.
         sock = socket.create_connection(("127.0.0.1", port), timeout=5)
         try:
             sock.sendall(
@@ -1698,7 +1600,6 @@ def test_aborted_static_and_body_keep_server_quiet(tmp_path: Path, capsys) -> No
             )
         finally:
             sock.close()
-        # 3. Static file đóng ngay sau request.
         sock = socket.create_connection(("127.0.0.1", port), timeout=5)
         try:
             sock.sendall(b"GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")
@@ -1751,7 +1652,7 @@ def test_conversation_detail_tags_skill_loads(tmp_path: Path) -> None:
 
     httpd, thread = _start(tmp_path, _chat(tmp_path, ThinkingToolLLM()))
     try:
-        created = _json(httpd, "/api/bots/thyca/dm")
+        _json(httpd, "/api/bots/thyca/dm")
         body = json.dumps({"text": "viết skill"}).encode("utf-8")
         stream = _stream(
             httpd, "/api/bots/thyca/dm/turn/stream", data=body
@@ -1795,7 +1696,6 @@ def test_conversation_detail_tags_skill_loads(tmp_path: Path) -> None:
         _stop(httpd, thread)
 
 
-
 def test_empty_submit_guard_returns_before_send() -> None:
     """Pin the empty/busy submit guard: the composer onsubmit handler
     returns before sendTurn — nothing hits the network when the text is
@@ -1820,7 +1720,7 @@ def test_busy_conversation_reports_running_and_refuses_a_second_turn(tmp_path: P
     httpd, thread = _start(tmp_path, _chat(tmp_path, Slow()))
     try:
         created = _json(httpd, "/api/bots/thyca/dm")
-        conversation_id = created["bot_id"]
+        created["bot_id"]
         assert _json(httpd, "/api/bots/thyca/dm")["running"] is False
         response = _stream(
             httpd,
@@ -1829,7 +1729,6 @@ def test_busy_conversation_reports_running_and_refuses_a_second_turn(tmp_path: P
         )
         assert json.loads(response.readline().decode("utf-8")) == {"type": "turn.accepted", "bot_id": "thyca"}
         try:
-            # The reloaded page reads exactly this to know a turn is in flight.
             detail = _json(httpd, "/api/bots/thyca/dm")
             assert detail["running"] is True
             assert detail["started_at"]
@@ -1872,7 +1771,7 @@ def test_follow_stream_replays_and_tails_a_running_turn(tmp_path: Path) -> None:
     httpd, thread = _start(tmp_path, _chat(tmp_path, Slow()))
     try:
         created = _json(httpd, "/api/bots/thyca/dm")
-        conversation_id = created["bot_id"]
+        created["bot_id"]
         starter = _stream(
             httpd,
             "/api/bots/thyca/dm/turn/stream",
@@ -1912,7 +1811,7 @@ def test_stream_emits_thinking_deltas_and_persists(tmp_path: Path) -> None:
 
     httpd, thread = _start(tmp_path, _chat(tmp_path, ThinkingLLM()))
     try:
-        created = _json(httpd, "/api/bots/thyca/dm")
+        _json(httpd, "/api/bots/thyca/dm")
         response = _stream(
             httpd,
             "/api/bots/thyca/dm/turn/stream",
@@ -1958,7 +1857,7 @@ def test_stream_emits_content_deltas_alongside_thinking(tmp_path: Path) -> None:
 
     httpd, thread = _start(tmp_path, _chat(tmp_path, StreamingLLM()))
     try:
-        created = _json(httpd, "/api/bots/thyca/dm")
+        _json(httpd, "/api/bots/thyca/dm")
         response = _stream(
             httpd,
             "/api/bots/thyca/dm/turn/stream",
@@ -1979,7 +1878,7 @@ def test_stream_emits_content_deltas_alongside_thinking(tmp_path: Path) -> None:
 def test_follow_stream_idle_or_missing(tmp_path: Path) -> None:
     httpd, thread = _start(tmp_path, _chat(tmp_path, FakeLLM(ChatReply(content="x"))))
     try:
-        created = _json(httpd, "/api/bots/thyca/dm")
+        _json(httpd, "/api/bots/thyca/dm")
         try:
             urlopen(
                 Request(
@@ -2023,7 +1922,7 @@ def test_follow_stream_survives_starter_disconnect(tmp_path: Path) -> None:
     httpd, thread = _start(tmp_path, _chat(tmp_path, Slow()))
     try:
         created = _json(httpd, "/api/bots/thyca/dm")
-        conversation_id = created["bot_id"]
+        created["bot_id"]
         starter = _stream(
             httpd,
             "/api/bots/thyca/dm/turn/stream",
@@ -2048,8 +1947,6 @@ def test_follow_stream_survives_starter_disconnect(tmp_path: Path) -> None:
         _stop(httpd, thread)
 
 
-
-
 def test_conversation_summary_counts_turns_the_way_trace_does(tmp_path: Path) -> None:
     """One turn per user message — not the raw message count.
 
@@ -2070,7 +1967,6 @@ def test_conversation_summary_counts_turns_the_way_trace_does(tmp_path: Path) ->
 
 
 def test_delete_over_http_and_no_patch_route(tmp_path: Path) -> None:
-    from thyca.bots.card import BotCard
 
     llm = FakeLLM(ChatReply(content="pong"))
     app = _chat(tmp_path, llm)
@@ -2092,8 +1988,6 @@ def test_delete_over_http_and_no_patch_route(tmp_path: Path) -> None:
         listed = _json(httpd, "/api/conversations")
         assert "title" not in listed["conversations"][0]
 
-        # The stored conversation carries participants only (read back
-        # through the runtime-aware load).
         stored = ConversationManager(tmp_path / "sessions").load(sid)
         assert stored.bots == ["thyca", "coder"]
         assert [(item.role, item.content) for item in stored.messages] == [
@@ -2101,7 +1995,6 @@ def test_delete_over_http_and_no_patch_route(tmp_path: Path) -> None:
             ("assistant", "pong"),
         ]
 
-        # There is no rename route any longer: PATCH is unsupported.
         try:
             _json(httpd, f"/api/groups/{sid}", method="PATCH", data=b'{"x": 1}')
         except HTTPError as exc:
@@ -2111,8 +2004,6 @@ def test_delete_over_http_and_no_patch_route(tmp_path: Path) -> None:
 
         deleted = _json(httpd, f"/api/groups/{sid}", method="DELETE")
         assert deleted == {"ok": True, "kind": "group", "group_id": sid}
-        # Hard cut: existence is the store door, never a JSONL file.
-        from thyca.conversations.store.admin import AdminStore
 
         assert sid not in {row.ref.id for row in AdminStore(tmp_path).list(limit=500)[0]}
         try:
@@ -2121,12 +2012,8 @@ def test_delete_over_http_and_no_patch_route(tmp_path: Path) -> None:
             assert exc.code == 404
         else:
             raise AssertionError("expected 404 after delete")
-        # The conversation is gone; this test's DM was never created.
         assert _json(httpd, "/api/conversations")["conversations"] == []
 
-        # Dropping a group is idempotent: a missing door is already the
-        # wanted end state. A malformed id is still refused, and every
-        # legacy conversation path stays 404.
         assert _json(httpd, f"/api/groups/{sid}", method="DELETE")["ok"] is True
         try:
             _json(
@@ -2167,7 +2054,6 @@ def test_delete_refuses_a_conversation_mid_turn(tmp_path: Path) -> None:
             return ChatReply(content="late")
 
     app = _chat(tmp_path, Slow())
-    from thyca.bots.card import BotCard
 
     app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
                              description="Codes.", persona="You code."))
@@ -2185,20 +2071,16 @@ def test_delete_refuses_a_conversation_mid_turn(tmp_path: Path) -> None:
             assert exc.code == 409
         else:
             raise AssertionError("expected 409 for a running conversation")
-        # Hard-cut: store-backed conversations have no JSONL file; existence is
-        # the store door, not the filesystem.
         assert ConversationManager(tmp_path / "sessions").load(sid).conversation_id == sid
         release.set()
         worker.join(timeout=5)
         assert not worker.is_alive()
         assert ConversationManager(tmp_path / "sessions").load(sid).conversation_id == sid
-        # Once the turn has landed the same call goes through.
         assert _json(httpd, f"/api/groups/{sid}", method="DELETE")["ok"] is True
     finally:
         release.set()
         _stop(httpd, thread)
         app.shutdown()
-
 
 
 def test_membership_edit_midturn_persists(tmp_path: Path) -> None:
@@ -2228,7 +2110,6 @@ def test_membership_edit_midturn_persists(tmp_path: Path) -> None:
         worker.start()
         assert started.wait(timeout=5)
 
-        # The sidebar re-affirms membership while the turn is still running.
         store = ConversationManager(tmp_path / "sessions").store
         store.append_bots(store.path_for(sid), ["thyca"])
         release.set()
@@ -2257,15 +2138,12 @@ def test_delete_racing_a_claim_does_not_lose_the_transcript(tmp_path: Path) -> N
         created = app.create()
         sid = created["conversation_id"]
         app.turn(sid, "câu hỏi đầu")
-        # Hard cut: existence is the store door, never a JSONL file.
-        from thyca.conversations.store.admin import AdminStore
 
         def door_exists() -> bool:
             return sid in {row.ref.id for row in AdminStore(tmp_path).list(limit=500)[0]}
 
         assert door_exists()
 
-        # Hold a claim exactly as a live turn does, then ask the delete to run.
         app._turns.claim(sid)
         try:
             app.delete_conversation(sid)
@@ -2276,7 +2154,6 @@ def test_delete_racing_a_claim_does_not_lose_the_transcript(tmp_path: Path) -> N
         assert door_exists()
         app._turns.release(sid)
 
-        # Free again: the same call drops the notebook.
         app.delete_conversation(sid)
         assert not door_exists()
     finally:
@@ -2296,7 +2173,6 @@ def test_group_delete_http_api_remains_wired_with_rename() -> None:
     assert "group_rename(self, chat, match.group(1))" in routes
     assert "session_rename" not in routes
     assert "session_delete" not in routes
-
 
 
 def _http_error(httpd, path: str, data: bytes, timeout: float = 5) -> tuple[int, dict]:
@@ -2384,7 +2260,7 @@ def test_stream_model_and_effort_reach_provider(tmp_path: Path, monkeypatch) -> 
 def test_stream_rejects_unknown_model_and_bad_effort(tmp_path: Path) -> None:
     httpd, thread = _start(tmp_path, _chat(tmp_path, FakeLLM(ChatReply(content="x"))))
     try:
-        created = _json(httpd, "/api/bots/thyca/dm")
+        _json(httpd, "/api/bots/thyca/dm")
         path = "/api/bots/thyca/dm/turn/stream"
         code, body = _http_error(
             httpd, path, b'{"text":"hi","model":"not-configured"}'
@@ -2471,7 +2347,6 @@ def test_cancel_in_flight_turn(tmp_path: Path) -> None:
 
 
 def test_retry_last_user_turn(tmp_path: Path) -> None:
-    from thyca.bots.card import BotCard
 
     llm = ScriptedLLM(
         [
@@ -2504,7 +2379,6 @@ def test_retry_last_user_turn(tmp_path: Path) -> None:
         think_users = [item.content for item in llm.requests[-1] if item.role == "user"]
         assert think_users == ["hello"]
 
-        # A fresh group (not the DM singleton) has no user row: retry is 400.
         empty = _json(httpd, "/api/groups", method="POST",
                       data=b'{"bots":["thyca","coder"]}')
         code, body = _http_error(
@@ -2526,7 +2400,7 @@ def test_retry_last_user_turn(tmp_path: Path) -> None:
 
     httpd, thread = _start(tmp_path, _chat(tmp_path, Slow()))
     try:
-        busy = _json(httpd, "/api/bots/thyca/dm")
+        _json(httpd, "/api/bots/thyca/dm")
         response = _stream(
             httpd,
             "/api/bots/thyca/dm/turn/stream",
@@ -2601,7 +2475,6 @@ def test_cancel_then_retry_keeps_one_user(tmp_path: Path) -> None:
 
 
 def _provider_stub(calls: list, reply_model: str):
-    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
     class Handler(BaseHTTPRequestHandler):
         def do_POST(self) -> None:
@@ -2669,7 +2542,7 @@ def test_turn_model_override_routes_to_its_provider(tmp_path: Path) -> None:
         app = ChatApp(tmp_path, load(tmp_path / "config.json"))
         httpd, thread = _start(tmp_path, app)
         try:
-            created = _json(httpd, "/api/bots/thyca/dm")
+            _json(httpd, "/api/bots/thyca/dm")
             path = "/api/bots/thyca/dm/turn/stream"
             lines_b = _stream_lines(
                 _stream(httpd, path, data=b'{"text":"hi b","model":"model-b"}')
@@ -2770,10 +2643,6 @@ def test_failed_turn_marks_transcript_and_trace(tmp_path: Path) -> None:
         lines = _stream_lines(_stream(httpd, path, data=b'{"text":"hi"}'))
         assert lines[-1]["type"] == "turn.failed"
         stored = ConversationManager(tmp_path / "sessions").load(created["bot_id"])
-        # Hard-cut branch (2026-11-01): failures append a trailing system
-        # marker (append-only) instead of stamping the user row in place.
-        # Trace projects the marker back onto its turn, so failed turns
-        # still read as failed without rewriting stored bytes.
         users = [item for item in stored.messages if item.role == "user"]
         assert (users[-1].meta or {}).get("error") is None
         markers = [
@@ -2887,7 +2756,6 @@ def test_unexpected_turn_error_marks_chat_unavailable(tmp_path: Path) -> None:
             "message": "chat unavailable",
         }
         stored = ConversationManager(tmp_path / "sessions").load(created["bot_id"])
-        # Hard-cut: trailing system marker, not a user stamp (see above).
         users = [item for item in stored.messages if item.role == "user"]
         assert (users[-1].meta or {}).get("error") is None
         markers = [
@@ -2907,11 +2775,11 @@ def test_4000_emoji_turn_accepted_end_to_end(tmp_path: Path) -> None:
     app = _chat(tmp_path, llm)
     httpd, thread = _start(tmp_path, app)
     try:
-        created = _json(httpd, "/api/bots/thyca/dm")
+        _json(httpd, "/api/bots/thyca/dm")
         text = "\U0001f600" * 4000
         assert len(text) == 4000
         body = json.dumps({"text": text}).encode("utf-8")
-        assert len(body) > 16_384  # would trip the old fixed cap
+        assert len(body) > 16_384
         turned = _json(
             httpd, "/api/bots/thyca/dm/turn", method="POST", data=body
         )
@@ -2923,7 +2791,6 @@ def test_4000_emoji_turn_accepted_end_to_end(tmp_path: Path) -> None:
 
 
 def test_orphan_group_over_http(tmp_path: Path) -> None:
-    from thyca.bots.card import BotCard
 
     llm = FakeLLM(ChatReply(content="pong"))
     app = _chat(tmp_path, llm)
@@ -2934,7 +2801,6 @@ def test_orphan_group_over_http(tmp_path: Path) -> None:
         created = _json(httpd, "/api/groups", method="POST", data=b'{"bots":["coder","helper"]}')
         sid = created["group_id"]
         _json(httpd, f"/api/groups/{sid}/turn", method="POST", data=b'{"text":"ping"}')
-        # Simulate an old orphan left in the database.
         app._bots.delete("coder")
         detail = _json(httpd, f"/api/groups/{sid}")
         assert detail["kind"] == "group" and detail["bots"] == ["coder", "helper"]
@@ -2951,7 +2817,6 @@ def test_orphan_group_over_http(tmp_path: Path) -> None:
 
 
 def test_all_dead_group_turn_is_clear_over_http(tmp_path: Path) -> None:
-    from thyca.bots.card import BotCard
 
     llm = FakeLLM(ChatReply(content="pong"))
     app = _chat(tmp_path, llm)
@@ -2984,8 +2849,6 @@ def test_chat_delete_group_button_wired() -> None:
     root = Path(__file__).resolve().parents[1]
     html = (root / "thyca" / "webui" / "ui" / "chat" / "index.html").read_text()
     js = (root / "thyca" / "webui" / "ui" / "chat" / "js" / "chat.js").read_text()
-    # The chat composer no longer carries group-delete / session-info
-    # buttons; group deletion stays available through the API itself.
     assert 'id="delete-group"' not in html
     assert 'id="conversation-info"' not in html
     for token in ("updateGroupDeleteButton", "deleteCurrentGroup"):
@@ -2995,7 +2858,6 @@ def test_chat_delete_group_button_wired() -> None:
 def test_group_title_create_detail_list_and_rename(tmp_path: Path) -> None:
     """A titled group carries its title in detail + list, survives a
     reload from disk, and renames through POST /api/groups/<id>/title."""
-    from thyca.bots.card import BotCard
 
     llm = FakeLLM(ChatReply(content="pong"))
     app = _chat(tmp_path, llm)
@@ -3005,18 +2867,16 @@ def test_group_title_create_detail_list_and_rename(tmp_path: Path) -> None:
     try:
         created = _json(httpd, "/api/groups", method="POST",
                         data=b'{"bots":["thyca","coder"],"title":"  Nhom Ke Hoach  "}')
-        assert created["title"] == "Nhom Ke Hoach"  # trimmed on create
+        assert created["title"] == "Nhom Ke Hoach"
         sid = created["group_id"]
         assert _json(httpd, f"/api/groups/{sid}")["title"] == "Nhom Ke Hoach"
         listed = _json(httpd, "/api/conversations?kind=group")["conversations"]
         assert [row["title"] for row in listed if row["group_id"] == sid] == ["Nhom Ke Hoach"]
-        # The title lives with the stored conversation, not the process.
         assert ConversationManager(tmp_path / "sessions").load(sid).title == "Nhom Ke Hoach"
         renamed = _json(httpd, f"/api/groups/{sid}/title", method="POST",
                         data=b'{"title":"Ke hoach tuan"}')
         assert renamed["title"] == "Ke hoach tuan"
         assert _json(httpd, f"/api/groups/{sid}")["title"] == "Ke hoach tuan"
-        # Participant add/remove still works and keeps the title.
         bots = _json(httpd, f"/api/groups/{sid}/bots", method="POST",
                      data=b'{"bot_id":"coder","action":"remove"}')
         assert bots["bots"] == ["thyca"]
@@ -3029,7 +2889,6 @@ def test_group_title_create_detail_list_and_rename(tmp_path: Path) -> None:
 def test_group_title_invalid_and_untitled_unchanged(tmp_path: Path) -> None:
     """Invalid titles are 400; no title (or a blank one) is exactly the
     pre-title behavior: no title key anywhere."""
-    from thyca.bots.card import BotCard
 
     llm = FakeLLM(ChatReply(content="pong"))
     app = _chat(tmp_path, llm)
@@ -3055,7 +2914,6 @@ def test_group_title_invalid_and_untitled_unchanged(tmp_path: Path) -> None:
         assert "title" not in blank
         rows = _json(httpd, "/api/conversations?kind=group")["conversations"]
         assert all("title" not in row for row in rows)
-        # Renaming validates the same way; a missing group still 404s.
         try:
             _json(httpd, f"/api/groups/{blank['group_id']}/title",
                   method="POST", data=b'{"title":"' + b"y" * 81 + b'"}')

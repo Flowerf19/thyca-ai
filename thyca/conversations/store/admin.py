@@ -6,16 +6,41 @@ from collections.abc import Callable
 from pathlib import Path
 
 from thyca.core.protocol import Message, parse_ts, utc_now_ts
+
 from .agent import AgentStore
-from .contracts import (BootstrapResult, Conversation, ConversationListing, ConversationRef,
-                        ConversationStoreError, DMBootstrapIntent, InitializationResult,
-                        PruneResult, RootInitializationIntent, _check_text,
-                        _decode_message, _decode_metadata,
-                        _encode_canonical_message, _encode_metadata, _local_error, _metadata,
-                        _require_ref, _view, normalize_group_title, validate_metadata)
-from .database import (_ensure_door_ready, _ensure_root_ready, _read_door_row,
-                       _root_instance_id_from_conn, _transaction_context, open_existing_conversation)
+from .contracts import (
+    MAX_PAGE_LIMIT,
+    BootstrapResult,
+    Conversation,
+    ConversationListing,
+    ConversationRef,
+    ConversationStoreError,
+    DMBootstrapIntent,
+    InitializationResult,
+    PruneResult,
+    RootInitializationIntent,
+    _check_text,
+    _decode_message,
+    _decode_metadata,
+    _encode_canonical_message,
+    _encode_metadata,
+    _local_error,
+    _metadata,
+    _require_ref,
+    _view,
+    normalize_group_title,
+    validate_metadata,
+)
+from .contracts import _decode_metadata as _decode
+from .database import (
+    _ensure_door_ready,
+    _ensure_root_ready,
+    _root_instance_id_from_conn,
+    _transaction_context,
+    open_existing_conversation,
+)
 from .lifecycle import _audit_in_transaction, audit_root, bootstrap_dm, initialize_root
+
 
 class _GroupIdCollision(Exception):
     """Internal signal for retrying only an explicit group-ID collision."""
@@ -40,7 +65,6 @@ class AdminStore:
 
     def create_group(self, participants: list[str], title: str | None = None) -> Conversation:
         metadata = _metadata(participants, normalize_group_title(title))
-        # Validate all user-supplied data before filesystem access.
         ref = ConversationRef.new_group()
         validate_metadata(ref, metadata)
         conn = open_existing_conversation(self._root, lock_mode='exclusive')
@@ -77,7 +101,6 @@ class AdminStore:
             with _transaction_context(conn, 'BEGIN IMMEDIATE'):
                 _ensure_root_ready(conn, _root_instance_id_from_conn(conn))
                 current, _gen, _ev, _log = _ensure_door_ready(conn, ref)
-                # A participants-only update keeps any stored group title.
                 kept = normalize_group_title(title) if title is not None else current.get('title')
                 metadata = _metadata(participants, kept)
                 validate_metadata(ref, metadata)
@@ -115,7 +138,6 @@ class AdminStore:
             raise ValueError('limit must be a positive int')
         if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
             raise ValueError('offset must be a non-negative int')
-        from .contracts import MAX_PAGE_LIMIT
         limit = min(limit, MAX_PAGE_LIMIT)
         conn = open_existing_conversation(self._root, lock_mode='shared')
         try:
@@ -140,7 +162,6 @@ class AdminStore:
             except ValueError:
                 continue
             try:
-                from .contracts import _decode_metadata as _decode
                 metadata = _decode(raw_metadata)
                 validate_metadata(ref, metadata)
             except (ConversationStoreError, ValueError):
@@ -192,11 +213,7 @@ class AdminStore:
         finally:
             conn.close()
 
-    # Drop one bot from every group roster in one transaction.
     def prune_bot_from_groups(self, bot_id: str) -> PruneResult:
-        # One all-or-nothing prune: every group door is decoded strictly, a
-        # group left empty dissolves in the same transaction, and DM doors
-        # are never touched. Generation is left unchanged.
         ConversationRef.dm(bot_id)
         conn = open_existing_conversation(self._root, lock_mode='exclusive')
         try:
@@ -245,10 +262,6 @@ class AdminStore:
                         raise _local_error(ref) from exc
                     pruned.append(identifier)
                 if dissolved:
-                    # Delete each dissolved door and its messages in this
-                    # transaction, like AdminStore.delete: drop the
-                    # append-only trigger, remove messages before the door
-                    # (foreign key), then restore the trigger.
                     try:
                         conn.execute('DROP TRIGGER no_delete_messages')
                         for identifier in dissolved:
@@ -311,7 +324,6 @@ class AdminStore:
             raise ValueError('through_seq must be a positive logical position')
         if not callable(summarize):
             raise ValueError('summarize must be callable')
-        # Snapshot phase: lock and read transaction close before decoding or callback.
         conn = open_existing_conversation(self._root, lock_mode='shared')
         try:
             with _transaction_context(conn, 'BEGIN'):
@@ -339,8 +351,6 @@ class AdminStore:
                           meta={'compacted': True, 'through_seq': effective})
         payload = _encode_canonical_message(summary)
 
-        # Final phase permits only a pure concurrent append suffix. Purge or
-        # another compaction changes generation and conflicts without retry.
         conn = open_existing_conversation(self._root, lock_mode='exclusive')
         try:
             with _transaction_context(conn, 'BEGIN IMMEDIATE'):
@@ -397,4 +407,3 @@ class AdminStore:
                 raise ConversationStoreError() from exc
         finally:
             conn.close()
-

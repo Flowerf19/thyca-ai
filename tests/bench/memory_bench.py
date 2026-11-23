@@ -7,10 +7,11 @@ import math
 import tempfile
 import time
 from collections import Counter
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Sequence
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from thyca.memories import jobs
@@ -267,8 +268,6 @@ def _evaluate_retrieval(
             })
 
     if check_answers and total > 0:
-        # Check answers via read-only archive.get AFTER timings so get/reinforce
-        # never mutates disk or slows search measurements.
         norm_cache: dict[str, str] = {}
         for q, hits in raw_results:
             ans_norms = [Chunker.normalize(a).strip() for a in q.answers if a and a.strip()]
@@ -495,7 +494,7 @@ def run_ledgers_eval(root: Path) -> dict[str, Any]:
         d10 = (d / "memory" / "2026-11-10.md").read_text(encoding="utf-8")
         d11 = (d / "memory" / "2026-11-11.md").read_text(encoding="utf-8")
         assert "DM_PRIVATE" not in d10 and "DM_PRIVATE" in d11
-        dm_meta = parse_heading(next(l for l in d11.splitlines() if l.startswith("## ")))
+        dm_meta = parse_heading(next(line for line in d11.splitlines() if line.startswith("## ")))
         assert dm_meta is not None and dm_meta.cont == gid
 
     def case_task_mismatched_cont_protection(d: Path) -> None:

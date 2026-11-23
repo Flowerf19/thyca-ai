@@ -42,15 +42,12 @@ class Chunk:
     forgotten_at: str | None = None
     project: str | None = None
     chat_session: str | None = None
-    # Team owners (BE-4): mirrors HeadingMeta.bots; None = legacy team entry.
     bots: tuple[str, ...] | None = None
-    # Task + habits (phase 1A): mirrors the heading JSON keys.
     task: str | None = None
     cont: str | None = None
     kind: str | None = None
     status: str | None = None
     habit: str | None = None
-    # Phase 1E: user explicitly stated the habit. Only True persists.
     habit_explicit: bool = False
 
 
@@ -71,8 +68,6 @@ class Chunker:
         for session in sessions:
             leaves = _split_long(_merge_short(_leaves(session["body"], session["body_start"])))
             for ord_, leaf in enumerate(leaves, start=1):
-                # Never blank: _leaves skips blank lines and every split
-                # stage only emits non-blank parts, so no guard is needed.
                 raw = leaf["text"]
                 norm = self.normalize(raw)
                 chunk_id = f"{session['memory_id']}#{ord_}"
@@ -111,7 +106,6 @@ class Chunker:
     def normalize(text: str) -> str:
         decomposed = unicodedata.normalize("NFD", text)
         stripped = "".join(ch for ch in decomposed if unicodedata.category(ch) != "Mn")
-        # NFD does not decompose đ (U+0111) — map it to d explicitly.
         return stripped.lower().replace("đ", "d")
 
 
@@ -134,8 +128,6 @@ def _sessions(
         ]
     sessions: list[dict] = []
     for meta, entry, line_no, end in blocks:
-        # Canonical sessions share the canonical# root with the no-heading
-        # fallback so facade get (canonical#*) and stats accept them.
         prefix = timeline_day if source_kind == "daily" else f"canonical#{Path(path).stem.lower()}"
         body = "\n".join(lines[line_no + 1 : end])
         sessions.append(
@@ -244,20 +236,21 @@ def _split_long(leaves: list[dict]) -> list[dict]:
         if len(parts) <= 1:
             parts = text.splitlines() or [text]
         if len(parts) <= 1 and len(text) > MAX_LEAF_CHARS:
-            # Single-line overflow: hard char-split, or one giant line
-            # would sail through as a single unbounded leaf.
             parts = [
                 text[index : index + MAX_LEAF_CHARS]
                 for index in range(0, len(text), MAX_LEAF_CHARS)
             ]
-        # Line starts within the leaf text, so each emitted part carries
-        # its own span instead of the whole leaf's.
-        starts = [0]
-        for match in re.finditer("\n", text):
-            starts.append(match.end())
+        starts = [0, *(match.end() for match in re.finditer("\n", text))]
 
-        def line_of(offset: int) -> int:
-            return leaf["start"] + bisect_right(starts, offset) - 1
+        leaf_start = leaf["start"]
+
+        def line_of(
+            offset: int,
+            *,
+            _leaf_start: int = leaf_start,
+            _starts: list[int] = starts,
+        ) -> int:
+            return _leaf_start + bisect_right(_starts, offset) - 1
 
         buf = ""
         buf_start = 0

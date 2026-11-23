@@ -8,7 +8,7 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 
-from thyca.serve.turn_state import _TurnJob, TurnState
+from thyca.serve.turn_state import TurnState, _TurnJob
 
 _CANCEL_WAIT_S = 5.0
 

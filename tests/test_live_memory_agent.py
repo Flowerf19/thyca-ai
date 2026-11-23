@@ -1,8 +1,6 @@
 """Opt-in live scenarios: real provider chooses memory tools and writes ledgers."""
 from __future__ import annotations
 
-import os
-
 import pytest
 
 from tests.live.memory_agent import (
@@ -32,7 +30,7 @@ def test_live_memory_agent_scenario(name: str) -> None:
         pytest.skip(f"live config missing at {path}")
     try:
         live_config()
-    except Exception as exc:  # noqa: BLE001 — surface config/key problems as skip
+    except Exception as exc:
         pytest.skip(f"live config unusable: {exc}")
     result = run_scenario(name)
     assert result.passed, (

@@ -1,14 +1,8 @@
-// Retained profile controller; declarations stay private to this closure.
 ThycaRouter.register('profile', { title: 'Hồ sơ', stylesheet: '/ui/profile/profilecss/profile.css', mount(ctx) {
   const root = ctx.root;
   const $ = (selector, base = root) => selector === '.workspace' ? root : base.querySelector(selector);
   const $$ = (selector, base = root) => [...base.querySelectorAll(selector)];
   let selectedBot = '';
-// Profile screen: canonical tabs whose markdown self-splits by `##` headings
-// into compact 2-column section cards (per-section inline edit + `+ Thêm mục`,
-// lossless merge, or full-file split-preview editor), plus one bot's dossier.
-// API: GET /api/memory/stats, POST /api/memory/canonical {name, content},
-//      GET /api/bots via bootShell roster.
 
 const CANONICAL_META = {
   'USER.md': { tab: 'Về người dùng', title: 'Về người dùng', description: 'Thông tin, sở thích và bối cảnh Thyca dùng khi trả lời.' },
@@ -70,8 +64,6 @@ function setStatus(node, text, kind = '') {
   node.textContent = text || '';
 }
 
-/* share/markdown.js is a module — it can evaluate after the first render, so
-   the escaped fallback mirrors chat's contentHtml for that brief window. */
 const contentHtml = text => window.formatMarkdown
   ? window.formatMarkdown(text)
   : escapeHTML(String(text || '')).split(/\n{2,}/).map(p => `<p>${p.replace(/\n/g, '<br>')}</p>`).join('');
@@ -139,8 +131,6 @@ function bindInlineEditor() {
     }
   };
 }
-
-/* ---------- Chung — canonical tabs + ## section cards + full-file inline editor ---------- */
 
 function hasVisibleMarkdown(text) {
   return String(text || '').replace(/<!--[\s\S]*?-->/g, '').trim().length > 0;
@@ -361,8 +351,6 @@ function renderShared() {
   if (se) bindSectionEditor();
 }
 
-/* ---------- Riêng — one bot's two-column dossier ---------- */
-
 function botFacts(b) {
   return [
     b.model && b.model.id ? `model: ${b.model.id}${b.model.thinking ? ' · suy nghĩ ' + b.model.thinking : ''}` : '',
@@ -477,8 +465,6 @@ function showTab(id, anchor = '') {
   return true;
 }
 
-/* Sidebar a11y: select buttons scope the editor here, so relabel them
-   page-locally after every shared roster render (no global change). */
 function fixSidebarLabels() {
   if (!ctx.isActive()) return;
   for (const btn of [...ctx.sidebar.querySelectorAll('[data-action="select"]')]) {
@@ -489,9 +475,6 @@ function fixSidebarLabels() {
 new MutationObserver(() => fixSidebarLabels())
   .observe(ctx.sidebar, { childList: true, subtree: true });
 
-/* Sidebar routing stays on this page: a bot card opens its own dossier tab
-   (?bot=<id>); the shared files live on the no-bot tab. Thyca has its own
-   bot tab like every other twin. */
 function selectBot(id) {
   if (!id) { showShared(); return; }
   if (getBot(id)) showTab(id);
@@ -506,14 +489,10 @@ function openBotSettings() {
 async function loadFiles() {
   setStatus(el.status, 'Đang đọc hồ sơ…');
   try {
-    const stats = await getJson('/api/memory/stats');            // API: GET /api/memory/stats
+    const stats = await getJson('/api/memory/stats');
     state.files = selectCanonical(stats.files);
     if (state.files.length && !state.files.some(f => f.name === state.doc)) state.doc = state.files[0].name;
     setStatus(el.status, '');
-    // Shared files don't feed the bot dossier: a late read must never
-    // rebuild a selected bot's form and erase its unsaved draft. Before
-    // the first roster lands, an unknown id may just be an unloadable
-    // roster — leave the first paint to applyRoute.
     if (!state.tab || (!getBot(state.tab) && rosterReady)) renderContent();
     return true;
   } catch (err) {
@@ -676,14 +655,12 @@ async function submitEdit(e) {
   const name = $('#edit-name')?.value || state.editing;
   const content = $('#edit-content')?.value ?? state.editDraft;
   state.editDraft = content;
-  // The textarea is not `required`: blanking a profile file is a real action,
-  // so it asks first instead of being blocked by a native message.
   if (!content.trim() && !confirm(`Xoá trắng nội dung “${name}”?`)) return false;
   setBusy(true);
   setStatus($('#edit-status'), 'Đang lưu…');
   let focusAfterSave = null;
   try {
-    await postJson('/api/memory/canonical', { name, content });   // API: POST /api/memory/canonical {name, content}
+    await postJson('/api/memory/canonical', { name, content });
     const targetFile = state.files.find(f => f.name === name);
     if (targetFile) targetFile.content = content;
     state.editing = ''; state.editBase = ''; state.editDraft = '';
@@ -706,8 +683,6 @@ async function submitEdit(e) {
   }
 }
 
-/* ---------- events ---------- */
-
 window.addEventListener('thyca:bot-settings-saved', () => {
   if (state.tab && getBot(state.tab)) renderContent();
 });
@@ -729,9 +704,6 @@ el.root.addEventListener('click', e => {
   if (actionBtn?.dataset.action === 'open-settings') { openBotSettings(); }
 });
 
-/* Deep links: ?bot=<id> opens that bot's tab (?bot=ghost is preserved as an
-   honest unknown-bot view, never another bot); #<file> lands the shared
-   tab on the matching file. */
 function applyRoute(nextTab = state.tab, hash = decodeHash()) {
   if (nextTab && getBot(nextTab)) return showTab(nextTab);
   if (nextTab) {
@@ -769,8 +741,8 @@ function handleRoute(route) {
 async function boot() {
   const initialTab = new URLSearchParams(ctx.route.search).get('bot') || '';
   state.tab = initialTab;
-  await loadFiles();                                 // API: GET /api/memory/stats
-  try { await ctx.shellReady; }                         // API: GET /api/bots + GET /api/conversations
+  await loadFiles();
+  try { await ctx.shellReady; }
   catch (err) { toast('Không tải được đội bot: ' + (err.message || '')); }
   rosterReady = true;
   routeKey = ctx.route.search + ctx.route.hash;

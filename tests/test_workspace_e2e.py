@@ -6,16 +6,31 @@ privacy rule.
 """
 from __future__ import annotations
 
+import asyncio
+import json
 from datetime import datetime
+from datetime import datetime as _dt
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from thyca.app.chat_app import ChatApp
-from thyca.bots.card import BotCard
-from thyca.configs import load, save
 from seeded_config import seeded_config
+
+from thyca.app.chat_app import ChatApp
+from thyca.app.webui_channel import WebUIChannelAdapter
+from thyca.bots.card import BotCard
+from thyca.bots.context import BotTurnContext, bind_bot_turn_context, reset_bot_turn_context
+from thyca.bots.private_followups import PrivateFollowupStore
+from thyca.bots.workspace_context import WorkspaceContextBuilder
+from thyca.configs import load, save
+from thyca.core.protocol import estimate_tokens as _chars_to_tokens
 from thyca.llms.llm_base import ChatReply
-from thyca.memories.facade import format_task_catalog
+from thyca.llms.prompt_manager import PromptManager
+from thyca.memories.facade import MemoryFacade, format_task_catalog
+from thyca.memories.visibility import (
+    MemoryView,
+    bound_memory_view,
+)
+from thyca.serve.conversations_api import dm_private_followup
 
 
 def _chat(tmp_path: Path, connect=None) -> ChatApp:
@@ -38,11 +53,7 @@ class _SpyLLM:
 def _remember(tmp_path: Path, chat: str, title: str, body: str,
               bots=None, task: str | None = None, kind: str | None = None,
               status: str | None = None) -> None:
-    from thyca.memories.facade import MemoryFacade
 
-    # Seeds must land on the wall-clock day (same-day entries are served
-    # live from today's file; a fixed seed date rots once the clock moves
-    # past it). Turns under test always run on wall-clock time.
     MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh").remember(
         title, body,
         now=datetime.now(ZoneInfo("Asia/Ho_Chi_Minh")),
@@ -116,7 +127,6 @@ def test_armed_recall_runs_under_group_view(tmp_path: Path) -> None:
         real = app._runtime.memory_searcher
 
         def spy(text, bot_id):
-            # A callback that honestly offers both — the view filters.
             seen.append(bot_id)
             return real(text, bot_id)
 
@@ -160,8 +170,6 @@ def test_root_and_group_prompt_privacy(tmp_path: Path) -> None:
 def test_meter_tokens_match_builder_filtered_hot(tmp_path: Path) -> None:
     """The context meter prices the same filtered snapshot the executor
     gets: channel brief counted, private DM content contributes zero."""
-    from thyca.core.protocol import estimate_tokens as _chars_to_tokens
-    from thyca.llms.prompt_manager import PromptManager
 
     llm = _SpyLLM()
     app = _chat(tmp_path, connect=llm)
@@ -176,17 +184,10 @@ def test_meter_tokens_match_builder_filtered_hot(tmp_path: Path) -> None:
             group["conversation_id"], turn_cfg=app._current_cfg(), bot_id="thyca"
         )
         assert hot_tokens > 0
-        from datetime import datetime as _dt
 
-        from thyca.memories.visibility import (
-            MemoryView,
-            bound_memory_view,
-        )
-        from thyca.app.webui_channel import WebUIChannelAdapter
 
         window = WebUIChannelAdapter().window_for(
             app._conversations.store.load(group["conversation_id"]))
-        from thyca.bots.workspace_context import WorkspaceContextBuilder
 
         with bound_memory_view(
             MemoryView(window=window, bot_id="thyca", thyca_dir=tmp_path)
@@ -201,8 +202,6 @@ def test_meter_tokens_match_builder_filtered_hot(tmp_path: Path) -> None:
                     bot_user=app._bots.bot_user_text("thyca")))
         unfiltered = PromptManager().build(app._memory.peek(
             app._state, _dt.now(app._zone), conversation_id=group["conversation_id"]))
-        # The metered hot includes the channel brief and excludes the
-        # private DM index line that an unfiltered peek still carries.
         assert "PRIVATE-TITLE" in unfiltered
         assert "PRIVATE-TITLE" not in filtered
         assert "channel=webui" in filtered
@@ -215,9 +214,7 @@ def test_meter_tokens_match_builder_filtered_hot(tmp_path: Path) -> None:
 def test_private_followup_full_consent_flow(tmp_path: Path) -> None:
     """group → ask_private → DM raw answer → resume → API approve →
     group gets ONLY the sanitized revision; raw text never surfaces."""
-    import asyncio, json
 
-    from thyca.bots.private_followups import PrivateFollowupStore
 
     llm = _SpyLLM()
     app = _chat(tmp_path, connect=llm)
@@ -231,7 +228,6 @@ def test_private_followup_full_consent_flow(tmp_path: Path) -> None:
 
         ask = app._registry.get("ask_private")
         assert ask is not None
-        from thyca.bots.context import BotTurnContext, bind_bot_turn_context
 
         window = app._webui.window_for(
             app._conversations.store.load(group["conversation_id"]))
@@ -243,29 +239,24 @@ def test_private_followup_full_consent_flow(tmp_path: Path) -> None:
             out = asyncio.run(ask.handler(
                 {"work_id": work_id, "question": "your token?"}))
         finally:
-            from thyca.bots.context import reset_bot_turn_context
             reset_bot_turn_context(token)
         res = json.loads(out)
         assert res["ok"], out
         pid = res["pending_id"]
 
-        # Group only sees the generic wait line — no question/title.
         gmsgs = app.get_payload(group["conversation_id"])["messages"]
         assert any(m["content"] == "Đang chờ thông tin riêng."
                    for m in gmsgs if m.get("meta", {}).get("bot_id"))
         assert all("your token?" not in m["content"] for m in gmsgs)
 
-        # DM got the question; store is waiting_private.
         assert PrivateFollowupStore(tmp_path).active(
             "coder").status == "waiting_private"
 
-        # User answers in the DM: the service consumes it as received.
         app.turn(dm["conversation_id"], "RAW-SECRET-XYZ")
         pending = PrivateFollowupStore(tmp_path).get("coder", pid)
         assert pending.status == "received"
         assert pending.answer_event_id is not None
 
-        # Bot decides resume with a sanitized proposal.
         pf = app._registry.get("private_followup")
         window_dm = app._webui.window_for(
             app._conversations.store.load(dm["conversation_id"]))
@@ -278,13 +269,9 @@ def test_private_followup_full_consent_flow(tmp_path: Path) -> None:
                 "pending_id": pid, "action": "resume",
                 "redacted_text": "user shared a token"}))
         finally:
-            from thyca.bots.context import reset_bot_turn_context
             reset_bot_turn_context(token)
         assert json.loads(out)["ok"], out
 
-        # Approve via the endpoint handler directly (same code the POST
-        # route calls; the request plumbing is covered by serve tests).
-        from thyca.serve.conversations_api import dm_private_followup
 
         class _H:
             def __init__(self):
@@ -300,7 +287,6 @@ def test_private_followup_full_consent_flow(tmp_path: Path) -> None:
         assert h.code == 200, h.body
         assert h.body["status"] == "resumed"
 
-        # Group has ONLY the sanitized text — never the raw DM answer.
         gmsgs = app.get_payload(group["conversation_id"])["messages"]
         contents = [m["content"] for m in gmsgs]
         assert any("user shared a token" in c for c in contents)

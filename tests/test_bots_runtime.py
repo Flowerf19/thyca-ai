@@ -4,10 +4,19 @@ from __future__ import annotations
 import pytest
 
 from thyca.bots.bus import Bus, BusError
-from thyca.bots.card import BotCard
+from thyca.bots.card import BASELINE_BOT_TOOLS, BotCard, BotMemoryPolicy
 from thyca.bots.policy import BotPolicy, bind_hidden_tools, reset_hidden_tools
-from thyca.bots.runtime import filtered_tool_schemas
+from thyca.bots.runtime import (
+    BotTurnResult,
+    _aggregate_turn_meta,
+    _aggregate_turn_rounds,
+    filtered_tool_schemas,
+)
+from thyca.bots.timeline import CanonicalConversationStore, WorkspaceTimeline
+from thyca.conversations.runtime import ConversationManager
+from thyca.core.channel import WindowRef
 from thyca.core.protocol import Message, ToolCall
+from thyca.serve.trace import turns_from_conversation
 from thyca.tools.gateway.policy import PolicyDenied
 
 
@@ -55,16 +64,13 @@ def test_bus_hop_limit_per_trace() -> None:
 
 
 def _card(**overrides) -> BotCard:
-    base = dict(bot_id="coder", name="coder", role="Coder",
-                description="Codes.", persona="persona")
+    base = {"bot_id": "coder", "name": "coder", "role": "Coder",
+                "description": "Codes.", "persona": "persona"}
     base.update(overrides)
     return BotCard(**base)
 
 
 def test_compact_tool_is_baseline_for_child_bots() -> None:
-    # A pre-existing card that never listed "compact" still gains it via
-    # BASELINE_BOT_TOOLS (the same rule that grants memory_* retroactively);
-    # tools outside the card list and baseline stay dropped.
     card = _card(tools=("read",))
     out = filtered_tool_schemas(_schemas("read", "compact", "write"), card)
     names = [s["function"]["name"] for s in out]
@@ -92,15 +98,11 @@ def test_thyca_keeps_admin_tools() -> None:
 
 
 def test_memory_and_bash_filters() -> None:
-    from thyca.bots.card import BotMemoryPolicy
 
     card = _card(memory=BotMemoryPolicy(read=False, write=False),
                  bash="deny",
                  tools=("memory_search", "memory_remember",
                         "bash", "read"))
-    # Legacy card without the newer baseline peer tools in `tools`:
-    # bot_fetch/task_open are always kept, while the memory and bash
-    # masking above still removes its own families.
     out = filtered_tool_schemas(
         _schemas("memory_search", "memory_remember",
                  "bash", "bot_fetch", "task_open", "read", "memory_tasks"),
@@ -110,15 +112,12 @@ def test_memory_and_bash_filters() -> None:
 
 
 def test_child_empty_tools_allowlist_is_fail_closed() -> None:
-    # Non-system bot, empty `tools`: NO tools at all — poll tools are not
-    # implicit; they appear only when explicitly listed.
     card = _card()
     out = filtered_tool_schemas(_schemas("read", "tool_read", "tool_kill"), card)
     assert out == []
     card2 = _card(tools=("read", "tool_read"))
     out2 = filtered_tool_schemas(_schemas("read", "tool_read", "tool_kill"), card2)
     assert [s["function"]["name"] for s in out2] == ["read", "tool_read"]
-    # The Thyca system card keeps its full snapshot with an empty list.
     thyca = _card(bot_id="thyca", name="thyca", system=True)
     out3 = filtered_tool_schemas(_schemas("read", "bash"), thyca)
     assert {s["function"]["name"] for s in out3} == {"read", "bash"}
@@ -127,7 +126,7 @@ def test_child_empty_tools_allowlist_is_fail_closed() -> None:
 def test_gateway_policy_denies_hidden_by_name() -> None:
     policy = BotPolicy()
     call = ToolCall(id="c1", name="bash", arguments={})
-    policy.check(call)  # allow-all default
+    policy.check(call)
     token = bind_hidden_tools(frozenset({"bash"}))
     try:
         with pytest.raises(PolicyDenied):
@@ -135,7 +134,7 @@ def test_gateway_policy_denies_hidden_by_name() -> None:
         policy.check(ToolCall(id="c2", name="read", arguments={}))
     finally:
         reset_hidden_tools(token)
-    policy.check(call)  # allow-all again after reset
+    policy.check(call)
 
 
 def test_bus_rejects_self_send() -> None:
@@ -148,26 +147,21 @@ def test_bus_rejects_self_send() -> None:
 
 
 def test_memory_tasks_in_baseline_read_gated_hidden_wins() -> None:
-    from thyca.bots.card import BASELINE_BOT_TOOLS, BotMemoryPolicy
 
     assert "memory_tasks" in BASELINE_BOT_TOOLS
-    # Default card: visible like the other read tools.
     card = _card(tools=("memory_tasks", "read"))
     out = filtered_tool_schemas(_schemas("memory_tasks", "read"), card)
     assert [s["function"]["name"] for s in out] == ["memory_tasks", "read"]
-    # memory.read=false hides it even when listed by hand.
     nor = _card(memory=BotMemoryPolicy(read=False, write=True),
                 tools=("memory_tasks", "read"))
     assert [s["function"]["name"]
             for s in filtered_tool_schemas(_schemas("memory_tasks", "read"), nor)] == ["read"]
-    # hidden_tools still wins.
     hid = _card(tools=("memory_tasks", "read"), hidden_tools=("memory_tasks",))
     assert [s["function"]["name"]
             for s in filtered_tool_schemas(_schemas("memory_tasks", "read"), hid)] == ["read"]
 
 
 def test_private_followup_tools_in_baseline() -> None:
-    from thyca.bots.card import BASELINE_BOT_TOOLS
 
     assert "ask_private" in BASELINE_BOT_TOOLS
     assert "private_followup" in BASELINE_BOT_TOOLS
@@ -181,13 +175,6 @@ def test_private_followup_tools_in_baseline() -> None:
 def test_loop_limit_marker_does_not_double_count_aggregate_or_trace(
     tmp_path,
 ) -> None:
-    from thyca.bots.runtime import (
-        BotTurnResult,
-        _aggregate_turn_meta,
-        _aggregate_turn_rounds,
-    )
-    from thyca.conversations.runtime import ConversationManager
-    from thyca.serve.trace import turns_from_conversation
 
     call = ToolCall(id="c1", name="read", arguments={})
     meta = {
@@ -232,8 +219,6 @@ def test_loop_limit_marker_does_not_double_count_aggregate_or_trace(
         rounds=rounds,
         status="loop_limit",
     )
-    from thyca.bots.timeline import CanonicalConversationStore, WorkspaceTimeline
-    from thyca.core.channel import WindowRef
 
     _window = WindowRef(
         window_id="thyca", channel_id="webui", kind="dm", participants=("thyca",))
@@ -262,13 +247,11 @@ def test_loop_limit_marker_does_not_double_count_aggregate_or_trace(
 
 
 def test_aggregate_counts_internal_rounds_not_rows() -> None:
-    from thyca.bots.runtime import _aggregate_turn_meta
-    from thyca.core.protocol import Message
 
     def row(kind=None, **meta):
         return Message(role="assistant", content="x", meta={"kind": kind, **meta})
 
-    model, usage, cost, latency, requests, tool_calls = _aggregate_turn_meta([
+    _model, usage, cost, _latency, requests, tool_calls = _aggregate_turn_meta([
         row("llm", model="m", usage={"prompt_tokens": 3}, cost_usd=0.1),
         row("llm", model="m", usage={"prompt_tokens": 5}, cost_usd=0.2),
         Message(role="tool", content="out"),
@@ -282,8 +265,6 @@ def test_aggregate_counts_internal_rounds_not_rows() -> None:
 
 
 def test_aggregate_counts_tool_calls_on_same_rows() -> None:
-    from thyca.bots.runtime import _aggregate_turn_meta
-    from thyca.core.protocol import Message, ToolCall
 
     def call(cid):
         return ToolCall(id=cid, name="read", arguments={})
@@ -304,7 +285,6 @@ def test_aggregate_counts_tool_calls_on_same_rows() -> None:
 
 
 def test_room_meta_carries_request_count() -> None:
-    from thyca.bots.runtime import BotTurnResult
 
     result = BotTurnResult(
         reply="done", bot_id="coder", span_id="sp_1", model="m",

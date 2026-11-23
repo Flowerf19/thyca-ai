@@ -5,7 +5,6 @@ import re
 
 from thyca.configs import PricingCfg
 
-# USD / 1M tokens. Snapshot 2026-08; override via Config.pricing.
 DEFAULT_PRICES: dict[str, PricingCfg] = {
     "gpt-4o-mini": PricingCfg(input=0.15, cache=0.075, output=0.60),
     "gpt-5.6-luna": PricingCfg(input=0.20, cache=0.02, output=1.20),

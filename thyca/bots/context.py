@@ -17,8 +17,8 @@ if TYPE_CHECKING:
 
     from thyca.agents.act import Act
     from thyca.agents.think import LLMPort
-    from thyca.memories.active import ActiveMemory, ActiveState
     from thyca.conversations.runtime.store import ConversationStore
+    from thyca.memories.active import ActiveMemory, ActiveState
 
 
 @dataclass
@@ -50,9 +50,6 @@ class BotTurnContext:
     thyca_dir: Any = None
     window: Any = None
     pending_private_id: str | None = None
-    # Agent-callable compaction of the current conversation (TURN-CURATE):
-    # bound by BotRuntime per turn; the ``compact`` tool calls it. None
-    # outside a bot turn or when the runtime does not wire it.
     compact: Callable[[], Awaitable[dict]] | None = None
 
 

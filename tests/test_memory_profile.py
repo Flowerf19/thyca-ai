@@ -9,6 +9,7 @@ from thyca.memories.profile import (
     PROFILE_AUTO_END,
     PROFILE_AUTO_START,
     PROFILE_COMMENT,
+    _replace_block,
     legacy_profile_lines,
     maybe_strip_legacy_block,
     parse_profile_lines,
@@ -35,7 +36,6 @@ def test_update_creates_section_when_missing(tmp_path: Path) -> None:
     assert profile_block_lines(text) == [
         "uong ca phe den", "Discord: tra loi ngan gon",
     ]
-    # Manual sections stay untouched.
     assert "## Name and forms of address" in text
     assert "- Hòa" in text
 
@@ -103,7 +103,6 @@ def test_strip_legacy_drops_section_with_only_auto_comment() -> None:
 
 
 def test_replace_block_keeps_newline_after_marker() -> None:
-    from thyca.memories.profile import _replace_block
 
     text = (
         f"# User\n## Profile\n{PROFILE_COMMENT}\n"
@@ -117,7 +116,6 @@ def test_replace_block_keeps_newline_after_marker() -> None:
 
 def test_maybe_strip_legacy_only_when_migrated(tmp_path: Path) -> None:
     path = tmp_path / "USER.md"
-    # Legacy line chưa nằm trong profile block → KHÔNG strip.
     path.write_text(
         f"## Profile\n{PROFILE_AUTO_START}\n- new fact\n{PROFILE_AUTO_END}\n"
         f"## Habits\n{LEGACY_START}\n- old fact\n{LEGACY_END}\n",
@@ -125,7 +123,6 @@ def test_maybe_strip_legacy_only_when_migrated(tmp_path: Path) -> None:
     )
     assert maybe_strip_legacy_block(path) is False
     assert "## Habits" in path.read_text(encoding="utf-8")
-    # Đã migrate đủ → strip, line vẫn còn trong profile block.
     path.write_text(
         f"## Profile\n{PROFILE_AUTO_START}\n- new fact\n- old fact\n{PROFILE_AUTO_END}\n"
         f"## Habits\n{LEGACY_START}\n- old fact\n{LEGACY_END}\n",

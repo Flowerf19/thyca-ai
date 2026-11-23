@@ -49,7 +49,6 @@ def test_seed_daily_entries_fast_matches_via_facade(tmp_path: Path) -> None:
         f_body = fast.facade.archive.get(memory_id=f_id, now=EVAL_NOW).replace(f_id, "ID")
         s_body = slow.facade.archive.get(memory_id=s_id, now=EVAL_NOW).replace(s_id, "ID")
         assert f_body == s_body
-    # Parity check between read-only archive.get and MemoryFacade.get
     assert fast.facade.get(memory_id=fast_ids[0], now=EVAL_NOW) == fast.facade.archive.get(
         memory_id=fast_ids[0], now=EVAL_NOW
     )

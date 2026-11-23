@@ -23,9 +23,6 @@ from thyca.tools.gateway.execution import (
 )
 
 _DRAIN_GRACE_S = 5.0
-# asyncio Process.wait() resolves on pipe disconnect, not process exit (a
-# surviving child can hold stdout forever), so shell exit is detected by
-# polling returncode instead.
 _EXIT_POLL_S = 0.05
 
 
@@ -50,12 +47,10 @@ class _BgProc:
         self.proc = proc
         self.buf = bytearray()
         self.cap = cap
-        # Delta cursor: output bytes already returned to a reader.
         self.consumed = 0
         self.done = asyncio.Event()
         self.timed_out = False
         self.killed = False
-        # Bytes past retention that were never kept (readers see the gap).
         self.overflow = 0
         self.task: asyncio.Task | None = None
 
@@ -74,9 +69,6 @@ class _BgProc:
                         pass
                     break
                 await asyncio.sleep(_EXIT_POLL_S)
-            # After exit (or kill), let the pipe drain briefly: normal children
-            # hit EOF at once, but a grandchild that kept stdout (setsid'd
-            # daemon) must not hold the proc open past this grace.
             if not drain.done():
                 try:
                     await asyncio.wait_for(asyncio.shield(drain), timeout=_DRAIN_GRACE_S)
@@ -158,8 +150,6 @@ class BackgroundProcs:
             await await_done(entry.done, wait_s)
         more = f'read more: tool_read id="{bid}"'
         if offset is not None or limit is not None:
-            # Positional paging never moves the temporal delta cursor (consumed
-            # below): a later plain read may repeat these bytes.
             return render_page(
                 self._decode(bytes(entry.buf), entry.done.is_set()),
                 offset,
@@ -204,12 +194,9 @@ class BackgroundProcs:
     async def kill_all(self) -> None:
         pending: list[asyncio.Task] = []
         for entry in list(self._procs.values()):
-            # Same flag kill() sets: shutdown-killed procs settle failed,
-            # not done, so on_exit listeners see the real outcome.
             entry.killed = True
             entry.kill()
             if entry.task is not None and not entry.task.done():
                 pending.append(entry.task)
         if pending:
             await asyncio.wait(pending, timeout=_DRAIN_GRACE_S)
-

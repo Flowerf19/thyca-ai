@@ -20,7 +20,7 @@ from thyca.tools.gateway import ToolGateway
 from thyca.tools.gateway.background import BackgroundProcs
 from thyca.tools.gateway.gateway import tool_kill_spec, tool_read_spec
 from thyca.tools.path_guard import PathGuard
-from thyca.tools.registry import ToolRegistry
+from thyca.tools.registry import ToolRegistry, ToolSpec
 from thyca.tools.task_store import TaskStore
 
 
@@ -60,19 +60,17 @@ async def test_plain_poll_recovers_via_paging_not_rerun(tmp_path: Path) -> None:
     assert not started.is_error
     exec_id = started.content.splitlines()[0].removeprefix("started: ")
     assert exec_id.startswith("exec")
-    # Full Act -> meta path, like Observe: trusted metadata must survive it.
     polled = await gateway.submit(
         ToolCall(id="c1", name="tool_read", arguments={"id": exec_id, "wait": 10})
     )
     assert not polled.is_error
     assert len(polled.content) > 2500
-    assert 'tool_read id="' not in polled.content  # plain poll: no ID footer
+    assert 'tool_read id="' not in polled.content
     result = _build_result(
         ToolCall(id="c1", name="tool_read", arguments={"id": exec_id}), polled
     )
     stored = tool_message(result, round_no=2)
     assert (stored.meta or {}).get("exec_id") == exec_id
-    # Shrink promises the retained execution, not a rerun.
     estimate = estimate_wire_tokens([stored])
     context = int(estimate / 0.85)
     shrunk, count, _, _ = shrink_stage_messages(
@@ -83,7 +81,6 @@ async def test_plain_poll_recovers_via_paging_not_rerun(tmp_path: Path) -> None:
     )
     assert count == 1
     assert f'tool_read id="{exec_id}"' in (shrunk[0].content or "")
-    # A plain re-poll consumes nothing new; offset/limit recovers bytes.
     again = await gateway.submit(
         ToolCall(id="c2", name="tool_read", arguments={"id": exec_id})
     )
@@ -133,7 +130,6 @@ def test_history_exec_ref_is_conservative() -> None:
     messages = [history, own]
     estimate = estimate_wire_tokens(messages)
     context = int(estimate / 0.85)
-    # exec9 is still retained, but history ids are stale by rule.
     shrunk, count, _, _ = shrink_stage_messages(
         messages,
         current_round=9,
@@ -152,7 +148,6 @@ async def test_tracked_result_carries_exec_ref(tmp_path: Path) -> None:
         await asyncio.sleep(30)
         return "late"
 
-    from thyca.tools.registry import ToolSpec
 
     registry = ToolRegistry()
     registry.register(

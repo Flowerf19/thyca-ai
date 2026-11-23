@@ -52,15 +52,13 @@ last-writer-wins semantics for unrelated fields.
 """
 from __future__ import annotations
 
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator
 
 from filelock import FileLock
 from filelock import Timeout as FileLockTimeout
 
-#: How long a participant waits for the coordination lock before failing
-#: closed (matches the per-file lock timeouts elsewhere).
 LOCK_TIMEOUT_S = 5.0
 
 LOCK_FILENAME = "config_models.lock"

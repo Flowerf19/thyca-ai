@@ -5,16 +5,19 @@ from dataclasses import dataclass, field, replace
 from io import StringIO
 from pathlib import Path
 
+import httpx
 import pytest
-
-from thyca.app.cli import Cli
-from thyca.configs import ModelCfg, McpServerCfg, default_config, load, save
 from seeded_config import seeded_config
-from thyca.llms.llm_base import ChatReply, LLMError
+
+from thyca.app.chat_app import ChatApp, ConnectFactory
+from thyca.app.cli import Cli
+from thyca.bots.card import BotCard
+from thyca.configs import McpServerCfg, ModelCfg, ProviderEntry, default_config, load, save
+from thyca.conversations.runtime import ConversationManager
 from thyca.core.protocol import Message, ToolCall
+from thyca.llms.llm_base import ChatReply, LLMError
 from thyca.tools.mcp import StartupDiagnostic
 from thyca.tools.registry import ToolSpec
-from thyca.conversations.runtime import ConversationManager
 
 
 @dataclass
@@ -33,8 +36,6 @@ class FakeLLM:
 def _cli(tmp_path: Path, connect, stdin: str = "") -> tuple[Cli, StringIO, StringIO]:
     out = StringIO()
     err = StringIO()
-    # Runnable fixture config; tests with their own config overwrite it.
-    # Only seed when the test has not written one already.
     if not (tmp_path / "config.json").exists():
         save(seeded_config(), tmp_path / "config.json")
     cli = Cli(
@@ -284,8 +285,6 @@ def test_print_llm_error_is_safe(tmp_path: Path) -> None:
 
 
 def test_cli_factory_receives_registered_provider(tmp_path: Path, monkeypatch) -> None:
-    from thyca.app.chat_app import ConnectFactory
-    from thyca.configs import ModelCfg, ProviderEntry
 
     cfg = replace(
         default_config(),
@@ -319,9 +318,7 @@ def test_cli_factory_receives_registered_provider(tmp_path: Path, monkeypatch) -
 def test_print_model_override_routes_to_its_provider_http_auth(
     tmp_path: Path, monkeypatch
 ) -> None:
-    import httpx
 
-    from thyca.configs import ModelCfg, ProviderEntry
 
     calls_a: list[dict] = []
     calls_b: list[dict] = []
@@ -418,12 +415,9 @@ def test_default_opens_thyca_dm(tmp_path: Path) -> None:
 
 
 def test_default_opens_dm_despite_newer_group(tmp_path: Path) -> None:
-    from thyca.app.chat_app import ChatApp
 
     cli, _out, _err = _cli(tmp_path, FakeLLM(ChatReply(content="hi")))
     assert cli.main(["-p", "first"]) == 0
-    # A newer group exists (e.g. from serve); the default still opens the DM.
-    from thyca.bots.card import BotCard
 
     app = ChatApp(tmp_path, load(tmp_path / "config.json"),
                   connect=FakeLLM(ChatReply(content="x")))
@@ -448,11 +442,9 @@ def test_default_opens_dm_despite_newer_group(tmp_path: Path) -> None:
 
 
 def test_group_flag_loads_group_by_id(tmp_path: Path) -> None:
-    from thyca.app.chat_app import ChatApp
 
     cli, _out, _err = _cli(tmp_path, FakeLLM(ChatReply(content="hi")))
     assert cli.main(["-p", "first"]) == 0
-    from thyca.bots.card import BotCard
 
     app = ChatApp(tmp_path, load(tmp_path / "config.json"),
                   connect=FakeLLM(ChatReply(content="x")))

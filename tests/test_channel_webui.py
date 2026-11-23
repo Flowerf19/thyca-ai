@@ -14,19 +14,19 @@ import time
 from pathlib import Path
 
 import pytest
+from seeded_config import seeded_config
 
-from thyca.app.chat_app import ChatApp
+from thyca.app.chat_app import ChatApp, InvalidTurnText
 from thyca.app.loop_turns import TurnCancelled
 from thyca.app.webui_channel import WebUIChannelAdapter
 from thyca.bots.card import BotCard
 from thyca.bots.workspace_store import WorkspaceStore
 from thyca.configs import load, save
-from seeded_config import seeded_config
+from thyca.conversations.runtime import ConversationManager
+from thyca.conversations.runtime.store import ConversationStore
 from thyca.core.protocol import Message, ToolCall, parse_ts
 from thyca.llms.llm_base import ChatReply, LLMError
 from thyca.serve.turn_state import TurnHub
-from thyca.conversations.runtime import ConversationManager
-from thyca.conversations.runtime.store import ConversationStore
 
 
 def _chat(tmp_path: Path, connect=None) -> ChatApp:
@@ -141,8 +141,6 @@ def test_retry_keeps_single_user_row_and_new_reply(tmp_path: Path) -> None:
         replies = [row.get("content") for row in second["messages"]
                    if row.get("role") == "assistant"
                    and str(row.get("content") or "").startswith("reply-")]
-        # Append-only store: retry never rewrites history, so the first
-        # reply stays and the new reply is the latest one (single user).
         assert replies == ["reply-1", "reply-2"]
         assert second["reply"] == "reply-2"
     finally:
@@ -388,7 +386,6 @@ class _CrossLLM:
 
 
 def test_turn_rejects_nonstr_text_before_any_write(tmp_path: Path) -> None:
-    from thyca.app.chat_app import InvalidTurnText
 
     app = _chat(tmp_path, connect=_ToolCaptureLLM())
     try:

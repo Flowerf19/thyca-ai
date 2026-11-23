@@ -18,20 +18,20 @@ from thyca.agents.observe import Observe
 from thyca.agents.think import LLMPort, Think
 from thyca.app.summarizing import LlmSummarizer
 from thyca.configs import Config
-from thyca.llms.prompt_manager import PromptManager
 from thyca.conversations.runtime import ConversationManager
-from thyca.tools.builtin import register_file_tools
-from thyca.tools.gateway.background import BackgroundProcs
-from thyca.tools.gateway import ToolGateway
-from thyca.tools.gateway.policy import Policy
-from thyca.tools.gateway.gateway import tool_kill_spec, tool_read_spec
-from thyca.tools.mcp import MCPManager, StartupDiagnostic
+from thyca.llms.prompt_manager import PromptManager
 from thyca.memories.facade import MemoryFacade
+from thyca.tools.builtin import register_file_tools
+from thyca.tools.conversation_tools import register_conversation_tools
+from thyca.tools.gateway import ToolGateway
+from thyca.tools.gateway.background import BackgroundProcs
+from thyca.tools.gateway.gateway import tool_kill_spec, tool_read_spec
+from thyca.tools.gateway.policy import Policy
+from thyca.tools.mcp import MCPManager, StartupDiagnostic
 from thyca.tools.memory_tools import register_memory_tools
 from thyca.tools.path_guard import PathGuard
 from thyca.tools.profile_tools import register_profile_tools
 from thyca.tools.registry import ToolRegistry
-from thyca.tools.conversation_tools import register_conversation_tools
 from thyca.tools.task_store import TaskStore
 
 

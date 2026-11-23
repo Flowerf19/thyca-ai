@@ -1,4 +1,7 @@
 """WS-4: PrivateFollowupStore state machine + ownership rules."""
+import json
+import json as _json
+import os
 from pathlib import Path
 
 import pytest
@@ -8,6 +11,7 @@ from thyca.bots.private_followups import (
     PrivateFollowupError,
     PrivateFollowupStore,
 )
+from thyca.bots.workspace_store import WorkspaceStore, WorkspaceStoreError
 
 
 def _mk(store: PrivateFollowupStore, bot: str = "coder", **kw):
@@ -39,8 +43,6 @@ def test_state_transitions(tmp_path: Path) -> None:
     p = store.receive("coder", p.pending_id, answer_event_id="e1",
                       answer_ref="dm:1", idempotency_key="e1")
     assert p.status == "received"
-    # Exact replay (same event + ref + key) is idempotent; a changed
-    # payload under the same key is a conflict, not a dedup.
     assert store.receive("coder", p.pending_id, answer_event_id="e1",
                          answer_ref="dm:1",
                          idempotency_key="e1").status == "received"
@@ -54,12 +56,9 @@ def test_state_transitions(tmp_path: Path) -> None:
     assert p.requested_outcome == "resume" and p.proposal_revision == 1
     p = store.approve("coder", p.pending_id, revision=1,
                       idempotency_key="m1")
-    # Two-stage: approval only RECORDS authorization; the group row must
-    # land before finalize marks resumed.
     assert p.status == "received" and p.approved_revision == 1
     p = store.finalize_resumed("coder", p.pending_id, posted_marker="m1")
     assert p.status == "resumed"
-    # Idempotent finalization: same marker returns the terminal state.
     assert store.finalize_resumed("coder", p.pending_id,
                                   posted_marker="m1").status == "resumed"
     with pytest.raises(PrivateFollowupError):
@@ -146,18 +145,17 @@ def test_restart_same_state(tmp_path: Path) -> None:
 
 
 def test_ownership_record_and_fallback(tmp_path: Path) -> None:
-    from thyca.bots.workspace_store import WorkspaceStore
+
 
     store = WorkspaceStore(tmp_path)
     store.record_task_owner("coder", "task-aabb1122", "coder")
     assert store.task_owner("coder", "task-aabb1122") == "coder"
     assert store.task_owner("coder", "task-ffffffff") is None
-    with pytest.raises(Exception):
+    with pytest.raises(WorkspaceStoreError, match="invalid work id"):
         store.record_task_owner("coder", "not-a-task", "coder")
     doc = (tmp_path / "bots" / "coder" / "workspace" / "registry.json")
-    import json
     assert json.loads(doc.read_text())["task_owners"]["task-aabb1122"] == "coder"
-    with pytest.raises(Exception):
+    with pytest.raises(WorkspaceStoreError, match="already owned"):
         store.record_task_owner("coder", "task-aabb1122", "helper")
 
 
@@ -225,9 +223,8 @@ def test_finalize_without_auth_or_wrong_marker_fails(tmp_path: Path) -> None:
 
 def test_malformed_persisted_fields_error(tmp_path: Path) -> None:
     store = PrivateFollowupStore(tmp_path)
-    p = _mk(store)
+    _mk(store)
     path = tmp_path / "bots" / "coder" / "workspace" / "private_followups.json"
-    import json as _json
     doc = _json.loads(path.read_text())
     doc["pending"][0]["work_id"] = "bogus"
     path.write_text(_json.dumps(doc))
@@ -248,7 +245,6 @@ def test_malformed_persisted_fields_error(tmp_path: Path) -> None:
 
 
 def test_write_permission_failure_propagates(tmp_path: Path) -> None:
-    import os, stat
     if hasattr(os, "geteuid") and os.geteuid() == 0:
         pytest.skip("permission bits do not block uid 0; run as non-root")
     store = PrivateFollowupStore(tmp_path)

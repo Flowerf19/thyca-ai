@@ -8,8 +8,8 @@ from thyca.bots.context import (
     bind_bot_turn_context,
     reset_bot_turn_context,
 )
-from thyca.tools.registry import ToolRegistry
 from thyca.tools.conversation_tools import compact_spec, register_conversation_tools
+from thyca.tools.registry import ToolRegistry
 
 
 def test_compact_unavailable_outside_bot_turn() -> None:

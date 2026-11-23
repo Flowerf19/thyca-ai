@@ -27,9 +27,6 @@ WEBUI = ROOT / "thyca" / "webui" / "ui"
 DASH_JS = WEBUI / "dashboard" / "js" / "dashboard.js"
 UTIL_JS = WEBUI / "share" / "util.js"
 
-# Same stub surface as test_cost_journal.py / test_request_chart.py plus
-# toast capture: real util.js semantics for $/$$/escapeHTML/icon, a per-id
-# element registry, and the data-layer globals dashboard.js expects.
 STUBS = r"""
 class El {
   constructor(tag = 'div') {
@@ -163,14 +160,11 @@ def test_page_markup_covers_every_region() -> None:
     ):
         assert needle in src, needle
     assert 'class="token-summary-grid"' not in src
-    # Default range preset is "7 ngày" — only that chip starts pressed.
     assert re.search(
         r'data-preset="7"[^>]*aria-pressed="true"', src)
     assert not re.search(
         r'data-preset="(?:1|30)"[^>]*aria-pressed="true"', src)
-    # Classic script — no ESM syntax.
-    assert not re.search(r"^\s*(import|export)\s", src, re.M)
-    # Errors surface in the page's own scoped red, not chat's global class.
+    assert not re.search(r"^\s*(import|export)\s", src, re.MULTILINE)
     assert "'s-error'" in src
 
 
@@ -208,13 +202,10 @@ def test_boot_fetches_stats_and_first_page_for_last_7_days(node: str) -> None:
     assert "model=" not in stats_url and "status=" not in stats_url
     assert traces_url.startswith("/api/traces?")
     assert "limit=15" in traces_url and "offset=0" in traces_url
-    # Last-7-days local range landed in the inputs and the note.
     assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", out["from"])
     assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", out["to"])
     assert out["from"] <= out["to"]
     assert out["note"].startswith("Kỳ ")
-    # After bootShell() the roster patched the already-rendered bot row:
-    # seal + display name, not the id-chip fallback.
     assert "<ava:coder/>" in out["botHtml"] and ">Coder</span>" in out["botHtml"]
     assert "Chưa gắn bot" not in out["botHtml"]
 
@@ -387,7 +378,7 @@ def test_trace_row_escapes_and_deep_links(node: str) -> None:
     assert '&lt;img src=x onerror=alert(1)&gt;' in html
     assert '&lt;b&gt;m&lt;/b&gt;' in html
     assert 'data-conv="dm:s &lt;x&gt;"' in html and 'data-turn="0"' in html
-    assert "s &lt;x&gt;" in html  # bot id escaped in the row identity
+    assert "s &lt;x&gt;" in html
 
 
 def test_status_chip_maps_the_four_statuses(node: str) -> None:
@@ -487,7 +478,6 @@ def test_fill_filters_keep_selection_and_add_extra_statuses(node: str) -> None:
     assert out["mCur"] == "m2"
     assert out["sVals"] == [
         "", "completed", "failed", "context_limit", "loop_limit", "paused"]
-    # A second fill without extras drops them again, statuses stay.
     assert out["sValsAfter"] == [
         "", "completed", "failed", "context_limit", "loop_limit"]
 
@@ -515,13 +505,10 @@ def test_formatters_vi_vn_and_edges(node: str) -> None:
         "  relTime('nope')] }))",
     )
     assert out["ints"] == ["1.200.000", "70.607.522", "0", "—", "—"]
-    # Tiered USD precision: 6 decimals under $0.01, 4 under $1, else 2.
-    # A real recorded zero is $0, never the missing-data dash.
     assert out["cost"] == ["$0.0123", "$0.001234", "$0.000000", "$0.5000",
                             "$12.35", "$2.00", "$0.000001",
                             "—", "—", "—", "—"]
     assert out["share"] == ["25%", "7,5%", "0%"]
-    # A negative number is still a finite number — printed as-is.
     assert out["durs"] == ["999 ms", "1 giây", "1,5 giây",
                            "1 ph 30 giây", "-1 ms", "—"]
     assert out["dt"][0] == "—"
@@ -530,7 +517,7 @@ def test_formatters_vi_vn_and_edges(node: str) -> None:
     assert out["rel"][1] == "5 phút trước"
     assert out["rel"][2] == "3 giờ trước"
     assert out["rel"][3] == "2 ngày trước"
-    assert "thg" in out["rel"][4]      # absolute date past 31 days
+    assert "thg" in out["rel"][4]
     assert out["rel"][5] == "—"
 
 
@@ -570,12 +557,12 @@ def test_render_stats_paints_every_region(node: str) -> None:
     assert out["grid"] > 0
     assert 'class="day-chart"' in out["day"]
     assert 'class="hour-chart"' in out["hour"]
-    assert out["hour"].count('class="hc-col"') == 24      # always 24 UTC cols
+    assert out["hour"].count('class="hc-col"') == 24
     assert "09:00–09:59" in out["hour"]
     assert "Coder" in out["bot"] or "coder" in out["bot"]
     assert '>m</span>' in out["model"] or '"m"' in out["model"]
-    assert out["mOpts"] == 2                             # all-models + m
-    assert out["sOpts"] == 5                             # all + 4 statuses
+    assert out["mOpts"] == 2
+    assert out["sOpts"] == 5
 
 
 def test_usage_input_total_excludes_cache_read(node: str) -> None:

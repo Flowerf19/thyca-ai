@@ -1,24 +1,31 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
+import asyncio as aio
+import time
+from pathlib import Path
 
 import pytest
 
-from pathlib import Path
-
-from thyca.core.protocol import ToolCall, ToolResult
+from thyca.core.protocol import ToolCall, ToolResult, truncate_to_cap
 from thyca.tools.builtin import register_file_tools
-from thyca.tools.gateway.background import BackgroundProcs
+from thyca.tools.builtin.bash import parse_timeout
 from thyca.tools.gateway import Execution, ToolGateway
+from thyca.tools.gateway.background import BackgroundProcs
 from thyca.tools.gateway.execution import (
+    await_done,
     cap_reply,
+    head_bytes,
     page_lines,
     parse_limit,
     parse_offset,
     parse_wait,
+    render_exit,
+    render_page,
+    require_id,
+    unknown_id,
 )
-from thyca.tools.gateway.gateway import _RETAIN_CAP
+from thyca.tools.gateway.gateway import _RETAIN_CAP, tool_kill_spec, tool_read_spec
 from thyca.tools.gateway.policy import Policy, PolicyDenied
 from thyca.tools.path_guard import PathGuard
 from thyca.tools.registry import ToolRegistry, ToolSpec
@@ -76,9 +83,6 @@ async def _submit(gateway: ToolGateway, name: str, **args):
     return await gateway.submit(ToolCall(id="t1", name=name, arguments=args))
 
 
-# --- submit: policy seam ---
-
-
 @pytest.mark.asyncio
 async def test_policy_default_allows() -> None:
     gateway, registry = _gateway()
@@ -121,9 +125,6 @@ async def test_policy_deny_empty_message_falls_back() -> None:
     result = await _submit(gateway, "echo", text="x")
     assert result.is_error
     assert result.content == "denied by policy"
-
-
-# --- submit: equivalence with registry.dispatch ---
 
 
 @pytest.mark.asyncio
@@ -207,9 +208,6 @@ async def test_same_resource_serializes_different_keys_overlap() -> None:
         gateway.submit(ToolCall(id="d", name="echo", arguments={"text": "two"})),
     )
     assert events[0].startswith("start-") and events[1].startswith("start-")
-
-
-# --- submit: fast path + unified ids ---
 
 
 @pytest.mark.asyncio
@@ -310,9 +308,6 @@ async def test_on_exit_fires_on_settle() -> None:
     assert sorted(seen) == [("exec1", "done"), ("exec2", "failed")]
 
 
-# --- caps: head+tail with marker ---
-
-
 @pytest.mark.asyncio
 async def test_huge_output_caps_head_tail_with_marker() -> None:
     async def huge(args: dict) -> str:
@@ -365,9 +360,6 @@ def test_cap_reply_tracked_pointer_names_read_more() -> None:
     clipped = cap_reply("A" * 40_000, more='read more: tool_read id="exec1"')
     assert "[... clipped 7232 bytes" in clipped
     assert 'read more: tool_read id="exec1"' in clipped
-
-
-# --- read: status + output + paging ---
 
 
 @pytest.mark.asyncio
@@ -480,9 +472,6 @@ async def test_overflow_disclosed_and_gap_honest() -> None:
     )
 
 
-# --- kill ---
-
-
 @pytest.mark.asyncio
 async def test_kill_unknown_id_lists_known() -> None:
     gateway, registry = _gateway(soft=1)
@@ -518,9 +507,6 @@ async def test_kill_finished_execution_reports_status() -> None:
     assert await gateway.kill("exec1") == "exec1 already done"
 
 
-# --- shutdown ---
-
-
 @pytest.mark.asyncio
 async def test_shutdown_cancels_tasks_and_kills_procs(tmp_path: Path) -> None:
     store = TaskStore()
@@ -542,9 +528,6 @@ async def test_shutdown_cancels_tasks_and_kills_procs(tmp_path: Path) -> None:
     assert task_handle.cancelled()
     assert proc_entry.done.is_set()
     assert proc_entry.proc.returncode is not None
-
-
-# --- shared read-validation + paging units ---
 
 
 def test_parse_wait_offset_limit() -> None:
@@ -581,9 +564,6 @@ def test_page_lines_shapes() -> None:
     assert "past the 10 retained lines; 12 bytes past retention were not stored" in gap
 
 
-# --- F35: gateway eviction (executions + locks) ---
-
-
 def _fast_gateway(soft: int = 0) -> tuple[ToolGateway, ToolRegistry]:
     async def echo(args: dict) -> str:
         return str(args.get("text", ""))
@@ -618,10 +598,9 @@ async def test_f35_slow_submits_stay_bounded_and_untrack_engines() -> None:
         for i in range(_RETAIN_CAP + 5):
             result = await gateway.submit(ToolCall(id=f"t{i}", name="gated", arguments={}))
             assert "still running" in result.content
-        assert len(gateway.executions) == _RETAIN_CAP + 5  # all running: no victim
+        assert len(gateway.executions) == _RETAIN_CAP + 5
         gate.set()
         await asyncio.sleep(0.2)
-        # One more retain triggers a final eviction now that all have settled.
         gate.clear()
         await gateway.submit(ToolCall(id="t-last", name="gated", arguments={}))
         gate.set()
@@ -634,7 +613,6 @@ async def test_f35_slow_submits_stay_bounded_and_untrack_engines() -> None:
     newest = f"exec{_RETAIN_CAP + 6}"
     assert newest in gateway.executions
     assert "exec1" not in gateway.executions
-    # Engine state went with the victims: no orphan task entries.
     assert len(gateway._tasks.known_ids()) == _RETAIN_CAP
     assert "exec1" not in gateway._tasks.known_ids()
 
@@ -673,7 +651,6 @@ async def test_f35_locks_lru_capped_and_held_lock_survives() -> None:
     for i in range(_RETAIN_CAP):
         await gateway._lock_for(f"k{i}")
     assert len(gateway._locks) == _RETAIN_CAP
-    # Re-touched key becomes newest; next inserts evict the oldest untouched.
     await gateway._lock_for("k0")
     for i in range(_RETAIN_CAP, _RETAIN_CAP + 6):
         await gateway._lock_for(f"k{i}")
@@ -692,14 +669,7 @@ async def test_f35_locks_lru_capped_and_held_lock_survives() -> None:
         held.release()
 
 
-# Moved from test_b4_unification.py / test_b4_p2.py (B4 batch).
 async def test_x3_gateway_reports_arg_error_not_coercion(tmp_path: Path) -> None:
-    from thyca.core.protocol import ToolCall
-    from thyca.tools.builtin import register_file_tools
-    from thyca.tools.gateway import ToolGateway
-    from thyca.tools.path_guard import PathGuard
-    from thyca.tools.registry import ToolRegistry
-    from thyca.tools.task_store import TaskStore
 
     registry = ToolRegistry()
     register_file_tools(registry, PathGuard(tmp_path), None)
@@ -712,8 +682,6 @@ async def test_x3_gateway_reports_arg_error_not_coercion(tmp_path: Path) -> None
 
 
 def test_x6_gateway_head_bytes_delegates() -> None:
-    from thyca.core.protocol import truncate_to_cap
-    from thyca.tools.gateway.execution import head_bytes
 
     blobs = [b"", b"a", b"a" * 100, "éàü".encode() * 40, bytes(range(1, 256))]
     for blob in blobs:
@@ -722,7 +690,6 @@ def test_x6_gateway_head_bytes_delegates() -> None:
 
 
 def test_x27_unknown_id_messages() -> None:
-    from thyca.tools.gateway.execution import unknown_id
 
     assert (
         str(unknown_id("task", "t9", ["t1", "t2"]))
@@ -733,7 +700,6 @@ def test_x27_unknown_id_messages() -> None:
 
 
 def test_x27_render_page_full_and_paged() -> None:
-    from thyca.tools.gateway.execution import render_page
 
     assert render_page("short", None, None, more="m") == "short"
     page = render_page("\n".join(f"l{i}" for i in range(10)), 2, 3, more="m")
@@ -741,9 +707,7 @@ def test_x27_render_page_full_and_paged() -> None:
 
 
 def test_x27_await_done_and_require_id() -> None:
-    import asyncio as aio
 
-    from thyca.tools.gateway.execution import await_done, require_id
 
     async def main() -> None:
         done = aio.Event()
@@ -760,7 +724,6 @@ def test_x27_await_done_and_require_id() -> None:
 
 
 def test_x27_render_exit_policies() -> None:
-    from thyca.tools.gateway.execution import render_exit
 
     assert render_exit(None, "body", False) == "exit: 124\nbody"
     assert render_exit(-9, "body", True) == "exit: -9\ntimed_out: true\nbody"
@@ -768,8 +731,6 @@ def test_x27_render_exit_policies() -> None:
 
 
 def test_x27_one_int_coercion() -> None:
-    from thyca.tools.builtin.bash import parse_timeout
-    from thyca.tools.gateway.execution import parse_limit, parse_offset, parse_wait
 
     assert parse_wait(5.0) == 5
     assert parse_offset(2.0) == 2
@@ -783,13 +744,6 @@ def test_x27_one_int_coercion() -> None:
 
 
 async def test_m3_detached_execution_drops_task_entry(tmp_path: Path) -> None:
-    from thyca.core.protocol import ToolCall
-    from thyca.tools.builtin import register_file_tools
-    from thyca.tools.gateway import ToolGateway
-    from thyca.tools.gateway.background import BackgroundProcs
-    from thyca.tools.path_guard import PathGuard
-    from thyca.tools.registry import ToolRegistry
-    from thyca.tools.task_store import TaskStore
 
     background = BackgroundProcs()
     registry = ToolRegistry()
@@ -810,10 +764,6 @@ async def test_m3_detached_execution_drops_task_entry(tmp_path: Path) -> None:
     finally:
         await gateway.shutdown()
 
-
-# Moved from tests/test_b2_contracts.py (B2 batch).
-import time
-from thyca.tools.gateway.gateway import tool_kill_spec, tool_read_spec
 
 def _stack(root: Path, background: BackgroundProcs | None, soft: int = 60):
     store = TaskStore()
@@ -868,8 +818,6 @@ async def test_hard_at_soft_edge_tracks_deterministically(tmp_path: Path) -> Non
                 id="t1",
                 name="bash",
                 arguments={
-                    # setsid'd grandchild holds stdout past the hard kill, so
-                    # settle lands after the 1s soft deadline, deterministically.
                     "command": "setsid sleep 2 & sleep 30",
                     "timeout": 1,
                 },

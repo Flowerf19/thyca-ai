@@ -7,9 +7,10 @@ the serve layer, scheduler, and internal callers are untouched.
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
 
 from thyca.agents.compacting import compact_with_llm
@@ -20,9 +21,18 @@ from thyca.app.turn_options import (
     resolve_bot_provider,
 )
 from thyca.bots.context import current_bot_turn_context
+from thyca.bots.private_followups import PrivateFollowupStore
 from thyca.bots.registry import RegistryError
+from thyca.conversations.runtime import (
+    ConversationBusy,
+    ConversationManager,
+    ConversationRuntime,
+    calibration_factor,
+)
+from thyca.conversations.store.admin import AdminStore
+from thyca.conversations.store.contracts import normalize_group_title
+from thyca.conversations.store.runtime import resolve_ref
 from thyca.llms.llm_factory import ConnectFactory
-from thyca.conversations.runtime import ConversationRuntime, ConversationManager, calibration_factor
 
 if TYPE_CHECKING:
     from thyca.app.webui_channel import WindowRef
@@ -72,14 +82,6 @@ class ConversationAdminService:
         self._deps = deps
 
     def create(self, bots: list[str] | None = None, title: str | None = None) -> dict:
-        # Do not wait on any turn: create/list stay responsive while an LLM
-        # call is in flight. Blank conversations belonging to a running turn must
-        # survive the prune — its transcript is still empty on disk. Blank
-        # bot DMs survive it too (discard_empty keeps ``dm_bot`` conversations:
-        # a lazily created DM is blank until its first turn).
-        # Phase 2B user-facing model: exactly dm or group. Only None or
-        # an empty list means Thyca's DM; anything else goes to validation
-        # as-is (a stray string must hit the list check, not split chars).
         if bots is None or bots == []:
             bots = ["thyca"]
         participants = self._clean_participants(bots)
@@ -90,7 +92,6 @@ class ConversationAdminService:
     def _create_group_conversation(self, participants: list[str],
                                    title: str | None = None) -> dict:
         """Fresh multi-bot group conversation (phase 2B; callers validated)."""
-        from thyca.conversations.store.contracts import normalize_group_title
 
         cleaned = normalize_group_title(title)
         self._deps.conversations.discard_empty(keep=set(self._deps.turns.snapshot()))
@@ -105,7 +106,6 @@ class ConversationAdminService:
 
     def rename_group(self, conversation_id: str, title: str | None) -> dict:
         """Set (or clear, with a blank title) one group's display title."""
-        from thyca.conversations.store.contracts import normalize_group_title
 
         cleaned = normalize_group_title(title)
         conversation = self._deps.conversations.store.load(conversation_id)
@@ -125,22 +125,18 @@ class ConversationAdminService:
         self._deps.turns.delete_unclaimed(self._deps.conversations, conversation_id)
         self._deps.agent_status.forget_room(conversation_id)
 
-    # Remove one bot from every group, refusing busy groups.
     def prune_bot_from_groups(self, bot_id: str) -> PruneResult:
-        # Fail closed when a touched group has a turn or compaction in
-        # flight, then prune in one store transaction: survivors keep the
-        # reduced roster, groups left empty dissolve.
-        from thyca.conversations.runtime import ConversationBusy
-        from thyca.conversations.store.admin import AdminStore
 
         admin = AdminStore(self._deps.root)
         touched: list[str] = []
         offset = 0
         while True:
             items, has_more = admin.list(limit=200, offset=offset)
-            for row in items:
-                if row.ref.kind == "group" and bot_id in tuple(row.participants):
-                    touched.append(row.ref.id)
+            touched.extend(
+                row.ref.id
+                for row in items
+                if row.ref.kind == "group" and bot_id in tuple(row.participants)
+            )
             if not has_more or not items:
                 break
             offset += 200
@@ -149,9 +145,7 @@ class ConversationAdminService:
                 raise ConversationBusy(group_id)
         return admin.prune_bot_from_groups(bot_id)
 
-    # Delete one group door, refusing DM doors by stored kind.
     def delete_group(self, group_id: str) -> None:
-        from thyca.conversations.store.runtime import resolve_ref
 
         ref = resolve_ref(self._deps.root, group_id)
         if ref.kind != "group":
@@ -183,7 +177,6 @@ class ConversationAdminService:
         try:
             per_bot: dict[str, dict] = {}
             for bot_id in room.bots or ["thyca"]:
-                # A deleted bot has no card to resolve.
                 doc = self._deps.bots.get(bot_id)
                 if not doc.ok or doc.card is None:
                     per_bot[bot_id] = {
@@ -289,7 +282,6 @@ class ConversationAdminService:
         *,
         bot_id: str,
     ) -> dict:
-        # Compaction runs as this bot: skip when its card is gone.
         doc = self._deps.bots.get(bot_id)
         if not doc.ok or doc.card is None:
             return {"compacted": False, "skipped": "bot_unavailable"}
@@ -342,11 +334,8 @@ class ConversationAdminService:
         """
         if action not in ("add", "remove"):
             raise ValueError("action must be add|remove")
-        # Adding needs a live card; removing a deleted bot from the
-        # roster must still work for orphan groups.
         if action == "add":
             card = self._deps.bots.require(bot_id)
-            # Paused bots cannot join, but must always be removable.
             if card.paused:
                 raise RegistryError(f"bot is paused: {bot_id}")
         conversation = self._deps.conversations.store.load(conversation_id)
@@ -405,11 +394,6 @@ class ConversationAdminService:
         card = self._deps.bots.require(bot_id)
         if card.paused:
             raise RegistryError(f"bot is paused: {bot_id}")
-        # Shared helper owns find-or-create; this lock keeps the
-        # concurrent one-DM guarantee (the helper itself is lock-free).
-        # Prune only on the create path: an existing DM returns at once
-        # (rework 2B — pruning on every lookup could eat a freshly made
-        # blank group when opening another bot's DM).
         with self._deps.dm_lock:
             for conversation in self._deps.conversations.list_conversations():
                 if conversation.dm_bot == bot_id:
@@ -418,7 +402,6 @@ class ConversationAdminService:
             ctx = current_bot_turn_context()
             if ctx is not None and ctx.room_id:
                 keep.add(ctx.room_id)
-            from thyca.bots.private_followups import PrivateFollowupStore
 
             pf_store = PrivateFollowupStore(self._deps.root)
             for other in self._deps.bots.list():

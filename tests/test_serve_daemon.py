@@ -12,11 +12,13 @@ from thyca.llms.llm_base import ChatReply
 from thyca.serve import ServeError
 from thyca.serve.daemon import (
     claim_server_lock,
+    daemonize,
     pid_alive,
     pid_file,
     running_pid,
     stop_daemon,
 )
+from thyca.serve.server import _is_loopback
 
 
 def test_stale_pidfile_is_cleared(tmp_path: Path) -> None:
@@ -61,19 +63,16 @@ def test_cli_daemon_and_stop_flags(tmp_path: Path) -> None:
 
 
 def test_double_daemonize_before_pidfile_raises(tmp_path: Path, monkeypatch) -> None:
-    from thyca.serve.daemon import daemonize
 
     class _Exited(Exception):
         pass
 
-    monkeypatch.setattr(os, "fork", lambda: 1)  # parent branch, no real fork
+    monkeypatch.setattr(os, "fork", lambda: 1)
     monkeypatch.setattr(
         os, "_exit", lambda code: (_ for _ in ()).throw(_Exited())
     )
     with pytest.raises(_Exited):
-        daemonize(tmp_path)  # claims the start lock, then "parent" exits
-    # The grandchild never ran, so no pidfile — but the start is claimed:
-    # the leaked lock fd stands in for the in-flight daemon.
+        daemonize(tmp_path)
     assert not pid_file(tmp_path).is_file()
     with pytest.raises(ServeError, match="already running"):
         daemonize(tmp_path)
@@ -120,8 +119,6 @@ def test_foreground_serve_starts_when_unclaimed(tmp_path: Path, monkeypatch) -> 
     assert _cli.main(["--serve", "--port", "19599"]) == 0
     assert len(calls) == 1
     assert calls[0]["port"] == 19599
-    # Foreground runs do not own the pidfile (the daemon does); the flock
-    # is what blocks a second instance.
     assert not pid_file(tmp_path).exists()
 
 
@@ -136,7 +133,7 @@ def test_foreground_serve_rejects_running_daemon_pidfile(tmp_path: Path, monkeyp
 
 def test_foreground_serve_rejects_held_serve_lock(tmp_path: Path, monkeypatch) -> None:
     calls = _stub_serve_components(monkeypatch)
-    held = claim_server_lock(tmp_path)  # stands in for a live server
+    held = claim_server_lock(tmp_path)
     try:
         _cli, _out, err = _serve_cli(tmp_path)
         assert _cli.main(["--serve", "--port", "19599"]) == 1
@@ -153,14 +150,11 @@ def test_claim_server_lock_excludes_second_holder(tmp_path: Path) -> None:
             claim_server_lock(tmp_path)
     finally:
         os.close(first)
-    # Released with the fd: a fresh claim succeeds again.
     second = claim_server_lock(tmp_path)
     os.close(second)
 
 
-# Moved from test_b4_unification.py / test_b4_p2.py (B4 batch).
 def test_m7_loopback_covers_all_loopback_ips() -> None:
-    from thyca.serve.server import _is_loopback
 
     assert _is_loopback("127.0.0.1")
     assert _is_loopback("127.0.0.2")

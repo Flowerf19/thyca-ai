@@ -199,8 +199,6 @@ def exchange_ui(node: str) -> dict:
 
 def test_room_hides_a2a_exchange_rows(exchange_ui: dict) -> None:
     room = exchange_ui["room"]
-    # No inline exchange entry and no plain exchange bubbles: only the
-    # owner's ordinary reply bubble renders.
     assert room["folds"] == 0
     assert room["bubbles"] == 1
 
@@ -225,8 +223,6 @@ def test_dm_exchange_perspective_switches_and_paints_partner(exchange_ui: dict) 
 
 
 def test_dm_group_entry_shows_last_exchange_time(exchange_ui: dict) -> None:
-    # last_ts 2026-10-26T10:03:00Z renders as HH:MM like message times,
-    # with the full timestamp kept in the datetime attribute.
     assert exchange_ui["dm"]["times"] == [
         [exchange_ui["dm"]["expectedTime"], "2026-10-26T10:03:00Z"]
     ]
@@ -239,15 +235,13 @@ def test_dm_group_entry_sits_at_its_last_exchange_time(exchange_ui: dict) -> Non
     order = exchange_ui["dm"]["order"]
     assert order[0].startswith("trước")
     assert order[1] == "helper"
-    assert order[2].startswith("Thyca")  # the 11:00 assistant message
+    assert order[2].startswith("Thyca")
     newest = exchange_ui["dmNewest"]["order"]
     assert newest[-1] == "helper"
 
 
 def test_dm_hides_exchange_rows_behind_group_entry(exchange_ui: dict) -> None:
     hidden = exchange_ui["dmHidden"]
-    # No inline peer-exchange block and no plain exchange bubbles:
-    # only the owner's ordinary reply bubble plus the group entry.
     assert hidden["folds"] == 0
     assert hidden["bubbles"] == 1
     assert hidden["groups"] == ["helper"]

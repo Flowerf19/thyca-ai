@@ -9,14 +9,27 @@ identical signatures; the deliverer hook installs the service method.
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any
 
 from thyca.bots.bus import new_span_id
 from thyca.bots.workspace import WorkspaceTurnConflict
+from thyca.conversations.runtime import ConversationManager, ConversationRuntime
+from thyca.conversations.runtime.manager import _manager_runtime_root
+from thyca.conversations.store import write_adapter as _write_adapter
+from thyca.conversations.store.runtime import (
+    RuntimeWriteIntent,
+    resolve_ref,
+)
 from thyca.core.protocol import Message
-from thyca.conversations.runtime import ConversationRuntime, ConversationManager
+from thyca.memories.visibility import (
+    MemoryView,
+    bound_memory_view,
+)
+from thyca.memories.visibility import current_memory_view as _cmv
+from thyca.memories.visibility import current_memory_view as _cmv2
 
 if TYPE_CHECKING:
     from thyca.app.webui_channel import WindowRef
@@ -71,11 +84,7 @@ class A2ADeliveryService:
         recorded into the origin DM transcript so it groups there;
         a result may also land in a DM when the recipient owns that
         DM (scheduled/independent work reporting home)."""
-        # Private-chain eligibility is decided before the lease: a
-        # private request that cannot run must never reach a later
-        # unpinned room drain.
         try:
-            from thyca.memories.visibility import current_memory_view as _cmv
             _caller0 = _cmv()
         except Exception:
             _caller0 = None
@@ -85,9 +94,6 @@ class A2ADeliveryService:
             and isinstance(getattr(_caller0, "denied_origins", None), frozenset)
             else frozenset()
         )
-        # A flagged envelope forces the private chain even under an
-        # ordinary caller view (deferred delivery): union its room here
-        # so nested sends stay private too.
         try:
             _flag_room = envelope.conversation_id or ctx.room_id
             _flag_dm = self._deps.room_dm_owner(_flag_room) if _flag_room else None
@@ -103,10 +109,6 @@ class A2ADeliveryService:
         chain_private = bool(inherited) and bool(_rid0) and _dm0 is None
         try:
             async with self._deps.runtime.workspaces.lease(envelope.recipient):
-                from thyca.memories.visibility import (
-                    MemoryView,
-                    bound_memory_view,
-                )
 
                 window = None
                 rid = envelope.conversation_id or ctx.room_id
@@ -139,19 +141,9 @@ class A2ADeliveryService:
                     pass
             return f"delivery failed: {exc}"
 
-    # Publish one group result through the membership-checked append
-    # transaction with the recipient as actor. A removal racing the
-    # result fails the append instead of publishing (fail closed); the
-    # reply itself is already produced and still returns to the sender.
     def _append_group_result(self, room, room_id: str, envelope, result) -> bool:
         """Atomically append the result row iff the recipient participates."""
         try:
-            from thyca.conversations.runtime.manager import _manager_runtime_root
-            from thyca.conversations.store.runtime import (
-                RuntimeWriteIntent,
-                resolve_ref,
-            )
-            from thyca.conversations.store.write_adapter import append_message
             runtime_root = _manager_runtime_root(room)
             if runtime_root is None:
                 return False
@@ -165,7 +157,7 @@ class A2ADeliveryService:
                     parent_span_id=envelope.span_id,
                 ),
             )
-            append_message(
+            _write_adapter.append_message(
                 runtime_root, ref, envelope.recipient, message,
                 intent=RuntimeWriteIntent("runtime-append"),
             )
@@ -177,10 +169,6 @@ class A2ADeliveryService:
             pass
         return True
 
-    # Run one claimed delivery: membership decides context, view, rows.
-    # A non-DM recipient outside the room runs privately: no group
-    # history, no group bind, no group bus/result rows. A read failure
-    # means non-member (fail closed). Members and DMs keep old behavior.
     async def deliver_envelope_claimed(self, envelope, ctx) -> str:
         room_id = envelope.conversation_id or ctx.room_id
         try:
@@ -194,7 +182,6 @@ class A2ADeliveryService:
         room: ConversationManager | None = None
         dm_owner = self._deps.room_dm_owner(room_id) if room_id else None
         try:
-            from thyca.memories.visibility import current_memory_view as _cmv2
             _caller2 = _cmv2()
         except Exception:
             _caller2 = None
@@ -205,9 +192,6 @@ class A2ADeliveryService:
             and room_id
             and dm_owner is None
         )
-        # The envelope flag alone forces private execution for group mail,
-        # even when the current caller view is ordinary (deferred delivery
-        # after the original private context is gone).
         if room_id and dm_owner is None and getattr(
                 envelope, "private_chain", False):
             _chained = True
@@ -218,17 +202,9 @@ class A2ADeliveryService:
             except Exception:
                 is_member = False
             if _chained:
-                # A nested delivery inside a private turn stays private:
-                # recipient membership must not turn the chain public.
                 is_member = False
         is_private = bool(room_id and dm_owner is None and not is_member)
         if is_private and room_id:
-            # Preserve the dispatch classification before any other
-            # consumer can observe or publish it: drop this envelope's
-            # log row now (the mailbox copy was already taken). Later
-            # unpinned drains, final recorders, and rejoined members
-            # then have nothing to publish, even if recording, the model
-            # turn, or a roster read fails.
             try:
                 self._deps.bus.expunge_envelope(
                     getattr(envelope, "span_id", None))
@@ -251,20 +227,12 @@ class A2ADeliveryService:
             except Exception:
                 room = None
                 record_ok = False
-        # Delivery bypasses the mailbox render (Bus.take above), so a
-        # truncated envelope must carry the same bot_fetch marker that
-        # render provides: without it the recipient cannot know its
-        # prompt is only the excerpt or fetch the full body (CBE-3).
         text = envelope.payload
         if envelope.truncated:
             text = (
                 f"{text}\n  [truncated: full body via bot_fetch "
                 f"span_id={envelope.span_id}]"
             )
-        # Phase 2A: members read public history; outsiders get none.
-        # Computed AFTER recording bus events: the fresh envelope row
-        # carries bus_event=True so it can never leak into its own delta.
-        # Skipped for DMs and for private (non-member) invocations.
         room_context, room_cursor = "", None
         if room is not None and dm_owner is None and is_member:
             try:
@@ -305,16 +273,6 @@ class A2ADeliveryService:
             )
         except Exception as exc:
             return f"delivery failed: {type(exc).__name__}: {exc}"
-        # Display recording: member replies land in the origin transcript
-        # (room or DM) under their own name so the A-B pair groups in the
-        # DM entry/modal. A private (non-member) reply records nowhere:
-        # it returns only as the sender's tool result. Eligibility (the
-        # pinned request row) plus a fresh membership recheck gate the
-        # result; a failed read records nothing (fail closed). Group
-        # results use the membership-checked append with the recipient as
-        # actor, so a removal racing the append itself fails closed too.
-        # DMs keep the old pair scope and server-row route. The recipient
-        # never reads a DM's history.
         _fresh_member = False
         if room is not None and dm_owner is None:
             try:
@@ -341,48 +299,21 @@ class A2ADeliveryService:
             )
         return result.reply
 
-    # Record drained bus rows for one room; outsiders record nothing.
-    # The log drains first in all cases so the per-room cursor advances.
-    # For non-DM rooms participants are read once and an event is kept
-    # only when its recipient is a member; a read failure records
-    # nothing (fail closed). DMs keep the old owner-pair scope. When the
-    # caller pins the dispatch decision for one envelope, that envelope
-    # still needs both dispatch and roster membership (fail closed on
-    # change or error) so a private request can never publish on roster
-    # change.
-    # Write one group request row inside its membership transaction.
-    # The row keeps its sender stamp and pairing meta; the actual sender
-    # authorizes the insert and the recipient's membership is checked in
-    # the same transaction, so a removal racing the write fails closed.
-    # Result rows use _append_group_result with the recipient as actor and
-    # stay unchanged. The actor argument is kept for backward-compatible
-    # callers but the envelope sender authorizes request publication.
     def _append_group_display(self, room: ConversationManager, room_id: str,
                               envelope, content: str, meta: dict,
                               actor: str | None = None) -> bool:
         """Append one group request row iff sender and recipient participate."""
         try:
-            try:
-                from thyca.conversations.manager import _manager_runtime_root
-            except Exception:
-                from thyca.conversations.runtime.manager import _manager_runtime_root
-            from thyca.conversations.store.runtime import (
-                RuntimeWriteIntent,
-                resolve_ref,
-            )
-            from thyca.conversations.store.write_adapter import append_message
             runtime_root = _manager_runtime_root(room)
             if runtime_root is None:
                 return False
             ref = resolve_ref(runtime_root, room_id)
-            # Use the module-level Message binding so tests can pin
-            # timestamps deterministically through one mock point.
             row = Message(role="assistant", content=content, meta=dict(meta))
             sender = getattr(envelope, "sender", None) or actor
             recipient = getattr(envelope, "recipient", None)
             if not isinstance(sender, str) or not isinstance(recipient, str):
                 return False
-            append_message(
+            _write_adapter.append_message(
                 runtime_root, ref, sender, row,
                 intent=RuntimeWriteIntent("runtime-append"),
                 require_participant=recipient,
@@ -398,36 +329,26 @@ class A2ADeliveryService:
                 return False
         return True
 
-    # Exact trusted identity of two envelopes sharing a span.
     @staticmethod
     def _envelope_matches(left, right) -> bool:
-        # Any field drift means a replay conflict or forgery, never the
-        # current request. Compared without coercion: a wrong-typed field
-        # never equals a well-typed one.
         for attr in ("sender", "recipient", "kind", "trace_id",
                      "parent_span_id", "payload", "truncated",
                      "private_chain"):
             if getattr(left, attr, None) != getattr(right, attr, None):
                 return False
-        # Refs compare element-wise as strings without coercing values:
-        # [7] must not match ["7"], and a non-list never matches.
         left_refs = list(getattr(left, "refs", None) or [])[:8]
         right_refs = list(getattr(right, "refs", None) or [])[:8]
         if len(left_refs) != len(right_refs):
             return False
-        for left_ref, right_ref in zip(left_refs, right_refs):
+        for left_ref, right_ref in zip(left_refs, right_refs, strict=True):
             if not isinstance(left_ref, str) or not isinstance(right_ref, str):
                 return False
             if left_ref != right_ref:
                 return False
         return True
 
-    # Exact persisted-request match, compared without coercion.
     @staticmethod
     def _bus_row_matches(message, envelope) -> bool:
-        # Every persisted request field must agree with the trusted
-        # envelope, not just the span. Refs ride the row capped at eight
-        # entries, like the send path caps them, so compare the same eight.
         if getattr(message, "role", None) != "assistant":
             return False
         meta = getattr(message, "meta", None)
@@ -447,8 +368,6 @@ class A2ADeliveryService:
             return False
         if meta.get("parent_span_id") != getattr(envelope, "parent_span_id", None):
             return False
-        # Truncated must be a real bool on both sides; a "false" string
-        # or 1 must not coerce into a match. Absent means False.
         row_truncated = meta.get("truncated", False)
         env_truncated = getattr(envelope, "truncated", False)
         if not isinstance(row_truncated, bool) or not isinstance(env_truncated, bool):
@@ -457,31 +376,21 @@ class A2ADeliveryService:
             return False
         if (message.content or "") != (getattr(envelope, "payload", None) or ""):
             return False
-        # Refs compare element-wise as strings without coercion: [7]
-        # never matches ["7"], and a non-list never matches a list.
-        # Absent on both sides is the normal optional-field omission.
         row_refs = meta.get("refs", [])
         env_refs = list(getattr(envelope, "refs", None) or [])[:8]
         if not isinstance(row_refs, list) or len(row_refs) != len(env_refs):
             return False
-        for row_ref, env_ref in zip(row_refs, env_refs):
+        for row_ref, env_ref in zip(row_refs, env_refs, strict=True):
             if not isinstance(row_ref, str) or not isinstance(env_ref, str):
                 return False
             if row_ref != env_ref:
                 return False
         return True
 
-    # Whether the current envelope's exact request row is persisted.
     def _bus_row_present(self, room: ConversationManager, envelope) -> bool:
-        # The current request row is identified by its exact fields; an
-        # unrelated drained envelope must never authorize this result.
-        # A private-chain envelope is never eligible, row or no row.
         if getattr(envelope, "private_chain", False):
             return False
-        for message in room.current.messages:
-            if self._bus_row_matches(message, envelope):
-                return True
-        return False
+        return any(self._bus_row_matches(message, envelope) for message in room.current.messages)
 
     def record_bus_events(
         self,
@@ -542,38 +451,24 @@ class A2ADeliveryService:
                     and getattr(envelope, "span_id", None) is not None
                     and getattr(envelope, "span_id", None) == pinned_span
                 )
-                # A private-chain envelope never enters a group drain,
-                # however it arrived (waiting, deferred, or unpinned).
                 if getattr(envelope, "private_chain", False):
                     if is_current:
                         current_allowed = False
                     continue
                 if is_current and not self._envelope_matches(
                         envelope, current_envelope):
-                    # Same span, different request: replay conflict or
-                    # forgery. Drop the row and never authorize from it.
                     current_allowed = False
                     continue
                 if is_current and current_is_member is not True:
                     continue
-                # Request rows need both the actual sender and the recipient
-                # in the current roster; the same-transaction insert below
-                # rechecks both atomically so removals race closed.
                 if envelope.recipient not in (participants or []) or envelope.sender not in (participants or []):
                     if is_current:
                         current_allowed = False
                     continue
                 if is_current:
                     current_allowed = True
-            # Payload is already the <=1000-char prompt-facing excerpt;
-            # refs ride in meta so the room row stays fetchable (CBE-3).
-            # bus_event marks A2A control rows so the public room filter
-            # (phase 2A) skips them absolutely; kind stays for FE/trace.
             meta: dict = {
                 "bot_id": envelope.sender,
-                # Explicit pair side for new rows: older rows resolve the
-                # recipient best-effort through the result row's
-                # parent_span_id (see thyca/bots/exchanges.py).
                 "recipient": envelope.recipient,
                 **self._deps.display_meta(envelope.sender),
                 "kind": envelope.kind,
@@ -595,9 +490,6 @@ class A2ADeliveryService:
                     )
                 )
             else:
-                # Group request rows authorize the actual sender and check
-                # the recipient in the same transaction; a removal racing
-                # the insert fails closed and skips only that row.
                 if not self._append_group_display(
                     room, conversation_id, envelope,
                     envelope.payload, meta,
@@ -610,14 +502,10 @@ class A2ADeliveryService:
                     current_allowed = True
         if not pinned:
             return True
-        # A private-chain envelope is never eligible, row or no row.
         if getattr(current_envelope, "private_chain", False):
             return False
         if current_allowed is True:
             return self._bus_row_present(room, current_envelope)
-        # An earlier drain may already have published this request (parallel
-        # deliveries drain the same room log): recognize the eligible row
-        # instead of letting an unrelated drain authorize it.
         if pinned and self._bus_row_present(room, current_envelope):
             if dm_owner is not None:
                 sender = getattr(current_envelope, "sender", None)

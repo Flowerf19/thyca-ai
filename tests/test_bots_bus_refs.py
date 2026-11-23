@@ -7,13 +7,13 @@ from pathlib import Path
 
 import pytest
 
-from thyca.bots.admin_tools import AdminDeps, register_admin_tools
+from thyca.bots.admin_tools import AdminDeps, register_admin_tools, visible_for_bot
 from thyca.bots.artifacts import BusArtifactStore
 from thyca.bots.bus import EXCERPT_CHARS, Bus, BusError
 from thyca.bots.card import BotCard
 from thyca.bots.context import BotTurnContext, bind_bot_turn_context, reset_bot_turn_context
 from thyca.bots.registry import BotRegistry
-from thyca.bots.runtime import BotRuntime
+from thyca.bots.runtime import BotRuntime, filtered_tool_schemas
 from thyca.tools.registry import ToolRegistry
 
 
@@ -25,14 +25,11 @@ def test_large_payload_excerpted_and_fully_fetchable_via_store() -> None:
         sender="thyca", recipient="coder", kind="delegate",
         conversation_id="room1", payload=body, refs=["/tmp/spec.md", "2026-08-01#abc"],
     )
-    # Prompt-facing envelope carries only the excerpt + refs.
     assert len(envelope.payload) == EXCERPT_CHARS
     assert envelope.truncated is True
     assert envelope.refs == ("/tmp/spec.md", "2026-08-01#abc")
     assert envelope.to_dict()["refs"] == ["/tmp/spec.md", "2026-08-01#abc"]
-    # Full body is fetchable from the bounded artifact store by span_id.
     assert bus.artifacts.get(envelope.span_id) == body
-    # The queued copy the recipient prompt sees is the excerpt, not the body.
     queued = bus.drain("coder")[0]
     assert len(queued.payload) == EXCERPT_CHARS
 
@@ -66,7 +63,7 @@ def test_artifact_store_bounded_oldest_first() -> None:
     store = BusArtifactStore(max_artifacts=3, max_total_chars=100)
     store.put("sp_1", "a" * 40)
     store.put("sp_2", "b" * 40)
-    store.put("sp_3", "c" * 40)  # total 120 > 100 -> sp_1 evicted
+    store.put("sp_3", "c" * 40)
     assert store.get("sp_1") is None
     assert store.get("sp_3") == "c" * 40
     assert len(store) <= 3
@@ -118,8 +115,6 @@ def test_bot_send_accepts_refs_and_child_sees_fetch_not_admin(tmp_path: Path) ->
     assert out["ok"] is True
     assert bus.log()[0].envelope.refs == ("/tmp/a.md",)
 
-    from thyca.bots.admin_tools import visible_for_bot
-    from thyca.bots.runtime import filtered_tool_schemas
 
     schemas = [
         {"type": "function", "function": {"name": name}}
@@ -129,9 +124,6 @@ def test_bot_send_accepts_refs_and_child_sees_fetch_not_admin(tmp_path: Path) ->
     assert "bot_fetch" in names and "bot_send" in names
     assert "bot_create" not in names
 
-    # Legacy card: written before bot_fetch/task_open existed, so its
-    # tools list cannot name them — they must still be kept as current
-    # baseline peer tools (hidden/memory/bash policies aside).
     card = BotCard(bot_id="coder", name="coder", role="C", description="D",
                    persona="P", tools=("read",))
     kept = {s["function"]["name"] for s in filtered_tool_schemas(schemas, card)}

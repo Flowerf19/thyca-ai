@@ -20,22 +20,16 @@ if TYPE_CHECKING:
 
 Status = Literal["running", "done", "failed"]
 
-# Execution kinds: coroutine handler task vs shell subprocess.
 TASK = "task"
 PROC = "proc"
 
-# Every reply is capped as head+tail; clipped replies carry a marker.
 REPLY_CAP_BYTES = 32_768
-REPLY_HEAD_SHARE = 4  # head takes 1/4 of the cap, tail the rest.
+REPLY_HEAD_SHARE = 4
 
-# Each tracked execution retains the first megabyte of output; bytes past it
-# are counted, not stored, and reads past retention report the gap honestly.
 RETAINED_MAX_BYTES = 1_048_576
 
-# Shared poll ceiling for read(id, wait): 0..60, default 0.
 READ_WAIT_MAX_S = 60
 
-# Default line count when paging with offset but no limit.
 PAGE_DEFAULT_LIMIT = 200
 
 
@@ -71,20 +65,14 @@ class Execution:
         self.id = id
         self.tool = tool
         self.kind = kind
-        # In-flight bot that started this execution (None = user/Thyca
-        # turn). Gateway read/kill enforce it for bot callers.
         self.owner = owner
         self.status: Status = "running"
         self.error = False
         self.started = time.time()
         self.finished: float | None = None
         self.entry: _TrackedTask | None = None
-        # Live proc handle once the handler starts one (bash); reads route here.
         self.proc: _BgProc | None = None
-        # True once an id-bearing reply reached the model; never-exposed
-        # entries are dropped when they settle (nothing can ever poll them).
         self.exposed = False
-        # onExit subscribers (delivery phase consumes these later).
         self.listeners: list[Callable[[Execution], None]] = []
 
     def attach_proc(self, proc: _BgProc) -> None:

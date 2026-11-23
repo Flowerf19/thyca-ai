@@ -1,9 +1,13 @@
 """Core helper pins (truncate_to_cap, protocol shapes)."""
 from __future__ import annotations
 
-# Moved from test_b4_unification.py / test_b4_p2.py (B4 batch).
+import pytest
+
+from thyca.core.protocol import META_CAP_BYTES, RESULT_CAP_BYTES, Message, truncate_to_cap
+from thyca.llms.streaming import ReasoningOut
+
+
 def test_x6_truncate_to_cap_kernel() -> None:
-    from thyca.core.protocol import truncate_to_cap
 
     assert truncate_to_cap(b"abc", 5) == (b"abc", False)
     assert truncate_to_cap(b"abc", 3) == (b"abc", False)
@@ -14,8 +18,6 @@ def test_x6_truncate_to_cap_kernel() -> None:
 
 
 def test_x6_streaming_reasoning_budget_uses_cap() -> None:
-    from thyca.core.protocol import RESULT_CAP_BYTES
-    from thyca.llms.streaming import ReasoningOut
 
     out = ReasoningOut("secret", None)
     out.add("x" * (RESULT_CAP_BYTES + 100))
@@ -26,16 +28,13 @@ def test_x6_streaming_reasoning_budget_uses_cap() -> None:
 
 
 def test_m1_content_key_always_present() -> None:
-    from thyca.core.protocol import Message
 
     assert Message(role="assistant").to_canonical_dict()["content"] is None
     assert "content" in Message(role="user", content="x").to_canonical_dict()
 
 
 def test_meta_cap_checked_at_construction_and_serialization() -> None:
-    import pytest
 
-    from thyca.core.protocol import META_CAP_BYTES, Message
 
     big = {"blob": "x" * (META_CAP_BYTES + 1)}
     with pytest.raises(ValueError, match="meta exceeds 4096 bytes"):

@@ -12,7 +12,7 @@ Không `thyca/agents.py` shim.
 | `Assemble` | `assemble.py` | `assemble(stage, user_msg)` |
 | `Think` | `think.py` | `think(stage)` → ghi `stage.reply` |
 | `Act` | `act.py` | `act(stage)` → ghi `stage.results` (hàm module `_build_result` đóng gói `ToolResult`) |
-| `Observe` | `observe.py` | compact / user / assistant / observe / loop_limit (persist qua `SessionManager`; meta/message builders nằm ở `meta.py`) |
+| `Observe` | `observe.py` | compact / user / assistant / observe / loop_limit (persist qua `ConversationManager`; meta/message builders nằm ở `meta.py`) |
 | `AgentLoop` | `loop.py` | tạo `Stage`, vòng `loopMax` (callback `_reasoning_callback`/`_content_callback`, cost `_resolve_cost` là hàm module) |
 
 ```text
@@ -87,7 +87,7 @@ classDiagram
     Act --> Stage
     Observe --> Stage
     Think ..> LLMPort
-    Observe --> SessionManager
+    Observe --> ConversationManager
     Act --> ToolDispatcher
 ```
 
@@ -103,6 +103,6 @@ classDiagram
 
 ## Ranh giới mới sau refactor (M1)
 
-- `meta.py` pure, không I/O: `Observe` chỉ còn persist qua `SessionManager` + `_order_results`; mọi message/meta construction nằm ở `meta.py`, test được độc lập.
+- `meta.py` pure, không I/O: `Observe` chỉ còn persist qua `ConversationManager` + `_order_results`; mọi message/meta construction nằm ở `meta.py`, test được độc lập.
 - Grammar skill (`^[a-z0-9]+(-[a-z0-9]+)*$`, max 64) do M6 (`thyca/skills/store.py`) sở hữu; `skill_event.py` đã dọn về `thyca/skills/` và import canonical từ `.store` — M1 (`act.py`) chỉ dùng public API (`skill_name_for_call`, `public_skill_name`).
 - `Think` (`LLMPort`) và `Act` (`ToolDispatcher`) inject qua Protocol — giữ nguyên làm mẫu DIP; production call-site truyền `PromptManager()` tường minh vào `Assemble` (default `None` giữ lại cho backward-compat vì tests dựng `Assemble()` zero-arg).

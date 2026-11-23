@@ -1,21 +1,5 @@
-// Shared Node harness for the rebuilt WebUI (thyca/webui/ui/**).
-//
-// The new UI ships classic scripts ('use strict', shared globals — no ES
-// modules), so tests can't import them. This harness evals the real script
-// chain in one Function scope against a minimal DOM parsed from the real
-// ui/chat/index.html markup: real element ids/classes from production markup,
-// no per-selector vivification.
-//
-//   import { installDom, loadScripts, TextNode, matchSimple, qsa } from './tests/webui_dom.mjs';
-//   installDom('thyca/webui/ui/chat/index.html');
-//   const ui = loadScripts([...files], 'return { sendTurn, handleStreamEvent };');
-//
-// Globals the scripts need are installed here (document, window, matchMedia,
-// localStorage, closeMobile…). fetch stays per-test.
-
 import fs from 'node:fs';
 
-/* ---------- text ---------- */
 const ENTITIES = { '&amp;': '&', '&lt;': '<', '&gt;': '>', '&quot;': '"', '&#39;': "'" };
 const decodeEntities = s => String(s).replace(/&(?:amp|lt|gt|quot|#39);/g, m => ENTITIES[m]);
 const escapeText = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -25,7 +9,6 @@ const VOID_HTML = new Set([
   'link', 'meta', 'param', 'source', 'track', 'wbr',
 ]);
 
-/* ---------- selector engine (type/.class/#id/[attr]/[attr="v"]/:not(...) + descendants) ---------- */
 function matchSimple(el, sel) {
   if (!el || el.tag === '#text') return false;
   const nots = [];
@@ -75,7 +58,6 @@ export function qsa(root, sel) {
 }
 const qs = (root, sel) => qsa(root, sel)[0] ?? null;
 
-/* ---------- nodes ---------- */
 export class TextNode {
   constructor(text) { this.tag = '#text'; this.text = String(text); this.parentNode = null; }
   get textContent() { return this.text; }
@@ -152,7 +134,6 @@ export class El {
     if (VOID_HTML.has(this.tag)) return `<${this.tag}${attrs}>`;
     return `<${this.tag}${attrs}>${escapeText(this._text)}${this.children.map(c => c.serialize()).join('')}</${this.tag}>`;
   }
-  /* tree ops */
   append(...nodes) { for (const n of nodes) { if (n == null) continue; n.remove?.(); n.parentNode = this; this.children.push(n); } }
   appendChild(n) { this.append(n); return n; }
   prepend(...nodes) { for (const n of [...nodes].reverse()) { if (n == null) continue; n.remove?.(); n.parentNode = this; this.children.unshift(n); } }
@@ -184,7 +165,6 @@ export class El {
     else if (pos === 'beforebegin') this.after(...frag.children);
     else if (pos === 'afterend') { const p = this.parentNode; if (p) { const i = p.children.indexOf(this); frag.children.forEach(c => { c.parentNode = p; }); p.children.splice(i + 1, 0, ...frag.children); } }
   }
-  /* queries */
   querySelector(sel) { return qs(this, sel); }
   querySelectorAll(sel) { return qsa(this, sel); }
   closest(sel) {
@@ -204,7 +184,6 @@ export class El {
     return els[els.indexOf(this) + 1] ?? null;
   }
   get options() { return this.children.filter(c => c.tag === 'option'); }
-  /* attributes */
   setAttribute(k, v) {
     this.attrs[k] = String(v);
     if (k === 'class') this._class = String(v);
@@ -214,7 +193,6 @@ export class El {
   getAttribute(k) { return this.attrs[k] ?? null; }
   hasAttribute(k) { return k in this.attrs; }
   removeAttribute(k) { delete this.attrs[k]; }
-  /* events/focus/measure — handlers never fire in tests */
   addEventListener() {}
   removeEventListener() {}
   dispatchEvent() { return true; }
@@ -233,7 +211,6 @@ export class El {
   close() { this.open = false; }
 }
 
-/* ---------- mini HTML parser (machine-generated markup: quoted attrs, no '>' in values) ---------- */
 export function parseHTML(html) {
   const root = new El('#root');
   const stack = [root];
@@ -248,7 +225,6 @@ export function parseHTML(html) {
       i = end < 0 ? n : end + 3;
       continue;
     }
-    // scan to '>' outside quotes
     let j = lt + 1, q = null;
     while (j < n) {
       const c = html[j];
@@ -259,7 +235,7 @@ export function parseHTML(html) {
     }
     const raw = html.slice(lt + 1, j);
     i = j + 1;
-    if (!raw || raw[0] === '!' || raw[0] === '?') continue;      // doctype, decl
+    if (!raw || raw[0] === '!' || raw[0] === '?') continue;
     if (raw[0] === '/') {
       const name = raw.slice(1).trim().split(/\s/)[0].toLowerCase();
       for (let k = stack.length - 1; k > 0; k--) {
@@ -286,7 +262,6 @@ export function parseHTML(html) {
   return root;
 }
 
-/* ---------- install: document from real page markup + browser globals ---------- */
 export function installDom(pagePath = 'thyca/webui/ui/chat/index.html') {
   const doc = new El('#document');
   doc.root = true;
@@ -310,12 +285,9 @@ export function installDom(pagePath = 'thyca/webui/ui/chat/index.html') {
   globalThis.location = { href: '', search: '', hash: '' };
   globalThis.innerWidth = 1280;
   globalThis.addEventListener = () => {};
-  // shell-app.js is not loaded in tests; these are its page-level hooks.
   globalThis.closeMobile = () => {};
   globalThis.openMobile = () => {};
   globalThis.requestAnimationFrame = cb => cb();
-  // Keep the process alive only for awaited work: a turn's 1s ticker or a
-  // pending feed/settle timer must not hold the node process open.
   const _setTimeout = globalThis.setTimeout, _setInterval = globalThis.setInterval;
   globalThis.__realSetTimeout = _setTimeout;
   globalThis.setTimeout = (fn, ms, ...a) => { const t = _setTimeout(fn, ms, ...a); t.unref?.(); return t; };
@@ -323,22 +295,14 @@ export function installDom(pagePath = 'thyca/webui/ui/chat/index.html') {
   return doc;
 }
 
-/* Real-time sleep that keeps the event loop referenced (unlike the wrapped
-   setTimeout above, which is unref'd so scripts can exit cleanly). */
 export const sleep = ms => new Promise(resolve => globalThis.__realSetTimeout(resolve, ms));
 
-/* Eval classic scripts in one shared scope; `tail` is appended raw — use it
-   to return the surface the test needs:
-   loadScripts(files, 'return { sendTurn, handleStreamEvent, runs };') */
 export function loadScripts(files, tail = 'return {};', { strip = [] } = {}) {
   let src = files.map(f => fs.readFileSync(f, 'utf8')).join('\n');
   for (const pat of strip) src = src.replace(pat, '');
   return new Function(`${src}\n${tail}`)();
 }
 
-/* The chat page's classic-script chain, in index.html order (markdown.js is
-   an ES module — contentHtml() falls back to escaped paragraphs without it;
-   shell-app.js/app.js bind boot-time side effects tests stub themselves). */
 export const CHAT_CHAIN = [
   'thyca/webui/ui/share/util.js',
   'thyca/webui/ui/share/data.js',

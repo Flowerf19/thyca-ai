@@ -9,8 +9,17 @@ import time
 from pathlib import Path
 
 from thyca.core.conversation import ConversationRef
-from thyca.platform import TrustedParentError, open_trusted_parent, same_inode as _same_inode
-from .contracts import ConversationStoreError, _ATTEMPT_RE, _local_error, _reject_duplicate_pairs, _validate_uuid
+from thyca.platform import TrustedParentError, open_trusted_parent
+from thyca.platform import same_inode as _same_inode
+
+from .contracts import (
+    _ATTEMPT_RE,
+    ConversationStoreError,
+    _local_error,
+    _reject_duplicate_pairs,
+    _validate_uuid,
+)
+
 
 class _TransientSidecarError(Exception):
     """Transient -wal/-shm disappearance/replacement; safe to re-stat."""
@@ -41,7 +50,6 @@ def _stat_at(dir_fd: int, name: str):
 def _fsync_dir(fd: int) -> None:
     os.fsync(fd)
 
-# Open the store root directory without following links.
 def _open_root(root: Path, *, create: bool) -> tuple[int, int, str, Path]:
     try:
         trusted = open_trusted_parent(root)
@@ -55,9 +63,9 @@ def _open_root(root: Path, *, create: bool) -> tuple[int, int, str, Path]:
         try:
             root_fd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
                               dir_fd=parent_fd)
-        except FileNotFoundError:
+        except FileNotFoundError as exc:
             if not create:
-                raise ConversationStoreError()
+                raise ConversationStoreError() from exc
             try:
                 os.mkdir(name, 0o700, dir_fd=parent_fd)
             except FileExistsError:
@@ -81,8 +89,6 @@ def _open_root(root: Path, *, create: bool) -> tuple[int, int, str, Path]:
                     or fd_info.st_uid != os.geteuid()):
                 raise ConversationStoreError()
             if created_here or create:
-                # Authorized initialization secures its own root directory;
-                # sentinel files inside keep their bytes and modes.
                 os.fchmod(root_fd, 0o700)
                 fd_info = os.fstat(root_fd)
             if stat.S_IMODE(fd_info.st_mode) != 0o700:
@@ -164,7 +170,6 @@ def _open_checked_dir_at(parent_fd: int, name: str, *, mode: int = 0o700) -> tup
         os.close(fd)
         raise
 
-# Retry one validation pass when a -wal/-shm sidecar vanishes mid-check.
 def _validate_top_namespace(root_fd: int) -> None:
     allowed = {
         DB_FILE_NAME, DB_FILE_NAME + '-wal', DB_FILE_NAME + '-shm', LOCK_FILE_NAME,
@@ -173,10 +178,6 @@ def _validate_top_namespace(root_fd: int) -> None:
     for name in os.scandir(root_fd):
         if name.name.startswith('conversations.') and name.name not in allowed:
             raise ConversationStoreError()
-    # Transient checkpoint race: -wal/-shm can appear/disappear or be
-    # replaced while another store conversation checkpoints. Retry briefly
-    # under the approved LOCK_SH discipline instead of failing closed
-    # immediately. Persistent mismatches/modes still fail closed.
     for _ in range(5):
         wal = _stat_at(root_fd, DB_FILE_NAME + '-wal')
         shm = _stat_at(root_fd, DB_FILE_NAME + '-shm')
@@ -187,16 +188,13 @@ def _validate_top_namespace(root_fd: int) -> None:
             for name, info in ((DB_FILE_NAME + '-wal', wal), (DB_FILE_NAME + '-shm', shm)):
                 if info is not None:
                     if info.st_nlink == 0:
-                        # Unlinked between stat and now: transient, restat.
                         raise _TransientSidecarError()
                     if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid()
                             or stat.S_IMODE(info.st_mode) != 0o600 or info.st_nlink != 1):
-                        # Persistent invariant failure: do not retry.
                         raise ConversationStoreError()
                     try:
                         probe, opened = _checked_regular_at(root_fd, name, mode=0o600)
                     except ConversationStoreError as exc:
-                        # Transient only when the sidecar vanished mid-check.
                         if isinstance(exc.__cause__, FileNotFoundError):
                             raise _TransientSidecarError() from exc
                         restat = _stat_at(root_fd, name)
@@ -206,7 +204,6 @@ def _validate_top_namespace(root_fd: int) -> None:
                         raise
                     os.close(probe)
                     if not _same_inode(info, opened):
-                        # Replaced between stat and open: transient.
                         raise _TransientSidecarError()
         except _TransientSidecarError:
             time.sleep(0.01)
@@ -390,4 +387,3 @@ def _create_marker_directory(root_fd: int) -> int:
         return marker_fd
     except OSError as exc:
         raise ConversationStoreError() from exc
-

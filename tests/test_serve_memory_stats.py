@@ -14,8 +14,12 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from thyca.app.cli import Cli, build_parser
-from thyca.serve import ServeError, default_webui, make_server
+from thyca.bots.card import BotCard
+from thyca.bots.registry import BotRegistry
+from thyca.memories.archived import ArchiveError
 from thyca.memories.facade import MemoryFacade
+from thyca.serve import ServeError, default_webui, make_server
+from thyca.serve.static import safe_file
 
 TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 WEBUI = default_webui()
@@ -78,7 +82,6 @@ def test_stats_json_and_static(tmp_path: Path) -> None:
         assert payload["leaves"][0]["search_count"] == 0
         with urlopen(_url(httpd, "/ui/memories/"), timeout=2) as response:
             html = response.read().decode("utf-8")
-        # Legacy memories entry aliases resolve to the canonical root app document.
         assert 'id="thyca-page-host"' in html
         assert 'src="../memories/js/memories.js"' in html
         assert 'src="js/memories.js"' not in html
@@ -93,8 +96,6 @@ def test_stats_json_and_static(tmp_path: Path) -> None:
         with urlopen(_url(httpd, "/ui/memories/js/memories.js"), timeout=2) as response:
             assert "javascript" in response.headers.get_content_type()
             memory_js = response.read()
-        # Page markup lives in PAGE_HTML inside memories.js; the served file
-        # also owns the stats/leaves rendering and the leaf actions.
         assert b'id="memory-stats"' in memory_js
         assert b'id="memory-leaves"' in memory_js
         assert b'id="memory-search"' in memory_js
@@ -105,10 +106,6 @@ def test_stats_json_and_static(tmp_path: Path) -> None:
         assert b"'/api/memory/update'" in memory_js
         assert b"'/api/memory/reinforce'" in memory_js
         assert b"'/api/memory/forget'" in memory_js
-        # The old #memory-bot select is gone: kind/usage filter through the
-        # ghost selects, bot scope is a sidebar pick (selectBot -> ?bot=<id>)
-        # shown as a scope card with a "Bỏ lọc" clear, and long leaf lists
-        # page 60 at a time through .mem-pager.
         assert b'id="memory-bot"' not in memory_js
         assert b'id="memory-kind"' in memory_js
         assert b'id="memory-use"' in memory_js
@@ -121,9 +118,6 @@ def test_stats_json_and_static(tmp_path: Path) -> None:
             shared_data = response.read()
         assert b"getJson('/api/bots')" in shared_data
         mapping = memory_js.decode("utf-8")
-        # Leaf filtering is a text search over title/snippet plus the
-        # server-computed expiring/suggest_removal chips — the old
-        # data-view="used-more" buckets did not survive the rebuild.
         assert "filteredLeaves" in mapping
         assert "stats.expiring" in mapping
         assert "suggest_removal" in mapping
@@ -132,8 +126,6 @@ def test_stats_json_and_static(tmp_path: Path) -> None:
 
 
 def test_scoped_memory_stats(tmp_path: Path) -> None:
-    from thyca.bots.card import BotCard
-    from thyca.bots.registry import BotRegistry
 
     registry = BotRegistry(tmp_path)
     registry.create(BotCard(bot_id="coder", name="Coder", role="C",
@@ -277,7 +269,7 @@ def test_stats_error_is_503(tmp_path: Path) -> None:
         def stats(self, now=None):
             raise RuntimeError("sqlite down")
 
-    httpd, thread, _ = _start(tmp_path, facade=Boom())  # type: ignore[arg-type]
+    httpd, thread, _ = _start(tmp_path, facade=Boom())  # type: ignore[arg-type] -- reason: intentional invalid-type or test-double argument
     try:
         try:
             urlopen(_url(httpd, "/api/memory/stats"), timeout=2)
@@ -294,8 +286,6 @@ def test_stats_error_is_503(tmp_path: Path) -> None:
 
 def test_default_webui_has_index() -> None:
     assert WEBUI.name == "webui"
-    # Single SPA entry: legacy workspace URLs alias to it (see
-    # tests/test_webui_spa_frontend.py), so only the chat document ships.
     assert (WEBUI / "ui/chat/index.html").is_file()
     for name in (
         "ui/chat/js/app.js",
@@ -321,7 +311,6 @@ def test_default_webui_has_index() -> None:
     assert "'/api/memory/update'" in raw
     assert "'/api/memory/reinforce'" in raw
     assert "'/api/memory/forget'" in raw
-    # Hồ sơ is its own screen now: the canonical write lives there.
     assert "canonical" not in raw
     profile = (WEBUI / "ui" / "profile" / "js" / "profile.js").read_text(encoding="utf-8")
     assert "postJson('/api/memory/canonical'" in profile
@@ -341,44 +330,28 @@ def test_profile_screen_renders_markdown() -> None:
     shell_css = (WEBUI / "ui" / "share" / "app-shell.css").read_text(encoding="utf-8")
     memories = (WEBUI / "ui" / "memories" / "js" / "memories.js").read_text(encoding="utf-8")
 
-    # Navigation is the shared SHELL_PAGES table, one row per screen — it
-    # lives in util.js so chat's static markup renders the same nav.
     assert "['profile', 'Hồ sơ', '../profile/index.html']" in util
-    # The SPA entry mounts the profile module; the legacy standalone
-    # document is gone (server aliases resolve it to the entry).
     app = (WEBUI / "ui" / "chat" / "index.html").read_text(encoding="utf-8")
     assert 'src="../profile/js/profile.js"' in app
     assert "../share/shell.js" in app
-    # The script fills the shell's .workspace: sidebar bot cards act as the
-    # tabs ("Bạn và <bot>"), the shared (thyca) tab carrying the editable
-    # canonical docs.
     assert 'id="profile-root"' in script
     assert "'Bạn và '" in script
     assert "sharedBotId" not in script
     assert "let selectedBot = '';" in script
     assert "state.tab" in script
-    # Canonical docs keep #profile-doc-tabs, split ## headings into section
-    # cards (.profile-section-grid), edit either per-section or whole-file
-    # inline (#edit-form), and keep the 2-column bot dossier (.profile-bot-grid).
     assert 'id="edit-dialog"' not in script
     assert 'id="profile-doc-tabs"' in script
     assert "profile-section-grid" in script and "profile-bot-grid" in script
     assert 'id="edit-form"' in script and 'id="edit-preview"' in script
     assert ".profile-doc-tabs" in css and ".profile-section-grid" in css and ".profile-bot-grid" in css
     assert ".profile-inline-editor" in css and "#edit-content" in css
-    # Body text is markdown, rendered by the shared chat renderer (a module,
-    # so profile.js falls back to escaped paragraphs before it evaluates).
     assert "../share/markdown.js" in app
     assert "window.formatMarkdown" in script
     assert "contentHtml(file.content)" in script
     assert "selectCanonical" in script
     assert "postJson('/api/memory/canonical'" in script
-    # Nhật ký no longer carries the profile view or its dialog.
     assert "/api/memory/canonical" not in memories
 
-    # Switching tabs re-renders the docs, deep-links ?bot=<id>, and a #<file>
-    # hash scrolls the shared tab to that card — the loader status must not
-    # outlive the load.
     show_body = script[script.index("function showTab") : script.index("async function loadFiles")]
     assert "renderContent();" in show_body
     assert "'?bot=' + encodeURIComponent" in show_body
@@ -387,31 +360,20 @@ def test_profile_screen_renders_markdown() -> None:
     assert "selectCanonical(stats.files)" in load_body
     assert "renderContent();" in load_body
     assert "setStatus(el.status, '');" in load_body
-    # A stray escape in the route hash must not throw; the decoder is guarded.
     assert "function decodeHash()" in script
     assert "try { return decodeURIComponent" in script
     assert "onRoute(route)" in script
     assert "showShared('file-' + hash)" in script
 
-    # Blanking a profile is a real action, so it asks first rather than being
-    # blocked by native `required` validation (the factory owns the inline
-    # editor markup; the exact textarea carries no `required` attribute).
     assert '<textarea id="edit-content" spellcheck="false"></textarea>' in script
     assert 'confirm(`Xoá trắng nội dung “${name}”?`)' in script
 
-    # Switching tabs moves focus to the sidebar bot card, whose own label
-    # announces the bot; re-reading a whole file body would be noise.
     assert 'id="profile-content" aria-live' not in script
 
-    # Heading and file card share the surface width (no centred 75% column),
-    # and an empty status line holds no space — it is hidden, not just blank.
     assert "max-width: 75%;" not in css
     assert ".page-status[hidden]" in shell_css
     assert "node.hidden = !text" in script
 
-    # Canonical files render as .profile-doc paper cards with a data-edit
-    # button; non-shared bots get a read-only .profile-bot TWIN.md card —
-    # the old .profile-file rail and .session-item grid did not survive.
     assert 'class="paper-card profile-doc"' in script
     assert 'data-edit="' in script
     assert ".profile-doc" in css
@@ -433,7 +395,7 @@ def test_index_html_parses() -> None:
     for page in ("dashboard", "memories", "profile", "provider"):
         assert f'src="../{page}/js/{page}.js"' in raw, page
     assert 'src="../trace/js/trace.js"' in raw
-    assert 'src="../share/settings-dialog.js"' in raw   # shared dialog, not a page
+    assert 'src="../share/settings-dialog.js"' in raw
     for page in ("dashboard", "memories", "profile", "provider"):
         js = (WEBUI / "ui" / page / "js" / f"{page}.js").read_text(encoding="utf-8")
         assert f"ThycaRouter.register('{page}'" in js, page
@@ -454,8 +416,6 @@ def test_cli_serve_flag_conflicts(tmp_path: Path) -> None:
 
 
 def test_canonical_write_endpoint(tmp_path_factory) -> None:
-    from thyca.memories.archived import ArchiveError
-    from thyca.memories.facade import MemoryFacade
     facade = MemoryFacade(tmp_path_factory.mktemp("canon"), timezone_name="Asia/Ho_Chi_Minh")
     facade.write_canonical("USER.md", "# User\n\nTên: Hòa\n")
     assert (facade.thyca_dir / "USER.md").read_text(encoding="utf-8").startswith("# User")
@@ -466,7 +426,6 @@ def test_canonical_write_endpoint(tmp_path_factory) -> None:
 
 
 def test_null_byte_path_is_404_not_dropped(tmp_path: Path) -> None:
-    from thyca.serve.static import safe_file
 
     assert safe_file(WEBUI, "/%00") is None
     assert safe_file(WEBUI, "/\x00") is None

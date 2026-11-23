@@ -2,8 +2,6 @@
 
 Một nguồn chữ, một file mục lục, hai lối tìm chữ (FTS5 + trigram). Embedding runtime đã gỡ (580ae03) — semantic path không nằm trong code; kiến trúc hybrid giữ frozen trong `.agents/plans/done/l2-memory-retrieval.md`.
 
-Mẫu: [`memories/example_store/`](../../memories/example_store/).
-
 ```text
 ~/.thyca/memory/YYYY-MM-DD.md   # sự thật — 1 file = 1 ngày
 ~/.thyca/memory.sqlite          # mục lục derived — FTS5 + trigram (vector đã gỡ)
@@ -84,7 +82,7 @@ Hai bullet → hai hàng `chunks`. Heading là session; comment JSON là tem má
 
 `chunks_fts` khớp không dấu (`unicode61`), trả snippet **có dấu**.
 
-Schema v3 không còn cột `embedding`/`profile_id` — vector là kiến trúc frozen trong L2 plan (GOAL-007).
+Schema hiện tại là v10 (`SCHEMA_VERSION = "10"` trong `thyca/memories/schema.py`, không có cột `embedding`/`profile_id` — vector là kiến trúc frozen trong L2 plan).
 
 ## Tool trả bao nhiêu hit cho agent
 

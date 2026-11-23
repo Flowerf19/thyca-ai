@@ -10,7 +10,12 @@ import pytest
 
 from thyca.core.protocol import ToolCall
 from thyca.tools.builtin import register_file_tools
-from thyca.tools.builtin.bash import kill_process_group, parse_timeout, select_shell
+from thyca.tools.builtin.bash import (
+    _self_kill_target,
+    kill_process_group,
+    parse_timeout,
+    select_shell,
+)
 from thyca.tools.gateway import ToolGateway
 from thyca.tools.path_guard import PathGuard
 from thyca.tools.registry import ToolRegistry
@@ -150,7 +155,6 @@ def test_kill_process_group_reaps_child() -> None:
     ],
 )
 def test_self_kill_target_refused(command: str) -> None:
-    from thyca.tools.builtin.bash import _self_kill_target
 
     assert _self_kill_target(command) is not None
 
@@ -173,7 +177,6 @@ def test_self_kill_target_refused(command: str) -> None:
     ],
 )
 def test_self_kill_target_allowed(command: str) -> None:
-    from thyca.tools.builtin.bash import _self_kill_target
 
     assert _self_kill_target(command) is None
 
@@ -187,8 +190,6 @@ async def test_refused_command_is_tool_error_foreground_and_background(
     assert refused.is_error
     assert "Refused" in refused.content
     assert "next turn" in refused.content
-    # Guard runs before the background split, so this refuses even though
-    # this gateway has no background support.
     bg = await _bash(gateway, "reboot", background=True)
     assert bg.is_error
     assert "Refused" in bg.content

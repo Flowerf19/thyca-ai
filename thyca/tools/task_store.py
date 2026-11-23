@@ -33,10 +33,7 @@ class _TrackedTask:
         self.done = asyncio.Event()
         self.content: str | None = None
         self.is_error = True
-        # Bytes past retention that were never kept (readers see the gap).
         self.overflow = 0
-        # True once the synthetic "still running" answer exposed the id to
-        # the model; never-exposed entries are dropped when they settle.
         self.exposed = False
 
 
@@ -67,8 +64,6 @@ class TaskStore:
         self._tasks.pop(tid, None)
 
     def _settle(self, entry: _TrackedTask, task: asyncio.Task) -> None:
-        # Retrieving result/exception here also marks them as retrieved,
-        # avoiding "Task exception was never retrieved" warnings.
         if task.cancelled():
             text, entry.is_error = "task was cancelled", True
         elif (exc := task.exception()) is not None:
@@ -87,8 +82,6 @@ class TaskStore:
         entry.overflow = len(text.encode("utf-8")) - len(kept)
         entry.done.set()
         if not entry.exposed:
-            # Cancelled mid-call: the id never reached the model, so nothing
-            # can ever poll it — do not let the entry linger in the store.
             self._tasks.pop(entry.id, None)
 
     async def read(

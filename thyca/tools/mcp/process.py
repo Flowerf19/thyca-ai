@@ -40,13 +40,6 @@ class _McpSession(Protocol):
     ) -> CallToolResult: ...
 
 
-# PYTHONWARNINGS is parsed while `warnings` itself is still importing, so a
-# dotted category path (…sources.utils.IncompleteFieldDefinitionWarning) can
-# never be imported at that point: the whole option is dropped with "invalid
-# module name" and the warning it was meant to silence still prints. Match the
-# emitting module instead — a regex, no import needed at parse time. The
-# cost of not being able to name the category is that every warning raised
-# from this third-party module is silenced, not just this one.
 _QUIET_WARNINGS = "ignore:::pydantic_settings.sources.utils"
 
 
@@ -63,7 +56,6 @@ def merge_env(server_env: dict[str, str]) -> dict[str, str]:
 
 def resolve_command(command: str) -> str:
     name = Path(command).name
-    # python3 + optional minor only: python3foo is a real binary name.
     if name == "python" or name == "python3" or _PYTHON3_MINOR.fullmatch(name):
         return sys.executable
     return command
@@ -139,7 +131,6 @@ class MCPProcess:
                     self._running_wait = True
                     if not ready.done():
                         ready.set_result(list(listed.tools))
-                    # _closed is always set in start() before this task exists.
                     await self._closed.wait()
         except Exception as exc:
             if not ready.done():
@@ -178,8 +169,6 @@ class MCPProcess:
             self._closed.set()
         task, self._task = self._task, None
         if task is not None:
-            # Cancel if startup is still blocked before _closed.wait(); once waiting,
-            # _closed.set() exits cleanly and lets stdio_client terminate the child.
             if not self._running_wait and not task.done():
                 task.cancel()
             try:

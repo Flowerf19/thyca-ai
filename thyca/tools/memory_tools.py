@@ -63,7 +63,6 @@ def register_memory_tools(
 
 def _remember_spec(facade: MemoryFacade) -> ToolSpec:
     async def handler(args: dict) -> str:
-        # Schema types arrive pre-checked by the registry (X3).
         task = args.get("task")
         is_new_task = bool(args.get("new_task"))
         if is_new_task and task is not None:
@@ -218,8 +217,6 @@ def _search_spec(facade: MemoryFacade) -> ToolSpec:
                     "proj must be an absolute project root path (or omit proj), "
                     f"got {proj!r}"
                 ) from exc
-        # Proactive tool read: the caller may reuse its own memories
-        # across origin windows (proactive-only owner exemption).
         result = facade.search(
             query,
             limit=_limit(args),
@@ -266,7 +263,6 @@ def _search_spec(facade: MemoryFacade) -> ToolSpec:
 
 def _recent_spec(facade: MemoryFacade) -> ToolSpec:
     async def handler(args: dict) -> str:
-        # Proactive tool read: same owner exemption as memory_search.
         hits = facade.recent(limit=_limit(args), allow_own_cross_window=True)
         return json.dumps([asdict(hit) for hit in hits], ensure_ascii=False)
 
@@ -285,7 +281,6 @@ def _recent_spec(facade: MemoryFacade) -> ToolSpec:
 
 def _get_spec(facade: MemoryFacade) -> ToolSpec:
     async def handler(args: dict) -> str:
-        # Proactive tool read: same owner exemption as memory_search.
         return facade.get(
             chunk_id=args.get("chunk_id"),
             memory_id=args.get("memory_id"),
@@ -363,7 +358,6 @@ def _reinforce_spec(facade: MemoryFacade) -> ToolSpec:
 
 def _tasks_spec(facade: MemoryFacade) -> ToolSpec:
     async def handler(args: dict) -> str:
-        # Proactive tool read: same owner exemption as memory_search.
         raw_limit = args.get("limit")
         catalog = facade.tasks(
             status=args.get("status"),
@@ -397,8 +391,6 @@ def _tasks_spec(facade: MemoryFacade) -> ToolSpec:
 
 def _update_spec(facade: MemoryFacade) -> ToolSpec:
     async def handler(args: dict) -> str:
-        # Schema types arrive pre-checked by the registry (X3): present
-        # values are str, so only the strip lives here as domain validation.
         topic = args.get("topic")
         summary = args.get("summary")
         facade.update(

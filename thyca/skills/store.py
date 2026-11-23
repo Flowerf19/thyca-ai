@@ -41,7 +41,6 @@ class SkillStore:
     """Read-only view + default seeding over the skills directory."""
 
     def __init__(self, thyca_dir: Path | None = None) -> None:
-        # Single source for the home default: config_path().parent.
         self.thyca_dir = Path(thyca_dir or config_path().parent)
 
     @property
@@ -51,7 +50,6 @@ class SkillStore:
     def list_meta(self) -> list[SkillMeta]:
         if not self.root.is_dir():
             return []
-        # One sort: names are unique dir names, so the final key order is total.
         metas = [self._meta(entry) for entry in self.root.iterdir() if entry.is_dir()]
         metas.sort(key=lambda meta: meta.name)
         return metas
@@ -92,9 +90,6 @@ class SkillStore:
             target.chmod(0o600)
 
     def _meta(self, skill_dir: Path) -> SkillMeta:
-        # Standalone reader (default ActiveMemory path): BOM-tolerant file
-        # read, then shared validation. Registry uses meta_from_text with
-        # checked descriptor text instead of reopening the pathname.
         name = skill_dir.name
         path = skill_dir / "SKILL.md"
         if not path.is_file():
@@ -106,12 +101,7 @@ class SkillStore:
         return self.meta_from_text(skill_dir, text)
 
     def meta_from_text(self, skill_dir: Path, text: str) -> SkillMeta:
-        # Validate already-checked descriptor text without reopening the
-        # pathname. A leading BOM is tolerated here (like the utf-8-sig
-        # standalone reader) so BOM-headed SKILL.md stays valid; native
-        # read/edit bytes are unaffected. Diagnostic rules match _meta.
-        if text.startswith("\ufeff"):
-            text = text[1:]
+        text = text.removeprefix("\ufeff")
         name = skill_dir.name
         path = skill_dir / "SKILL.md"
         data = _parse_frontmatter(text)

@@ -1,4 +1,3 @@
-/* Retained SPA workspaces: never allow an inactive page into focus/layout. */
 #thyca-page-host{display:contents}
 #thyca-page-host>.workspace[hidden],#chat-workspace[hidden]{display:none!important}
 #thyca-page-host>.workspace[aria-hidden=true],#chat-workspace[aria-hidden=true]{pointer-events:none}

@@ -1,4 +1,3 @@
-/* Shared bot sidebar: bot cards, pockets, group rows, footer. */
 .sidebar{min-height:0;display:flex;flex-direction:column;border:1px solid #decfb68c;border-radius:18px;background:#fffbf1b3;box-shadow:var(--shadow);position:relative;overflow:hidden}
 .sessions-heading{display:flex;align-items:center;gap:8px;padding:clamp(6px,.9dvh,10px) clamp(10px,.9vw,14px);min-height:clamp(36px,4.8dvh,48px);border-bottom:1px solid #e4d8c0}
 .sessions-heading h2{margin:0;color:#584a35}
@@ -21,9 +20,6 @@ body[data-active-page="dashboard"] #team-nav-title:hover,body[data-active-page="
 .bot-name{display:block;max-width:100%;font:600 var(--fs-sm)/1.2 var(--serif);color:var(--bot-ink);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;letter-spacing:-.2px}
 .bot-role{margin-top:0;min-height:13px;display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;font:var(--fs-xs)/1.3 var(--sans);color:color-mix(in srgb,var(--bot-muted) 55%,var(--bot-ink));white-space:normal;overflow:hidden;text-overflow:ellipsis}
 .header-status{display:inline-flex;align-items:center;justify-content:center;gap:5px;color:var(--bot-muted);font-size:var(--fs-2xs);margin-top:2px;line-height:1.3;min-width:0;max-width:100%}
-/* Bot cards show status in one place only: down in the pocket footer
-   (live tool stream first, state label otherwise; off when idle/done).
-   The header keeps just avatar + name, so this row is suppressed. */
 .bot-card .bot-header .header-status{display:none}
 .header-status-label{max-width:120px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .card-actions{position:absolute;top:6px;left:6px;right:6px;display:flex;justify-content:space-between;align-items:center;pointer-events:none;z-index:2}
@@ -41,8 +37,6 @@ body[data-active-page="dashboard"] #team-nav-title:hover,body[data-active-page="
 .bot-card[data-state=thinking] .status-dot,.bot-card[data-state=working] .status-dot,.bot-card[data-state=writing] .status-dot{animation:pulse 1.8s ease-in-out infinite}
 .bot-card[data-state=error] .status-dot{background:#b66b4d}
 .pocket{display:grid;grid-template-rows:0fr;transition:grid-template-rows .26s ease}
-/* No expand: the pocket log no longer opens from the card; the bottom
-   status bar carries the live stats instead. */
 .bot-card .pocket{display:none}
 .bot-card .compact-preview{display:none}
 .bot-card[data-open=true] .pocket{grid-template-rows:1fr}
@@ -70,16 +64,11 @@ body[data-active-page="dashboard"] #team-nav-title:hover,body[data-active-page="
 .progress-list li.complete{color:var(--bot-muted)}
 .progress-list li.complete .step-mark{background:var(--bot-ink);border-color:var(--bot-ink);color:var(--bot-stamp)}
 .progress-list li.current{color:var(--bot-ink)}
-/* Thinking rows run in the same bot-brown while current (user decision:
-   current = bot palette, done = muted); explicit so a later generic
-   tweak cannot silently drop them back. */
 .progress-list li.li-think.current{color:var(--bot-ink)}
 .progress-list li.current .step-mark{background:var(--bot-mid);border:4px solid var(--bot-paper);box-shadow:0 0 0 1px var(--bot-border);animation:feedPulse 1.6s ease-in-out infinite}
 @keyframes feedPulse{0%,100%{box-shadow:0 0 0 1px var(--bot-border)}50%{box-shadow:0 0 0 3px color-mix(in srgb,var(--bot-border) 45%,transparent)}}
 .progress-list li.pending{opacity:.7}
 .thought-extra{font:var(--fs-md)/1.8 var(--serif);padding-top:11px;margin:10px 0 0;border-top:1px dashed var(--bot-rule)}
-/* The pocket heading (state + elapsed) is gone: the footer label now
-   carries the live status and time, so this row only duplicated it. */
 .thinking-heading{display:none}
 .bot-card[data-state=idle] .thinking-heading{display:none}
 .bot-card[data-state=idle] .thinking-scroll{display:none}
@@ -93,8 +82,6 @@ body[data-active-page="dashboard"] #team-nav-title:hover,body[data-active-page="
 .paper-footer .info-label{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
 .paper-footer[data-live-status="true"]{color:var(--bot-ink);font-weight:600}
 .paper-footer svg{width:14px;height:14px}
-/* Contained keyboard focus: palette-tinted rings that stay inside the card
-   instead of the global offset square (which crossed card/star edges). */
 .bot-card .bot-select{border-radius:12px}
 .bot-card .bot-select:focus-visible{outline:2px solid var(--bot-ink);outline-offset:-2px}
 .bot-card .icon-button:focus-visible{outline:2px solid var(--bot-ink);outline-offset:2px;border-radius:8px}
@@ -102,10 +89,6 @@ body[data-active-page="dashboard"] #team-nav-title:hover,body[data-active-page="
 .bot-card .reply-action:focus-visible{outline:2px solid var(--bot-ink);outline-offset:2px}
 .section-label{display:flex;align-items:center;gap:12px;font-size:var(--fs-2xs);color:#99876b;letter-spacing:1.8px;margin:24px 5px 12px}
 .section-label:after{content:'';height:1px;background:var(--line);flex:1}
-/* Group row mirrors the bot card: cluster avatar on top, name, role, status below. */
-/* Group cards share the exact .bot-card chrome (border, paper, palette,
-   selected/hover treatment); only the footer status line is group-specific,
-   sitting where a bot card carries its status. */
 .group-card{position:relative}
 .group-card[data-coordinating=true]{border-color:#9ba38a}
 .group-card-footer{display:flex;align-items:center;justify-content:center;gap:5px;padding:0 8px clamp(5px,.8dvh,9px);font-size:var(--fs-xs);line-height:1.3;color:var(--bot-muted);min-width:0}
@@ -116,9 +99,6 @@ body[data-active-page="dashboard"] #team-nav-title:hover,body[data-active-page="
 .group-info-main strong{font:600 var(--fs-sm) var(--sans);color:var(--bot-ink,#4e4028)}
 .group-info-main small{font-size:var(--fs-xs);color:var(--bot-muted,#877d69)}
 .group-info-state{margin-left:auto;font-size:var(--fs-xs);color:var(--bot-muted,#877d69);white-space:nowrap}
-/* One medallion holding its bots inside: mini seals are collaged within
-   the circle (never a horizontal row spilling out of it), and the
-   +N badge sits inside the same circle as just another member. */
 .group-cluster{display:block;width:var(--bot-avatar);height:var(--bot-avatar);border-radius:50%;border:1px solid var(--bot-border,#dccfb8);background:var(--bot-pale,#f7efdf);flex-shrink:0;position:relative;overflow:hidden}
 .group-cluster .group-mini-member{position:absolute;display:block;width:47%;height:47%}
 .group-cluster .group-mini-member .seal-avatar{width:100%;height:100%;display:block}
@@ -143,8 +123,6 @@ body[data-active-page="dashboard"] #team-nav-title:hover,body[data-active-page="
 .sidebar-footer{border-top:1px solid #e2d6bf;display:flex;align-items:center;justify-content:space-between;padding:clamp(8px,1.2dvh,14px) clamp(12px,1vw,18px);background:#faf3e6b3;z-index:1;flex-shrink:0}
 .sidebar-footer button{font-size:var(--fs-xs);color:#7b715e;display:flex;align-items:center;gap:7px}
 .sidebar-footer svg{width:16px}
-/* Avatar rail shown only when the desktop sidebar is collapsed;
-   hidden on mobile drawer and full sidebar. */
 .rail-scroll{display:none}
 .rail-scroll{flex:1;min-height:0;flex-direction:column}
 .rail-avatar-list{display:flex;flex-direction:column;align-items:center;gap:10px;padding:10px 3px;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;scrollbar-width:none;flex:1;min-height:0;width:100%}
@@ -195,11 +173,6 @@ body[data-active-page="dashboard"] #team-nav-title:hover,body[data-active-page="
 .card-actions .icon{width:16px}
 }
 @media(max-width:850px){
-/* Overlay drawer: the same paper world as the shell (same image, overlay
-   and cover geometry family), readable over the workspace it covers. The
-   base stays opaque cream so chat text never ghosts through; cover sizing
-   is drawer-relative, so motifs continue the paper approximately rather
-   than pixel-aligned with the shell layer behind. */
 .sidebar{position:absolute;z-index:20;left:8px;top:0;bottom:8px;width:var(--drawer-width);background-color:#f8efde;background-image:linear-gradient(#fbf4e5a6,#fbf4e5a6),url(../../images/thyca-bg-paper.png);background-size:cover;background-position:center;transform:translateX(calc(-100% - 18px));transition:transform .25s;box-shadow:10px 0 30px #30231820}
 .sidebar.mobile-open{transform:translateX(0)}
 .session-list{gap:7px}
@@ -224,8 +197,6 @@ body[data-active-page="dashboard"] #team-nav-title:hover,body[data-active-page="
 .sidebar-footer{padding:8px 14px}
 .rail-avatar-list{gap:7px;padding:7px 3px}
 }
-/* NOTE: the status label is never hidden — selected or not, wide or narrow.
-   Narrow screens only shorten it (see the 1150px rule above); position never moves. */
 .card-actions .favorite{width:22px}
 .bot-card[data-state=waiting] .status-dot{animation:seal-wait 2.8s ease-in-out infinite}
 .bot-card[data-state=offline] .status-dot{background:#aaa69d;animation:none}

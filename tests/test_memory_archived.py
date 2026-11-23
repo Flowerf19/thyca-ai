@@ -3,15 +3,20 @@ from __future__ import annotations
 
 import sqlite3
 import threading
+import threading as _t
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from thyca.core.channel import WindowRef
 from thyca.memories import ArchivedMemory, ArchiveError, Chunker
-from thyca.memories.archive_store import ArchiveStore
-from thyca.memories.chunk import Chunk
+from thyca.memories.archive_store import ArchiveStore, Hit
+from thyca.memories.chunk import MAX_LEAF_CHARS, Chunk
 from thyca.memories.facade import MemoryFacade
+from thyca.memories.habits import habit_observations
+from thyca.memories.rank import _promote_in_order_span
 from thyca.memories.usage import guarded, is_lock_error
+from thyca.memories.visibility import MemoryView, bound_memory_view
 
 TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 
@@ -168,8 +173,6 @@ def test_normalize_maps_d_stroke_to_d() -> None:
 
 
 def test_in_order_span_uses_full_leaf_not_snippet() -> None:
-    from thyca.memories.archive_store import Hit
-    from thyca.memories.rank import _promote_in_order_span
 
     chunker = Chunker()
     filler = "lorem " * 80
@@ -244,7 +247,7 @@ def test_norm_version_rebuilds_stale_d_stroke(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     archived = ArchivedMemory(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
-    facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh", archive=archived)
+    MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh", archive=archived)
     archived.reindex(at("2026-08-17"))
     row = archived.store._db.execute(
         "SELECT chunk_id, text_norm FROM chunks WHERE text_norm LIKE '%token_dstroke%'"
@@ -269,9 +272,6 @@ def test_norm_version_rebuilds_stale_d_stroke(tmp_path: Path) -> None:
     assert "do an" in rebuilt["text_norm"]
     hits = again.search("do an", now=at("2026-08-17"))
     assert any("token_dstroke" in hit.snippet for hit in hits.hits)
-
-
-# --- F21: usage transaction + shared-connection races + lock errors ---
 
 
 def _chunk(cid: str, path: str, sid: str) -> Chunk:
@@ -317,7 +317,6 @@ def test_f21_drop_source_is_one_transaction(tmp_path: Path, monkeypatch) -> None
     else:
         raise AssertionError("expected the injected crash")
 
-    # Rollback covered everything: source, chunk, and both usage rows survive.
     assert store.source_stat("/m/2026-09-01.md") == (1, 9)
     assert store.chunk_ids() == ["c1"]
     assert store.usage.get_map() == {"c1": (1, "2026-09-01T00:00:00Z")}
@@ -340,7 +339,7 @@ def test_f21_concurrent_record_and_read_never_collide(tmp_path: Path) -> None:
                 store.get_chunk("c1", now)
                 if i % 5 == 0:
                     store.usage.search_map()
-        except BaseException as exc:  # noqa: BLE001 — collected, asserted below
+        except BaseException as exc:
             errors.append(exc)
 
     threads = [threading.Thread(target=worker, args=(n,)) for n in range(8)]
@@ -385,7 +384,6 @@ def test_f21_non_lock_operational_error_propagates_raw() -> None:
     assert not is_lock_error(sqlite3.OperationalError("no such table: chunks"))
 
     class Probe:
-        import threading as _t
 
         _lock = _t.RLock()
         _error_cls = ArchiveError
@@ -412,10 +410,7 @@ def test_f21_non_lock_operational_error_propagates_raw() -> None:
         raise AssertionError("expected ArchiveError")
 
 
-# Moved from test_b4_unification.py / test_b4_p2.py (B4 batch).
 def test_m5_split_parts_carry_own_spans_and_long_lines_split() -> None:
-    from thyca.memories.chunk import MAX_LEAF_CHARS, Chunker
-
     chunker = Chunker()
     body = "Sentence one is here. Sentence two follows along. Sentence three ends it."
     assert len(body) < MAX_LEAF_CHARS
@@ -475,14 +470,12 @@ def test_search_matches_heading_only_and_vietnamese_d_stroke(tmp_path: Path) -> 
 
 
 def test_facade_auto_reindexes_on_forward_day_rollover(tmp_path: Path) -> None:
-    from thyca.memories.habits import habit_observations
 
     day1 = at("2026-08-15")
     day2 = at("2026-08-16")
     facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
     sid = facade.remember("Rollover", "RolloverMarkerXYZ yesterday", now=day1)
     assert facade.search("RolloverMarkerXYZ", now=day1).hits == []
-    # Crossing into day2 auto-reindexes day1 without manual reindex().
     found = facade.search("RolloverMarkerXYZ", now=day2)
     assert [hit.memory_id for hit in found.hits] == [sid]
 
@@ -510,7 +503,6 @@ def test_long_doc_does_not_starve_distinct_memories_from_candidate_cap(tmp_path:
     sid_short = facade.remember("Short note", "Concise sharedtoken99 answer", now=past)
     facade.archive.reindex(now)
 
-    # Confirm long doc actually spans >= 50 chunks so raw chunk capping would have starved sid_short.
     assert facade.archive.store.memory_leaf_count(sid_long, "2026-08-17T10:00:00Z") >= 50
     res = facade.search("sharedtoken99", limit=5, now=now)
     assert {hit.memory_id for hit in res.hits} == {sid_long, sid_short}
@@ -541,8 +533,6 @@ def test_common_prefix_phrase_does_not_override_rare_entity_bm25(tmp_path: Path)
 
 
 def test_trigram_runs_under_memory_view_when_fts_visible_below_limit(tmp_path: Path) -> None:
-    from thyca.core.channel import WindowRef
-    from thyca.memories.visibility import MemoryView, bound_memory_view
 
     (tmp_path / "memory").mkdir()
     facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")

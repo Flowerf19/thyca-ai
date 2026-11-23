@@ -11,6 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from thyca.bots.private_followups import PrivateFollowupError, PrivateFollowupStore
+from thyca.configs.store import FileLock
 from thyca.conversations.runtime import ConversationBusy, ConversationNotFound
 
 
@@ -40,7 +41,6 @@ class ConsentBadRequest(ConsentError):
 
 
 def _delivery_lock(app, bot_id: str):
-    from thyca.configs.store import FileLock
 
     path = Path(app._root) / "bots" / bot_id / "workspace" / "private_delivery.lock"
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -89,8 +89,8 @@ class PrivateFollowupService:
         app = self._app
         try:
             dm_conversation = app._conversations.store.load(conversation_id)
-        except ConversationNotFound:
-            raise ConsentNotFound("conversation not found")
+        except ConversationNotFound as exc:
+            raise ConsentNotFound("conversation not found") from exc
         dm_bot = dm_conversation.dm_bot
         if dm_bot is None:
             raise ConsentBadRequest("not a bot DM")
@@ -166,8 +166,8 @@ class PrivateFollowupService:
             raise ConsentConflict("already resumed")
         try:
             origin = app._conversations.store.load(pending.origin_window)
-        except Exception:
-            raise ConsentConflict("origin room is gone")
+        except Exception as exc:
+            raise ConsentConflict("origin room is gone") from exc
         try:
             bot_card = app._bots.require(dm_bot)
         except Exception:
@@ -184,8 +184,8 @@ class PrivateFollowupService:
                 dm_bot, pending.pending_id, revision=revision,
                 idempotency_key=marker,
             )
-        except PrivateFollowupError:
-            raise ConsentConflict("pending cannot be approved")
+        except PrivateFollowupError as exc:
+            raise ConsentConflict("pending cannot be approved") from exc
         posted = app.post_bot_room_message(
             dm_bot,
             pending.proposed_redacted,
@@ -203,6 +203,6 @@ class PrivateFollowupService:
         try:
             store.finalize_resumed(
                 dm_bot, pending.pending_id, posted_marker=marker)
-        except PrivateFollowupError:
-            raise ConsentConflict("pending cannot be finalized")
+        except PrivateFollowupError as exc:
+            raise ConsentConflict("pending cannot be finalized") from exc
         return {"ok": True, "status": "resumed"}

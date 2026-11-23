@@ -47,7 +47,6 @@ def test_base_tokens_define_the_paper_palette() -> None:
         assert token in root, token
     assert "'Thyca Serif'" in root and "--serif" in root
     assert "'Thyca Sans'" in root and "--sans" in root
-    # The rebuild has one palette: no oklch theme overrides survive anywhere.
     for sheet in UI.rglob("*.css"):
         assert "oklch" not in sheet.read_text(encoding="utf-8"), sheet.name
 
@@ -88,7 +87,6 @@ def test_spa_entry_links_the_shared_stylesheets() -> None:
         assert f'href="{href}"' in chat, href
     assert 'href="../share/markdown.css"' in chat
     assert 'href="chatcss/chat.css"' in chat
-    # Chat keeps its own workspace chrome — no static app-shell link.
     assert "../share/app-shell.css" not in chat
     router = (UI / "share" / "router.js").read_text(encoding="utf-8")
     assert "styleLink('/ui/share/app-shell.css', 'app-shell')" in router
@@ -96,7 +94,7 @@ def test_spa_entry_links_the_shared_stylesheets() -> None:
     for page in ("dashboard", "memories", "profile", "provider"):
         js = (UI / page / "js" / f"{page}.js").read_text(encoding="utf-8")
         assert f"stylesheet: '/ui/{page}/" in js, page
-    assert 'src="../share/settings-dialog.js"' in chat   # shared dialog module loads on the single entry
+    assert 'src="../share/settings-dialog.js"' in chat
 
 
 def test_shared_paper_background_spans_the_shell() -> None:
@@ -115,7 +113,7 @@ def test_shared_paper_background_spans_the_shell() -> None:
     assert "background:#f5eddd" in shell
     layer = _block(base, ".notebook-shell::before")
     assert "images/thyca-bg-paper.png" in layer
-    assert "#fbf4e5a6" in layer  # 65% cream overlay over the artwork
+    assert "#fbf4e5a6" in layer
     assert "background-size:cover" in layer and "pointer-events:none" in layer
     assert "border-radius:inherit" in layer
     assert ".site-header,.main-grid{position:relative}" in base
@@ -123,7 +121,7 @@ def test_shared_paper_background_spans_the_shell() -> None:
     assert "images/thyca-bg-paper.png" in dialog and "#fbf4e5a6" in dialog
     sidebar = _block(SIDEBAR_CSS.read_text(encoding="utf-8"), ".sidebar")
     assert "gradient" not in sidebar
-    assert "background:#fffbf1b3" in sidebar  # flat translucent veil
+    assert "background:#fffbf1b3" in sidebar
     app = APP_SHELL_CSS.read_text(encoding="utf-8")
     assert "gradient" not in _block(app, ".workspace")
     assert "background:#fffcf3d9" in _block(app, ".workspace")
@@ -131,8 +129,6 @@ def test_shared_paper_background_spans_the_shell() -> None:
     chat_css = (UI / "chat" / "chatcss" / "chat.css").read_text(encoding="utf-8")
     assert "gradient" not in chat_css.split(".chat-title-head{", 1)[0]
     assert ".ornament{" not in chat_css and ".staff{" not in chat_css
-    # No per-pane injections: shell.js/router.js no longer reference the SVGs,
-    # and chat's static markup carries no ornament/staff nodes either.
     shell_js = SHELL_JS.read_text(encoding="utf-8")
     assert "WORKSPACE_ART" not in shell_js and 'class="ornament"' not in shell_js
     router = (UI / "share" / "router.js").read_text(encoding="utf-8")
@@ -156,7 +152,6 @@ def test_decoration_preference_drives_the_shared_artwork() -> None:
     assert "function applyPrefs" in shell_js
     dialog_js = (UI / "share" / "settings-dialog.js").read_text(encoding="utf-8")
     assert "applyPrefs(collect())" in dialog_js
-    # Shared hooks stay writable for compatibility.
     assert "view.dataset.ornaments" in shell_js or "workspace.dataset.ornaments" in shell_js
 
 
@@ -169,7 +164,7 @@ def test_narrow_drawer_stays_paper_backed_and_opaque() -> None:
     drawer = sidebar.split("@media(max-width:850px){", 1)[1]
     assert "images/thyca-bg-paper.png" in drawer
     assert "#fbf4e5a6" in drawer and "background-size:cover" in drawer
-    assert "background-color:#f8efde" in drawer  # opaque base: no ghosted chat text
+    assert "background-color:#f8efde" in drawer
     base = BASE_CSS.read_text(encoding="utf-8")
     assert "--sidebar-width:var(--sidebar-full)" in _block(base, ":root")
     assert "grid-template-columns:var(--sidebar-width" in base
@@ -181,7 +176,6 @@ def test_narrow_drawer_stays_paper_backed_and_opaque() -> None:
     narrow_base = base.split("@media(max-width:850px){", 1)[1]
     assert ".splitter{display:none}" in narrow_base
     assert "mobile-open ~ .splitter" not in base
-    # Hidden by default: slid off-screen; .mobile-open slides it in.
     assert "transform:translateX(calc(-100% - 18px))" in drawer
     assert ".sidebar.mobile-open" in sidebar
 
@@ -266,7 +260,6 @@ def test_trace_code_keeps_the_light_syntax_surface() -> None:
     err = _block(css, ".dashboard-shell .tl-code.tl-code-err")
     assert "background:#fdf0ea" in err
     assert "color:#944f3d" in err
-    # Assistant replies keep the shared markdown surface.
     md = MARKDOWN_CSS.read_text(encoding="utf-8")
     assert ".md-table-wrap" in md
     assert "ui-monospace" in md

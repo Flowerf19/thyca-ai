@@ -29,22 +29,22 @@ def node() -> str:
     return binary
 
 
-_PREAMBLE = f"""
-import {{ installDom, loadScripts, CHAT_CHAIN }} from './tests/webui_dom.mjs';
+_PREAMBLE = """
+import { installDom, loadScripts, CHAT_CHAIN } from './tests/webui_dom.mjs';
 installDom();
-const {{ readNdjson }} = loadScripts(CHAT_CHAIN, 'return {{ readNdjson }};');
+const { readNdjson } = loadScripts(CHAT_CHAIN, 'return { readNdjson };');
 const enc = (s) => new TextEncoder().encode(s);
-const mkStream = (chunks) => {{
+const mkStream = (chunks) => {
   let i = 0;
-  return {{ getReader: () => ({{
-    read: async () => (i < chunks.length ? {{ done: false, value: chunks[i++] }} : {{ done: true, value: undefined }}),
-  }}) }};
-}};
-async function run(chunks) {{
+  return { getReader: () => ({
+    read: async () => (i < chunks.length ? { done: false, value: chunks[i++] } : { done: true, value: undefined }),
+  }) };
+};
+async function run(chunks) {
   const events = [];
   await readNdjson(mkStream(chunks), (e) => events.push(e));
-  return {{ events }};
-}}
+  return { events };
+}
 """
 
 
@@ -71,7 +71,6 @@ def test_one_chunk_two_full_lines(node: str) -> None:
         "llm.started",
         "turn.completed",
     ]
-    # The terminal event's detail rides along for finishTurn(token, detail).
     assert out["events"][-1]["detail"] == {"id": "x"}
 
 

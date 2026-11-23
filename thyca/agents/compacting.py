@@ -12,9 +12,9 @@ import asyncio
 from dataclasses import dataclass
 from typing import Protocol
 
-from thyca.core.protocol import Message, utc_now_ts
 from thyca.conversations.runtime import ConversationManager
 from thyca.conversations.runtime.summary import SUMMARY_MAX_CHARS
+from thyca.core.protocol import Message, utc_now_ts
 
 from .meta import compaction_meta
 
@@ -98,15 +98,13 @@ async def compact_with_llm(
                     )
                 )
             except Exception:
-                pass  # compaction already landed; cost record is best-effort
+                pass
             return {
                 "compacted": True,
                 "messages_before": before,
                 "messages_after": len(conversations.current.messages),
                 "summary": "llm",
             }
-    # Fallback: excerpt body on fresh disk state (also covers the
-    # changed-under-summary case, where the plan is stale by definition).
     if force:
         result = conversations.compact_manual(
             hot_tokens=hot_tokens,

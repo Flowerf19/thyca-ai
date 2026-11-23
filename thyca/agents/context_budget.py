@@ -21,10 +21,6 @@ PREPARE_RATIO = 0.8
 MANDATORY_RATIO = 0.9
 _BANDS = ("roomy", "prepare", "mandatory", "backstop")
 
-# Guidance text lives in seeds/prompts/context-budget.md (like the
-# compaction summary prompt); code only picks the template and fills
-# {action}/{urgency}/{lookup}. Missing file → inline fallbacks so the
-# agent always gets guidance.
 _PROMPTS_DIR = Path(__file__).resolve().parents[1] / "seeds" / "prompts"
 _GUIDANCE_CACHE: dict[str, str] | None = None
 

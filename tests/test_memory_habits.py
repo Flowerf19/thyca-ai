@@ -1,25 +1,28 @@
 """Phase 1E: habit_explicit field + per-bot habit sweep."""
 from __future__ import annotations
 
+import json as _json
 import sqlite3
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
-from thyca.memories import habits
+import pytest
+import pytest as _pytest
+
+from tests.test_memory_task_habits import _schema_without
+from thyca.memories import habits, jobs
+from thyca.memories.archive_store import ArchiveError
 from thyca.memories.archived import SCHEMA_VERSION
 from thyca.memories.facade import MemoryFacade
-from thyca.memories.heading import parse_heading, render_heading, HeadingMeta
+from thyca.memories.heading import HeadingMeta, parse_heading, render_heading
 from thyca.memories.identity import bind_bot_id, reset_bot_id
 
-UTC = timezone.utc
 TZ = "Asia/Ho_Chi_Minh"
 
 
 def at(day: int, hour: int = 12) -> datetime:
     return datetime(2026, 9, day, hour, 0, tzinfo=UTC)
 
-
-# -- habit_explicit field -----------------------------------------------------
 
 def test_heading_explicit_roundtrip_only_when_true() -> None:
     line = render_heading(HeadingMeta(
@@ -35,13 +38,13 @@ def test_heading_explicit_roundtrip_only_when_true() -> None:
 
 
 def test_heading_explicit_requires_habit_kind(tmp_path) -> None:
-    import pytest
 
     facade = MemoryFacade(tmp_path, timezone_name=TZ)
     with pytest.raises(ValueError, match="habit_explicit requires"):
         facade.remember("t", "s", now=at(1), habit_explicit=True)
     plain = facade.remember("t", "s", now=at(1))
-    with pytest.raises(Exception, match="habit_explicit requires"):
+
+    with pytest.raises(ArchiveError, match="habit_explicit requires"):
         facade.update(plain, habit_explicit=True, now=at(1))
 
 
@@ -58,7 +61,6 @@ def test_remember_search_carries_explicit(tmp_path: Path) -> None:
 
 
 def test_migration_v8_1a_gains_explicit_column(tmp_path: Path) -> None:
-    from tests.test_memory_task_habits import _schema_without
 
     db_path = tmp_path / "memory.sqlite"
     db = sqlite3.connect(db_path)
@@ -78,7 +80,6 @@ def test_migration_v8_1a_gains_explicit_column(tmp_path: Path) -> None:
     try:
         cols = {row[1] for row in db.execute("PRAGMA table_info(chunks)")}
         assert "habit_explicit" in cols
-        # Landing on v9 also renames the pre-v9 leaf id columns.
         assert "memory_id" in cols and "session_id" not in cols
         assert db.execute(
             "SELECT value FROM meta WHERE key='schema_version'").fetchone()[0] == SCHEMA_VERSION
@@ -87,9 +88,7 @@ def test_migration_v8_1a_gains_explicit_column(tmp_path: Path) -> None:
 
 
 def test_extractor_explicit_roundtrip(tmp_path: Path) -> None:
-    import json as _json
 
-    from thyca.memories import jobs
 
     items = jobs.parse_extraction(_json.dumps([
         {"topic": "t", "summary": "s", "kind": "habit",
@@ -107,8 +106,6 @@ def test_extractor_explicit_roundtrip(tmp_path: Path) -> None:
     assert metas[0].habit_explicit is True
     assert metas[1].habit_explicit is False
 
-
-# -- sweep --------------------------------------------------------------------
 
 def _remember(facade: MemoryFacade, bot: str, summary: str, day: int,
               habit: str = "uong tra buoi sang", explicit: bool = False) -> str:
@@ -143,7 +140,6 @@ def test_sweep_writes_one_line_on_third_day(tmp_path: Path) -> None:
     text = target.read_text(encoding="utf-8")
     assert text.count("- uong tra buoi sang") == 1
     assert "<!-- habits:auto:start -->" in text
-    # Idempotent rerun.
     assert habits.sweep_bot_habits(facade, "coder", target, now=at(4)) == []
     assert target.read_text(encoding="utf-8") == text
 
@@ -164,7 +160,6 @@ def test_sweep_groups_normalized_labels(tmp_path: Path) -> None:
     facade._refresh_index(at(4))
     target = tmp_path / "bots" / "coder" / "USER.md"
     out = habits.sweep_bot_habits(facade, "coder", target, now=at(4))
-    # Display label = newest observation's raw label, one line only.
     assert out == ["UONG TRA BUOI SANG"]
     assert target.read_text(encoding="utf-8").count("- UONG TRA BUOI SANG") == 1
 
@@ -195,22 +190,16 @@ def test_sweep_reader_filter_and_expiry(tmp_path: Path) -> None:
         assert habits.sweep_bot_habits(facade, "designer", target, now=at(4)) == []
     finally:
         reset_bot_id(token)
-    # Expired observations don't count (importance 3 = 30d TTL).
     far = datetime(2026, 11, 20, 12, tzinfo=UTC)
     assert habits.sweep_bot_habits(
         facade, "coder", tmp_path / "bots" / "coder" / "USER.md",
         now=far) == []
 
 
-# -- phase 1F: team aggregation -------------------------------------------------
-
-
 def test_sweep_ignores_team_visible_entries(tmp_path: Path) -> None:
     facade = MemoryFacade(tmp_path, timezone_name=TZ)
-    # Legacy (owners None): visible to all, owned by none.
     facade.remember("shared habit", "everyone knows", now=at(1),
                     kind="habit", habit="uong tra", habit_explicit=True)
-    # Explicit team entry.
     facade.remember("team habit", "team knows", now=at(1),
                     kind="habit", habit="uong tra", habit_explicit=True,
                     bots=["team"])
@@ -226,9 +215,6 @@ def test_sweep_ignores_team_visible_entries(tmp_path: Path) -> None:
 
 
 def test_sweep_counts_coowned_entry_for_each_owner(tmp_path: Path) -> None:
-    # One entry owned by two bots counts for both sweeps (documented:
-    # co-ownership is not two independent observations — the aggregate
-    # ≥2-bot rule counts bots holding the habit, per the user decision).
     facade = MemoryFacade(tmp_path, timezone_name=TZ)
     token = bind_bot_id("coder")
     try:
@@ -246,10 +232,7 @@ def test_sweep_counts_coowned_entry_for_each_owner(tmp_path: Path) -> None:
         now=at(2)) == ["uong tra"]
 
 
-# -- review rework: label sanitization ------------------------------------------
-
 def test_remember_rejects_multiline_and_markup_labels(tmp_path) -> None:
-    import pytest as _pytest
 
     facade = MemoryFacade(tmp_path, timezone_name=TZ)
     with _pytest.raises(ValueError, match="single line"):
@@ -261,8 +244,7 @@ def test_remember_rejects_multiline_and_markup_labels(tmp_path) -> None:
     with _pytest.raises(ValueError, match="markup"):
         facade.remember("t", "s", now=at(1), kind="habit",
                         habit="x <!-- habits:auto:end -->")
-    # Inner whitespace collapses to one space on write.
-    sid = facade.remember("t", "s", now=at(1), kind="habit",
+    facade.remember("t", "s", now=at(1), kind="habit",
                           habit="uong   tra\tbuoi sang")
     assert "uong tra buoi sang" in (
         tmp_path / "memory" / "2026-09-01.md").read_text(encoding="utf-8")
@@ -286,9 +268,7 @@ def test_sweep_skips_handwritten_marker_label(tmp_path: Path) -> None:
 
 
 def test_extractor_drops_bad_habit_side_fields(tmp_path: Path) -> None:
-    import json as _json
 
-    from thyca.memories import jobs
 
     items = jobs.parse_extraction(_json.dumps([
         {"topic": "t", "summary": "s", "kind": "habit",
@@ -304,7 +284,7 @@ def test_cross_day_habit_reinforce_count_and_promote(tmp_path: Path) -> None:
     day1 = datetime(2026, 9, 1, 12, tzinfo=UTC)
     day15 = datetime(2026, 9, 15, 12, tzinfo=UTC)
     day15_evening = datetime(2026, 9, 15, 15, tzinfo=UTC)
-    day35 = datetime(2026, 10, 5, 12, tzinfo=UTC)  # >30d after day1; needs day15 TTL renewal
+    day35 = datetime(2026, 10, 5, 12, tzinfo=UTC)
 
     token = bind_bot_id("coder")
     try:
@@ -369,5 +349,3 @@ def test_record_habit_entry_isolates_cross_window_summary(tmp_path: Path) -> Non
     day1_text = (tmp_path / "memory" / "2026-09-01.md").read_text(encoding="utf-8")
     assert "PRIVATE_DM_HABIT_TEXT" not in day1_text
     assert "  - 2026-09-02: uong tra" in day1_text
-
-

@@ -1,12 +1,4 @@
-// Shared Settings dialog: one overlay for bot customization shortcuts, this
-// machine's UI preferences, the global run limits and backend status.
-// Opened from the sidebar footer (#open-settings) on every page and for
-// legacy /ui/settings* URLs (router maps those to chat + opens this).
-// Replaces the old per-page settings workspace; the dialog is an overlay so
-// drafts and streams on the underlying page are never disturbed.
 'use strict';
-
-/* ---------- Bot shortcut (existing customization stays in the studio) ---------- */
 
 function fillSettingsBots(selected) {
   const sel = document.querySelector('#settings-bot');
@@ -33,8 +25,6 @@ function paintSettingsBot(id) {
   holder.innerHTML = b ? `${avatar(b)}<span><strong>${escapeHTML(b.name)}</strong><span>${escapeHTML(b.role || 'Người bạn trong đội')}</span></span>` : '';
 }
 
-/* ---------- UI preferences (same key/shape as the old settings page) ---------- */
-
 function hydrateSettingsPrefs(next) {
   const type = document.querySelector('#pref-type-scale');
   if (type) type.value = next.typeScale;
@@ -52,36 +42,21 @@ function collectSettingsPrefs() {
   };
 }
 
-/* ---------- Global limits (schema-driven, limits section only) ---------- */
-
 let settingsConfigValues = null;
-// Values the form was painted from (refreshed on every successful render
-// and patched with saved fields on submit): dirty detection compares the
-// live controls against it, so an untouched field is never stored as an edit.
 let settingsBaseline = null;
-// Draft of genuinely dirty fields only ({section: {name: {check|value,
-// base}}}), each keeping the baseline value it diverged from. Re-applied
-// after every render so close/reopen and in-flight loads keep edits; the
-// original base survives reloads so a same-field concurrent change still
-// compares against what the user actually saw.
 let settingsDraft = null;
-// Conflicts already surfaced to the user ({section: {name: serverValue}}):
-// resubmitting unchanged against the same server value is informed consent
-// and proceeds; a moved server value warns anew. Cleared on save.
 let settingsConflictSeen = null;
 let settingsSaving = false;
 let settingsLoadSeq = 0;
 let settingsConfigSavedSelf = false;
 const SETTINGS_CONFIG_SECTIONS = ['limits'];
 
-/* ---------- Per-bot model & thinking settings (scoped to #settings-bot) ---------- */
-
-let settingsBotCatalog = null; // { models, defaultModel, defaultProvider, providers }
+let settingsBotCatalog = null;
 let settingsBotSchemaChoices = [];
 let settingsBotCatalogDirty = false;
 const botCfg = { bot: '', settings: null, seq: 0, loading: false, savingFor: null, error: '' };
-let botLoadedCfg = null;       // { bot, model, thinking } | null
-const botDrafts = new Map();   // botId -> { model, thinking }
+let botLoadedCfg = null;
+const botDrafts = new Map();
 
 function currentSettingsBot() {
   const sel = document.querySelector('#settings-bot');
@@ -398,7 +373,7 @@ function settingsFieldControl(f, sectionKey, value) {
 function renderSettingsConfigForm(sections) {
   const parts = SETTINGS_CONFIG_SECTIONS.map(key => {
     const section = sections.find(s => s.key === key);
-    const fields = (section?.fields || []).filter(f => !f.hidden && !f.secret);   // hidden/secret never render here; secrets stay on the provider page
+    const fields = (section?.fields || []).filter(f => !f.hidden && !f.secret);
     if (!fields.length) return '';
     const values = settingsConfigValues[key] || {};
     return `<div class="cfg-section"><h3 class="cfg-section-title">${escapeHTML(section.label || key)}</h3><div class="card-grid">${fields.map(f => settingsFieldControl(f, key, values[f.key.split('.').pop()])).join('')}</div></div>`;
@@ -408,8 +383,6 @@ function renderSettingsConfigForm(sections) {
 }
 
 function settingsReadControl(el) {
-  // {ok, value} for one rendered control; ok:false marks a number field
-  // with no numeric value so submit can report it instead of saving NaN.
   if (el.type === 'checkbox') return { ok: true, value: !!el.checked };
   if (el.type === 'number') {
     const raw = typeof el.valueAsNumber === 'number' ? el.valueAsNumber : Number(el.value);
@@ -424,8 +397,6 @@ function settingsBaselineOf(section, name) {
 }
 
 function settingsValuesDiffer(a, b) {
-  // Number-aware comparison that tolerates rendered strings vs stored
-  // numbers; missing values only equal other missing values.
   if (a === undefined || b === undefined) return a !== b;
   if (typeof a === 'number' || typeof b === 'number') {
     const x = Number(a), y = Number(b);
@@ -436,23 +407,12 @@ function settingsValuesDiffer(a, b) {
 }
 
 function settingsFieldBase(sec, name) {
-  // The value this field diverged from: its original draft base when it
-  // is a retained edit, else the value the form was painted from.
   const kept = settingsDraft && settingsDraft[sec] ? settingsDraft[sec][name] : undefined;
   if (kept && 'base' in kept && kept.base !== undefined) return kept.base;
   return settingsBaselineOf(sec, name);
 }
 
 function snapshotSettingsForm() {
-  // Only genuinely changed values are kept — untouched controls are never
-  // stored, so a later render cannot turn their stale values into edits.
-  // Comparison is against the freshly rendered server values, so reverting
-  // to an older value still counts as a deliberate change; a retained entry
-  // keeps its original baseline so conflicts still compare against what the
-  // user saw when the field diverged. An invalid (e.g. cleared) numeric
-  // still counts as a deliberate edit: its raw text is kept so close/reopen
-  // or a pending load restores it instead of the server value, while
-  // submit-time validation keeps blocking the write.
   const draft = {};
   for (const el of document.querySelectorAll('#config-form [data-section]')) {
     const sec = el.dataset.section, name = el.dataset.name;
@@ -470,13 +430,7 @@ function snapshotSettingsForm() {
 }
 
 function retainSettingsDraft() {
-  // Replace the stored draft, except when no form controls exist: with
-  // nothing rendered there is nothing to compare against, so a retained
-  // draft (e.g. after a failed load destroyed the controls) must survive
-  // until controls render again.
   const incoming = snapshotSettingsForm();
-  // NB: querySelectorAll (never the singular querySelector: it would
-  // auto-vivify a matching stub and defeat the emptiness check).
   if (Object.keys(incoming).length || document.querySelectorAll('#config-form [data-section]').length) settingsDraft = incoming;
 }
 
@@ -492,8 +446,6 @@ function applySettingsDraft(draft) {
 }
 
 function settingsFormStatus(message, kind) {
-  // Save feedback rendered INSIDE the modal (role=status persists there)
-  // plus the global toast the existing flows already announce through.
   const el = document.querySelector('#settings-form-status');
   if (el) {
     el.textContent = message || '';
@@ -512,10 +464,6 @@ function effectiveDefaultModelContext(values) {
   return Number.isInteger(ctx) ? ctx : undefined;
 }
 
-/* Repaint the per-bot form after a config (re)load. The draft is re-read
-   for the bot selected NOW: a switch or an edit made while the config GET
-   was in flight wins over whatever was on screen when the load started, so
-   one bot's draft can never be painted onto another bot's form. */
 function repaintBotForm() {
   if (!botCfg.bot || botCfg.savingFor) return;
   const current = currentSettingsBot();
@@ -530,20 +478,15 @@ async function loadSettingsConfig() {
   const seq = ++settingsLoadSeq;
   let data;
   try {
-    data = await getJson('/api/config');                         // API: GET /api/config
+    data = await getJson('/api/config');
   } catch (err) {
-    if (seq !== settingsLoadSeq) return;     // a newer load started; leave its outcome alone
-    // Snapshot BEFORE replacing the controls: the visible draft survives
-    // the failed load and a later successful reopen restores it.
+    if (seq !== settingsLoadSeq) return;
     retainSettingsDraft();
     document.querySelector('#config-fields').innerHTML = `<p class="empty-note"><strong>Không tải được cấu hình.</strong>${escapeHTML(err.message)} — kiểm tra máy chủ rồi mở lại Cài đặt.</p>`;
     repaintBotForm();
     return;
   }
-  if (seq !== settingsLoadSeq) return;       // stale response: never replace a newer render/draft
-  // Edits typed while this read was in flight (or kept from before the
-  // open) win over the fresh values; each keeps its original baseline so
-  // a same-field concurrent change still compares against what the user saw.
+  if (seq !== settingsLoadSeq) return;
   retainSettingsDraft();
   settingsConfigValues = structuredClone(data.values || {});
   settingsBaseline = structuredClone(settingsConfigValues);
@@ -569,10 +512,6 @@ function settingsFreshOf(fresh, section, name) {
 
 async function submitSettingsConfig(form) {
   if (!settingsConfigValues || !settingsBaseline || settingsSaving) return;
-  // Dirty-check against the freshly rendered server baseline: only values
-  // the user actually changed go out. Reverting to an older value still
-  // counts (it differs from what the server now reports), while untouched
-  // fields can never become edits.
   const dirty = {};
   for (const el of form.querySelectorAll('[data-section]')) {
     const sec = el.dataset.section, name = el.dataset.name;
@@ -587,12 +526,8 @@ async function submitSettingsConfig(form) {
   settingsSaving = true;
   const btn = document.querySelector('#save-config'); if (btn) btn.disabled = true;
   try {
-    const latest = await getJson('/api/config');                 // API: GET /api/config
+    const latest = await getJson('/api/config');
     const fresh = latest.values || {};
-    // Same-field concurrency: when the server moved a dirty field since
-    // its original baseline and the form still disagrees with the server,
-    // surface the conflict instead of overwriting. Resubmitting unchanged
-    // against the same server value is informed consent and proceeds.
     const clashes = [];
     for (const [section, values] of Object.entries(dirty)) {
       for (const name of Object.keys(values)) {
@@ -600,9 +535,6 @@ async function submitSettingsConfig(form) {
         const server = settingsFreshOf(fresh, section, name);
         if (base === undefined || server === undefined) continue;
         if (!settingsValuesDiffer(server, base) || !settingsValuesDiffer(values[name], server)) continue;
-        // Consent is bound to the warned (server, draft) pair: resubmitting
-        // unchanged against the same server value is informed consent, but
-        // editing the draft afterwards must warn anew instead of posting.
         const seen = settingsConflictSeen && settingsConflictSeen[section] ? settingsConflictSeen[section][name] : undefined;
         if (seen && !settingsValuesDiffer(seen.server, server) && !settingsValuesDiffer(seen.draft, values[name])) continue;
         clashes.push({ section, name, server, draft: values[name] });
@@ -620,26 +552,17 @@ async function submitSettingsConfig(form) {
       settingsFormStatus(`Xung đột: ${bits.join('; ')} đã đổi ở nơi khác. Bản nháp được giữ nguyên — sửa theo máy chủ rồi lưu lại, hoặc lưu lại nguyên để ghi đè.`, 'is-error');
       return;
     }
-    // Merge the dirty fields onto the fresh read: unrendered sections stay
-    // current and untouched fields keep the fresh server value, so only an
-    // explicitly edited field overrides the server. A write-write race in
-    // between still fails closed with 409. The draft stays for retry.
     const next = structuredClone(fresh);
     for (const [section, values] of Object.entries(dirty)) next[section] = { ...(next[section] || {}), ...values };
-    // The limits field shows the EFFECTIVE context (the default model's own
-    // value when it has one, else the global). Sync the per-model copy only
-    // when the model already carries one: creating a pin for a model that
-    // inherits the global would shadow every future global edit for it.
     if (dirty.limits && dirty.limits.contextTokens !== undefined
         && next.defaultModel && next.models && Object.hasOwn(next.models, next.defaultModel)
         && next.models[next.defaultModel] && typeof next.models[next.defaultModel] === 'object'
         && Number.isInteger(next.models[next.defaultModel].contextTokens)) {
       next.models[next.defaultModel] = { ...next.models[next.defaultModel], contextTokens: dirty.limits.contextTokens };
     }
-    // Conditional write when the server reports a revision.
     const body = latest.revision != null ? { ...next, baseRevision: latest.revision } : next;
     try {
-      await postJson('/api/config', body);                        // API: POST /api/config — dirty limits fields only
+      await postJson('/api/config', body);
     } catch (err) {
       if (err?.status === 409) {
         settingsFormStatus(err?.data?.code === 'model_in_use' && err.message ? err.message : 'Cấu hình đã thay đổi ở nơi khác. Bản nháp được giữ nguyên — kiểm tra lại rồi lưu lại.', 'is-error');
@@ -650,8 +573,6 @@ async function submitSettingsConfig(form) {
     settingsConfigValues = next;
     settingsDraft = null;
     settingsConflictSeen = null;
-    // The display now shows the saved values: anchor the baseline to them
-    // so the refresh snapshot below does not mistake them for new edits.
     for (const [section, values] of Object.entries(dirty)) {
       if (!settingsBaseline[section] || typeof settingsBaseline[section] !== 'object') settingsBaseline[section] = {};
       Object.assign(settingsBaseline[section], structuredClone(values));
@@ -660,24 +581,20 @@ async function submitSettingsConfig(form) {
     settingsConfigSavedSelf = true;
     try { window.dispatchEvent(new Event('thyca:config-saved')); } finally { settingsConfigSavedSelf = false; }
     loadSettingsStatus();
-    // Refresh the display and its baseline from what was saved; edits typed
-    // during the save are re-captured by the load snapshot and kept.
-    await loadSettingsConfig();                                  // API: GET /api/config
+    await loadSettingsConfig();
   } catch (err) {
-    settingsFormStatus('Không lưu được: ' + err.message, 'is-error');   // no stale POST if the fresh read fails
+    settingsFormStatus('Không lưu được: ' + err.message, 'is-error');
   } finally {
     settingsSaving = false;
     if (btn) btn.disabled = false;
   }
 }
 
-/* ---------- Backend status (on demand) ---------- */
-
 async function loadSettingsStatus() {
   const ready = document.querySelector('#status-ready');
   if (!ready) return;
   try {
-    const s = await getJson('/api/config/status');                // API: GET /api/config/status
+    const s = await getJson('/api/config/status');
     ready.textContent = s.ready ? 'Sẵn sàng' : 'Chưa sẵn sàng — cần cấu hình provider';
     ready.className = 'status-line' + (s.ready ? ' s-ok' : ' s-error');
     document.querySelector('#status-version').textContent = s.version || '—';
@@ -688,13 +605,10 @@ async function loadSettingsStatus() {
   }
 }
 
-/* ---------- Dialog wiring ---------- */
-
 function bindSettingsDialog() {
   const dlg = document.querySelector('#settings-dialog');
   if (!dlg || dlg.dataset.settingsBound) return;
   dlg.dataset.settingsBound = 'true';
-  // Snapshot drafts on close so edits survive reopen without cross-bot bleed.
   dlg.addEventListener('close', () => {
     retainSettingsDraft();
     retainBotSettingsDraft();
@@ -750,9 +664,9 @@ function openSettingsDialog() {
     updateBotSave();
   }
   settingsBotCatalogDirty = false;
-  settingsFormStatus('');                                           // clear the previous save/conflict note
-  loadSettingsConfig();                                           // API: GET /api/config
-  loadSettingsStatus();                                           // API: GET /api/config/status — on demand
+  settingsFormStatus('');
+  loadSettingsConfig();
+  loadSettingsStatus();
   if (!dlg.open) dlg.showModal();
   return true;
 }

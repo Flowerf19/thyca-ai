@@ -19,6 +19,7 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
+from pathlib import Path as _P
 
 import pytest
 
@@ -54,9 +55,6 @@ CHAT_CSS = CHAT_DIR / "chatcss" / "chat.css"
 
 INDEX_HTML = CHAT_DIR / "index.html"
 
-# ---------------------------------------------------------------------------
-# Fake-DOM prelude + Node harness
-# ---------------------------------------------------------------------------
 
 _PRELUDE = r"""
 'use strict';
@@ -394,9 +392,6 @@ const installFetch = (handler) => {
 const roster = (cards) => cards.map((c, i) => normalizeBot(c, i));
 """
 
-# Symbols that live in files outside the loaded bundle get inert defaults so
-# shared helpers keep working (lexical declarations inside the bundle shadow
-# these global properties — exactly the browser's script-tag behaviour).
 _DEFAULTS = r"""
 globalThis.runs ??= new Map();
 globalThis.histories ??= new Map();
@@ -477,15 +472,17 @@ def _unit_factory_source(path: Path, source: str) -> str:
     controller_tail = tail.group(0).replace('return { ready,', 'const controller = { ready,', 1)
     if controller_tail == tail.group(0):
         raise AssertionError(f'unrecognized retained factory controller tail: {path}')
-    functions = set(re.findall(r"^(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(", body, re.M))
-    variables = set(re.findall(r"^(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?:=|,)", body, re.M))
-    mutable = set(re.findall(r"^let\s+([A-Za-z_$][\w$]*)\b", body, re.M))
-    for kind, declaration in re.findall(r"^(const|let|var)\s+([^;\n]+);", body, re.M):
+    functions = set(re.findall(r"^(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(", body, re.MULTILINE))
+    variables = set(re.findall(r"^(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?:=|,)", body, re.MULTILINE))
+    mutable = set(re.findall(r"^let\s+([A-Za-z_$][\w$]*)\b", body, re.MULTILINE))
+    for kind, declaration in re.findall(r"^(const|let|var)\s+([^;\n]+);", body, re.MULTILINE):
         names = re.findall(r"(?:^|,)\s*([A-Za-z_$][\w$]*)\s*=", declaration)
         variables.update(names)
-        if kind == 'let': mutable.update(names)
+        if kind == 'let':
+            mutable.update(names)
     excluded = {'ctx', 'root', '$', '$$', 'selectedBot'}
-    functions.difference_update(excluded); variables.difference_update(excluded)
+    functions.difference_update(excluded)
+    variables.difference_update(excluded)
     function_exports = ', '.join(f'{name}: {name}' for name in sorted(functions - {'boot'}))
     variable_exports = '\n'.join(
         f"Object.defineProperty(globalThis, {name!r}, {{ configurable: true, get: () => {name}"
@@ -541,10 +538,6 @@ def node() -> str:
     pytest.skip("node binary not found")
 
 
-# ---------------------------------------------------------------------------
-# Shared data layer — ui/share/data.js
-# ---------------------------------------------------------------------------
-
 def test_bot_color_resolves_tint_hex_and_storage_override(node: str) -> None:
     """TINT_HEX maps card.tint; unknown tints fall back to TINT_ORDER by index;
     a saved localStorage hex wins over both — stable for the immutable id."""
@@ -563,12 +556,12 @@ def test_bot_color_resolves_tint_hex_and_storage_override(node: str) -> None:
             sameIdStable: normalizeBot({ id: 'x', tint: 'botanical' }, 9).color === a.color,
         };
     """)
-    assert out["a"] == "#6f7f57"                      # TINT_HEX.botanical
+    assert out["a"] == "#6f7f57"
     assert out["aTint"] == "botanical"
-    assert out["b"] == out["orderFallback"]           # unknown tint -> order slot
-    assert out["cEqual"] is True                      # deterministic per index
-    assert out["saved"] == "#123456"                  # localStorage override wins
-    assert out["sameIdStable"] is True                # stable across calls
+    assert out["b"] == out["orderFallback"]
+    assert out["cEqual"] is True
+    assert out["saved"] == "#123456"
+    assert out["sameIdStable"] is True
 
 
 def test_derive_palette_produces_bot_var_contract(node: str) -> None:
@@ -609,21 +602,20 @@ def test_normalize_bot_maps_card_and_agent_status(node: str) -> None:
     """)
     b = out["b"]
     assert b["id"] == "coder" and b["name"] == "Coder" and b["role"] == "Dev"
-    assert b["state"] == "working"                    # running -> working
+    assert b["state"] == "working"
     assert b["summary"] == "đang build"
-    assert b["elapsed"] >= 4                          # seconds since agent_status.since
+    assert b["elapsed"] >= 4
     assert b["capabilities"] == [["bash", ""], ["edit", ""]]
     assert b["tools"] == [{"name": "t1", "description": "d1"}, {"name": "t2", "description": ""}]
     assert b["model"] == {"id": "m1", "thinking": "high"}
     assert b["bash"] == "ask" and b["schedule"] == "daily"
     assert b["system"] is True and b["persona"] == "p"
     assert b["memory"] == {"read": True, "write": False}
-    # The fixture bot is the system bot: always starred (see favorite test).
     assert b["conversations"] == [] and b["favorite"] is True and b["open"] is False
     assert b["palette"]["color"] == b["color"]
-    assert out["pausedState"] == "offline"            # paused -> offline
+    assert out["pausedState"] == "offline"
     assert out["bareState"] == "idle"
-    assert out["bareName"] == "bare"                  # name falls back to id
+    assert out["bareName"] == "bare"
     assert out["bareTools"] == [] and out["bareCaps"] == []
 
 
@@ -641,9 +633,9 @@ def test_load_roster_tolerates_missing_backend(node: str) -> None:
         await loadRoster();
         return { first, sel, afterEmpty: bots.length };
     """)
-    assert out["first"] == [["a", False], ["b", False]]    # chevron-only: roster load never discloses tasks
-    assert out["sel"] == "a"                                # default selection
-    assert out["afterEmpty"] == 0                           # missing payload tolerated
+    assert out["first"] == [["a", False], ["b", False]]
+    assert out["sel"] == "a"
+    assert out["afterEmpty"] == 0
 
 
 def test_get_json_errors_carry_status_and_body(node: str) -> None:
@@ -681,8 +673,8 @@ def test_refresh_conversations_partitions_groups_and_rows(node: str) -> None:
     """)
     assert out["groups"] == [["group-11111111111111111111111111111111", "Hội thoại chung", ["thyca", "coder"], "2 người bạn · 5 lượt"]]
     assert set(out["coderLabels"]) == {"Hội thoại chung", "coder"}
-    assert set(out["thyca"]) == {"group:group-11111111111111111111111111111111"}              # member of the group
-    assert set(out["coder"]) == {"group:group-11111111111111111111111111111111", "dm:coder"}  # dm + group
+    assert set(out["thyca"]) == {"group:group-11111111111111111111111111111111"}
+    assert set(out["coder"]) == {"group:group-11111111111111111111111111111111", "dm:coder"}
 
 
 def test_conversation_row_day_labels_and_turn_count(node: str) -> None:
@@ -726,10 +718,9 @@ def test_sync_roster_patches_in_place_and_respects_running_bots(node: str) -> No
             listHtml: $('#team-bot-list').innerHTML.includes('bot-c'),
         };
     """)
-    assert out["ids"] == ["a", "c"]                    # b dropped, c added
-    assert out["a"] == {"name": "A2", "role": "R"}     # patched in place
-    assert out["listHtml"] is True                     # changed -> renderTeam
-    # the running bot was deleted here, so state isn't preserved — covered below
+    assert out["ids"] == ["a", "c"]
+    assert out["a"] == {"name": "A2", "role": "R"}
+    assert out["listHtml"] is True
 
 
 def test_sync_roster_keeps_live_state_when_bot_has_run(node: str) -> None:
@@ -748,10 +739,6 @@ def test_sync_roster_keeps_live_state_when_bot_has_run(node: str) -> None:
     """)
     assert out == {"state": "working", "summary": "đang build", "elapsed": 30}
 
-
-# ---------------------------------------------------------------------------
-# Seal avatars — ui/share/avatars/avatars.js + idle.js
-# ---------------------------------------------------------------------------
 
 def test_avatar_markup_contract(node: str) -> None:
     """avatar(b) emits the medallion avatar span with bot palette vars,
@@ -808,7 +795,7 @@ def test_avatar_ink_drop_material_face_and_hands(node: str) -> None:
     ids = re.findall(r'id="(drop\d+-[a-z-]+)"', html)
     assert len(ids) == len(set(ids)) and len(ids) >= 2, ids
     ids2 = re.findall(r'id="(drop\d+-[a-z-]+)"', out["html2"])
-    assert not set(ids) & set(ids2)          # per-instance namespace
+    assert not set(ids) & set(ids2)
     assert 'class="seal-pupils"' in html
     assert 'class="eyes-open"' in html and 'class="eyes-happy"' in html
     assert 'class="eyes-error"' in html and 'class="eyes-rest"' in html
@@ -842,9 +829,9 @@ def test_avatar_body_is_id_stable_and_expression_follows_mention(node: str) -> N
         };
     """)
     assert out["stable"] is True
-    assert out["distinct"] is True                     # coder and researcher keep their own archetypes
-    assert out["unique"] is True                      # every render gets its own namespaced ids
-    assert 'data-state="waiting"' in out["listening"]    # stateAliases listening->waiting
+    assert out["distinct"] is True
+    assert out["unique"] is True
+    assert 'data-state="waiting"' in out["listening"]
     assert 'data-expression="mention"' in out["mentioned"]
 
 
@@ -881,10 +868,10 @@ def test_set_state_drives_summary_orbit_and_done_timer(node: str) -> None:
         return { thinking, doneAt, after: b.state };
     """)
     assert out["thinking"]["state"] == "thinking"
-    assert out["thinking"]["summary"] == ""              # no fabricated thinking text
+    assert out["thinking"]["summary"] == ""
     assert out["doneAt"]["state"] == "done"
-    assert out["doneAt"]["summary"] == ""                # done without summary stays factual-empty
-    assert out["after"] == "idle"                        # done beat -> idle
+    assert out["doneAt"]["summary"] == ""
+    assert out["after"] == "idle"
 
 
 def test_set_state_error_cancels_run_and_announces(node: str) -> None:
@@ -932,8 +919,8 @@ def test_mention_overlay_and_notify_text_drive_seal_attrs(node: str) -> None:
         };
     """)
     assert out["during"] == {"mentioned": True, "expr": "mention"}
-    assert out["after"]["mentioned"] is False            # 500ms overlay released
-    assert out["early"] is False                          # not writing -> ignored
+    assert out["after"]["mentioned"] is False
+    assert out["early"] is False
     assert out["ok"] is True
     assert out["streaming"] == "true"
     assert out["gaze"].endswith("px")
@@ -964,12 +951,12 @@ def test_notify_text_damper_beats_and_rests(node: str) -> None:
         return { first, second, beat1, beat2, beat3, rest };
     """)
     assert out["first"] is True and out["second"] is True
-    assert out["beat1"]["streaming"] == "true"              # first chunk beats immediately
+    assert out["beat1"]["streaming"] == "true"
     assert out["beat1"]["gaze"].endswith("px")
-    assert out["beat2"] == out["beat1"]                    # same beat: energy only, no re-seed
+    assert out["beat2"] == out["beat1"]
     assert out["beat3"]["streaming"] == "true"
-    assert out["beat3"]["gaze"] != out["beat1"]["gaze"]  # next beat re-seeds from accumulated input
-    assert out["rest"].get("streaming") is None            # ~2 quiet beats -> clearMusic rest
+    assert out["beat3"]["gaze"] != out["beat1"]["gaze"]
+    assert out["rest"].get("streaming") is None
     assert out["rest"]["gaze"] == ""
 
 
@@ -1003,12 +990,12 @@ def test_seal_parallax_vars_follow_pointer_and_reset(node: str) -> None:
         const pausedSkipped = sealFromPoint(host, 60, 15);
         return { zero, nx: hit.nx, ny: hit.ny, moved, clamped, cleared, previewSkipped, pausedSkipped };
     """)
-    assert out["zero"] is None                     # 0x0 rect: no parallax
-    assert out["nx"] == 1 and out["ny"] == -0.5   # right-top of centre
+    assert out["zero"] is None
+    assert out["nx"] == 1 and out["ny"] == -0.5
     assert out["moved"]["par"] == "1"
     par_x, par_y, well_x, well_y, hi_x, hi_y = out["moved"]["vars"]
     assert (par_x, par_y, well_x, hi_x) == ("4.00px", "-2.00px", "1.75px", "-1.50px")
-    assert float(well_y[:-2]) < 0 < float(hi_y[:-2])  # well follows, highlight opposes
+    assert float(well_y[:-2]) < 0 < float(hi_y[:-2])
     assert out["clamped"] == ["4.00px", "-4.00px", "1.75px", "-1.75px", "-1.50px", "1.50px"]
     assert out["cleared"].get("par") is None and out["cleared"]["vars"] == [""] * 6
     assert out["previewSkipped"] is None and out["pausedSkipped"] is None
@@ -1032,16 +1019,12 @@ def test_idle_layer_gestures_never_change_work_state(node: str) -> None:
         return { during, after, blocked, opts, eligA: idleEligible(a), eligB: idleEligible(b) };
     """)
     assert out["during"]["key"] == "look" and out["during"]["active"] == "look"
-    assert out["during"]["state"] == "idle"              # ambient layer leaves state alone
+    assert out["during"]["state"] == "idle"
     assert out["after"]["active"] is None and out["after"]["comment"] == ""
-    assert out["blocked"] is False                       # mentioned bot ineligible
+    assert out["blocked"] is False
     assert out["opts"] == {"enabled": False, "comments": True, "toggles": [False, True]}
     assert out["eligA"] is True and out["eligB"] is False
 
-
-# ---------------------------------------------------------------------------
-# Sidebar — ui/share/sidebar.js
-# ---------------------------------------------------------------------------
 
 def test_card_markup_anatomy(node: str) -> None:
     """card(b) -> bot-card/team-cluster/team-envelope with select/favorite/
@@ -1070,18 +1053,18 @@ def test_card_markup_anatomy(node: str) -> None:
     assert 'class="header-status"' in html and "Đang suy nghĩ" in html
     status_idx = html.index('class="header-status"')
     actions_idx = html.index('class="card-actions"')
-    assert status_idx < actions_idx   # status is the 2nd heading row, not in actions
+    assert status_idx < actions_idx
     actions = html[actions_idx:html.index("</div>", actions_idx)]
     assert sorted(re.findall(r'data-action="(\w+)"', actions)) == ["favorite", "info"]
     assert 'class="reply-action"' in html and 'data-action="reply" hidden' in html
-    assert 'class="preview-text"></span>' in html   # live-only preview: empty with no tool/skill calls
-    assert 'data-action="live-more"' not in html    # +N full-list button only when >2 groups
+    assert 'class="preview-text"></span>' in html
+    assert 'data-action="live-more"' not in html
     assert 'data-action="favorite"' in html and 'aria-pressed="true"' in html
     assert 'class="icon-button info-button"' in html
     assert 'data-action="collapse"' not in html
-    assert 'id="pocket-coder"' in html and " inert>" in html or " inert " in html
+    assert ('id="pocket-coder"' in html and " inert>" in html) or " inert " in html
     assert 'class="thinking-paper"' in html and 'class="progress-list"' in html
-    assert 'class="thought-extra"' not in html      # no invented thinking tail in the task pocket
+    assert 'class="thought-extra"' not in html
     assert 'data-action="info"' in html and 'data-action="capabilities"' not in html
 
 
@@ -1100,7 +1083,7 @@ def test_render_team_and_group_rows_markup(node: str) -> None:
         return { team, group, thycaIdx: team.indexOf('id="bot-thyca"'), coderIdx: team.indexOf('id="bot-coder"') };
     """)
     team, group = out["team"], out["group"]
-    assert 0 <= out["thycaIdx"] < out["coderIdx"]         # roster order kept
+    assert 0 <= out["thycaIdx"] < out["coderIdx"]
     assert team.count('class="bot-card') == 2
     assert 'class="bot-card group-card chat-only"' in group and 'data-group="g1"' in group
     assert 'class="group-cluster"' in group
@@ -1169,14 +1152,14 @@ def test_star_click_pins_card_to_top_in_place(node: str) -> None:
     """)
     assert out["initial"] == ["a", "b"]
     pin = out["afterPin"]
-    assert pin["order"] == ["b", "a"]            # b jumped above a
-    assert pin["sameA"] is True and pin["sameB"] is True  # same nodes moved
+    assert pin["order"] == ["b", "a"]
+    assert pin["sameA"] is True and pin["sameB"] is True
     assert pin["toast"] == "Đã ghim Beta lên đầu."
-    assert pin["roster"] == ["a", "b"]           # data order untouched
-    assert out["afterUnpin"]["order"] == ["a", "b"]   # stable slot restored
+    assert pin["roster"] == ["a", "b"]
+    assert out["afterUnpin"]["order"] == ["a", "b"]
     assert out["afterUnpin"]["toast"] == "Đã bỏ ghim Beta."
     assert out["afterUnpin"]["roster"] == ["a", "b"]
-    assert out["bothPinned"]["order"] == ["a", "b"]   # pinned group keeps roster order
+    assert out["bothPinned"]["order"] == ["a", "b"]
     assert out["bothPinned"]["sameA"] is True and out["bothPinned"]["sameB"] is True
 
 
@@ -1239,9 +1222,9 @@ def test_update_card_patches_state_preview_and_pocket(node: str) -> None:
     assert w["state"] == "working" and w["open"] == "true" and w["sel"] == "true"
     assert w["label"] == "Đang làm việc"
     assert w["aria"] == "Trò chuyện với Alpha · Đang làm việc"
-    assert w["preview"] == "bash \u00d72"               # live grouping only, factual
-    assert w["more"] == []                                 # one group -> no visible +N
-    assert w["summary"] == "1 vi\u1ec7c \u0111ang ch\u1ea1y"  # pocket: fetched task status
+    assert w["preview"] == "bash \u00d72"
+    assert w["more"] == []
+    assert w["summary"] == "1 vi\u1ec7c \u0111ang ch\u1ea1y"
     assert w["rows"] == 1
     assert w["elapsed"] == "12 giây"
     assert w["expanded"] is True and w["inert"] is False
@@ -1249,7 +1232,6 @@ def test_update_card_patches_state_preview_and_pocket(node: str) -> None:
     assert "Khoảng lặng" not in i["summary"] and i["whisperCls"] is False
     assert i["preview"] == "" and i["idleFlag"] == "false"
     assert i["title"] == "Sẵn sàng"
-    # A fabricated summary string on the bot never reaches either surface.
     assert out["generic"]["preview"] == ""
     assert "fabricated" not in out["generic"]["text"]
     assert out["generic"]["title"] == "Đang suy nghĩ"
@@ -1303,18 +1285,18 @@ def test_pocket_state_matrix_reply_action_and_open_invariance(node: str) -> None
         return { seen, dispatches: globalThis.__spaDispatches, focusedAfterSelect, focused };
     """)
     for st, s in out["seen"].items():
-        assert s["open"] is True and s["inert"] is False, st   # state never flips expansion
+        assert s["open"] is True and s["inert"] is False, st
         assert s["cardState"] == st
-        assert "muc tieu X" not in s["summary"], st          # caller summaries never paint the pocket
-        assert s["label"] != "", st                            # header status row always filled
+        assert "muc tieu X" not in s["summary"], st
+        assert s["label"] != "", st
         assert s["replyHidden"] == (st not in ("waiting", "confused")), st
-    assert out["dispatches"] == [["selectBot", "a"], ["selectBot", "a"]]  # reply = same dispatch as select
+    assert out["dispatches"] == [["selectBot", "a"], ["selectBot", "a"]]
     assert out["focusedAfterSelect"] is False and out["focused"] is True
 
 
 def test_live_preview_groups_and_legacy_finish(node: str) -> None:
     """The compact preview shows only live tool/skill calls for the exact
-    window: up to two kind+name groups with ×N, +extra for the rest. One
+    window: up to two kind+name groups with xN, +extra for the rest. One
     finish removes only a unique match; ambiguous or unknown legacy finishes
     remove nothing, and tool vs skill stays distinct."""
     out = _run(node, r"""
@@ -1351,24 +1333,24 @@ def test_live_preview_groups_and_legacy_finish(node: str) -> None:
                  leaked, windowCalls: liveCallsForWindow(b, 's1').length,
                  skillPreview };
     """, via="chat")
-    assert out["groups"]["total"] == 4                # tool read / skill read / bash / edit
-    assert len(out["groups"]["shown"]) == 2 and out["extra"] == 2  # up to two +N
-    assert "edit" in out["preview"] and "bash" in out["preview"]  # newest two name the preview
+    assert out["groups"]["total"] == 4
+    assert len(out["groups"]["shown"]) == 2 and out["extra"] == 2
+    assert "edit" in out["preview"] and "bash" in out["preview"]
     assert out["ambiguous"] is None
     assert out["r1kind"] == "tool"
-    assert out["unknown"] is None                     # never guess on unknown ids
+    assert out["unknown"] is None
     assert out["leaked"] is False
-    assert out["afterOneTotal"] == 3                    # one colliding call removed, one left
-    assert out["afterTwoTotal"] == 2                    # second finish clears the collision
+    assert out["afterOneTotal"] == 3
+    assert out["afterTwoTotal"] == 2
     kinds = {(k, n) for k, n, _ in out["afterTwo"]}
     assert kinds == {("tool", "bash"), ("tool", "edit")}
-    assert out["windowCalls"] == 3                    # bash + edit + skill fetch in-window
-    assert "skill fetch" in out["skillPreview"]     # skill kind shown, never masked as tool
+    assert out["windowCalls"] == 3
+    assert "skill fetch" in out["skillPreview"]
 
 
 def test_task_pocket_keyed_reconcile_and_stale_guard(node: str) -> None:
     """The pocket task list renders one row per fetched kind+name group with
-    ×N (no ghosts, no invented rows); a superseded fetch never paints a
+    xN (no ghosts, no invented rows); a superseded fetch never paints a
     stale bot/window."""
     out = _run(node, r"""
         bots.length = 0;
@@ -1400,8 +1382,8 @@ def test_task_pocket_keyed_reconcile_and_stale_guard(node: str) -> None:
     assert any("port parser" in r and "open" in r for r in out["rows"])
     assert any("review diff" in r and "queued" in r and "Beta" in r for r in out["rows"])
     assert out["same"] is True
-    assert out["stale"] is None                       # superseded fetch never paints
-    assert out["statusAfterSwitch"] != ""              # pocket names its state, never blank-guesses
+    assert out["stale"] is None
+    assert out["statusAfterSwitch"] != ""
 
 
 def test_open_bot_expansion_is_exclusive(node: str) -> None:
@@ -1444,10 +1426,10 @@ def test_pocket_disclosure_is_chevron_only(node: str) -> None:
         return { afterRoster, afterPaint, afterNull, afterOpen, openedUrl,
                  window: bots[0].taskWindow };
     """, via="chat")
-    assert out["afterRoster"] == 0                # roster load discloses nothing
-    assert out["afterPaint"] == 0                 # select affordance/paint discloses nothing
-    assert out["afterNull"] == 0                  # null window never invents a fetch
-    assert out["afterOpen"] == 1                  # chevron open fetches exactly the window
+    assert out["afterRoster"] == 0
+    assert out["afterPaint"] == 0
+    assert out["afterNull"] == 0
+    assert out["afterOpen"] == 1
     assert out["openedUrl"] == "/api/bots/a/dm/tasks"
     assert out["window"] == "dm:a"
 
@@ -1475,7 +1457,7 @@ def test_open_pocket_refreshes_on_window_switch_not_on_poll(node: str) -> None:
         return { first, same, after, lastUrl, window: bots[0].taskWindow };
     """, via="chat")
     assert out["first"] == 1
-    assert out["same"] == 1                       # event-driven only: no poll on same window
+    assert out["same"] == 1
     assert out["after"] == 2 and out["lastUrl"] == "/api/bots/a/groups/group-11111111111111111111111111111111/tasks"
     assert out["window"] == "group:group-11111111111111111111111111111111"
 
@@ -1509,7 +1491,7 @@ def test_late_task_response_never_paints_stale_window(node: str) -> None:
                  staleLeaked: rows.some(t => t.includes('stale work')) };
     """, via="chat")
     assert out["window"] == "s2"
-    assert out["staleLeaked"] is False            # late s1 payload never paints s2
+    assert out["staleLeaked"] is False
     assert "stale work" not in out["status"]
 
 
@@ -1610,8 +1592,8 @@ def test_stream_burst_coalesces_task_refreshes(node: str) -> None:
         return { during, total, status: b.taskCache && b.taskCache.status,
                  live: (b.liveCalls || []).length, flight: !!b._taskFlight };
     """, via="chat")
-    assert out["during"] == 1                       # burst coalesced into the in-flight fetch
-    assert out["total"] == 2                        # exactly one bounded recheck
+    assert out["during"] == 1
+    assert out["total"] == 2
     assert out["status"] == "ok" and out["live"] == 5 and out["flight"] is False
 
 
@@ -1645,7 +1627,7 @@ def test_pocket_renders_all_tasks_with_distinct_identities(node: str) -> None:
                  distinct: new Set(keys).size === keys.length,
                  stable, status: $('.thinking-summary', $('#bot-a')).textContent };
     """, via="chat")
-    assert out["count"] == 25                      # all units, no slice
+    assert out["count"] == 25
     assert out["sameCount"] == 3 and out["distinct"] is True
     assert out["stable"] is True
     assert out["status"] == "25 việc đang chạy"
@@ -1653,7 +1635,7 @@ def test_pocket_renders_all_tasks_with_distinct_identities(node: str) -> None:
 
 def test_live_more_opens_separate_full_list(node: str) -> None:
     """The +N button opens the full live list SEPARATE from the task pocket:
-    pocket stays closed, every group lists with ×N, Escape/focus restore."""
+    pocket stays closed, every group lists with xN, Escape/focus restore."""
     out = _run(node, r"""
         bots.length = 0;
         bots.push(...roster([{ id: 'a', name: 'Alpha' }]));
@@ -1680,12 +1662,12 @@ def test_live_more_opens_separate_full_list(node: str) -> None:
                  pocketOpen: b.open, moreLabel: moreBtn && moreBtn.textContent };
     """, via="chat")
     assert out["opened"] is True
-    assert out["rowsCount"] == 3                     # bash ×2, skill read, edit
+    assert out["rowsCount"] == 3
     assert "bash" in out["rowsHtml"] and "\u00d72" in out["rowsHtml"]
     assert "read" in out["rowsHtml"]
     assert "Alpha" in out["sub"]
-    assert out["pocketOpen"] is False              # full list never opens the pocket
-    assert out["moreLabel"] == "+1"                # 3 groups: 2 shown + 1
+    assert out["pocketOpen"] is False
+    assert out["moreLabel"] == "+1"
 
 
 def test_preview_and_pocket_never_cross_windows(node: str) -> None:
@@ -1711,19 +1693,18 @@ def test_preview_and_pocket_never_cross_windows(node: str) -> None:
         const callsThere = liveCallsForWindow(b, 's-other').length;
         return { previewHere, pocketHere, rowsHere, previewAway, pocketAway, callsThere };
     """, via="chat")
-    assert out["previewHere"] == ""               # other window's calls never preview here
-    assert "secret" not in out["pocketHere"]      # stale-window cache never renders
+    assert out["previewHere"] == ""
+    assert "secret" not in out["pocketHere"]
     assert out["rowsHere"] == 0
     assert out["previewAway"] == ""
-    assert "secret" not in out["pocketAway"]       # unavailable note, never leaked content
-    assert out["callsThere"] == 1                 # stored, just never shown cross-window
+    assert "secret" not in out["pocketAway"]
+    assert out["callsThere"] == 1
 
 
 def test_studio_previews_never_open_pockets() -> None:
     """Expression-studio previews (idle/expression picks) drive avatar
     states only — pocket disclosure stays chevron-exclusive, so the
     activity surface cannot leak tasks."""
-    from pathlib import Path as _P
 
     studio = (_P(__file__).resolve().parents[1] / "thyca" / "webui" / "ui"
               / "share" / "avatars" / "studio.js").read_text()
@@ -1787,13 +1768,11 @@ def test_team_list_click_delegates_card_actions(node: str) -> None:
         return { calls, dispatches: globalThis.__spaDispatches || [], open: b.open, fav: b.favorite, favAria: fav.getAttribute('aria-pressed'), toast: $('#toast').textContent,
                  stored: JSON.parse(localStorage.getItem('thyca.favorites')) };
     """)
-    # Sidebar selection is routed to the active page controller; info stays shared.
     assert out["dispatches"] == [["selectBot", "a"]]
     assert out["calls"] == [["info", "a", None], ["info", "a", None]]
-    assert out["open"] is False                           # no expand action anymore
+    assert out["open"] is False
     assert out["fav"] is True and out["favAria"] == "true"
     assert "Alpha" in out["toast"]
-    # The star is persisted so it survives reloads (prototype toggle lost it).
     assert out["stored"] == ["a"]
 
 
@@ -1914,13 +1893,10 @@ def test_expression_dialog_shape_markup_consistent(node: str) -> None:
     for text in (html, shell):
         assert 'id="shape-picker"' in text
         assert "Hình dạng" in text
-        assert "màu và hình dáng" in text   # shared dialog bot section (static markup)
+        assert "màu và hình dáng" in text
     assert html.count('id="shape-picker"') == 1
     assert shell.count('id="shape-picker"') == 1
     assert "màu, hình dạng" in html and "màu, hình dạng" in shell
-    # TASK F: the shape row keeps a clear vertical gap above .studio-tabs
-    # (selected-button outline must not touch the tab row), following the
-    # dialog's existing 18px rhythm.
     studio = STUDIO_CSS.read_text(encoding="utf-8")
     row = "".join(studio.split(".shape-row{", 1)[1].split("}", 1)[0].split())
     assert "margin-bottom:18px" in row or "margin:12px018px" in row
@@ -1969,8 +1945,8 @@ def test_system_bot_star_is_permanent(node: str) -> None:
     assert out["mainHasLabel"] is True
     assert out["mainPressed"] is True
     assert out["helperDisabled"] is False
-    assert out["mainPinned"] is True          # system wording is pinning, not starring
-    assert out["helperUnpinLabel"] is True    # stored-star helper offers to unpin
+    assert out["mainPinned"] is True
+    assert out["helperUnpinLabel"] is True
     assert out["helperPinMissing"] is True
 
 
@@ -2042,10 +2018,6 @@ def test_group_form_submit_creates_and_opens_group(node: str) -> None:
     assert out["groupCount"] == 1
 
 
-# ---------------------------------------------------------------------------
-# Bot drawer — ui/share/sidebar.js (openInfo/capabilitiesHtml/fillDrawerContext)
-# ---------------------------------------------------------------------------
-
 def test_open_info_renders_identity_and_conversation_index(node: str) -> None:
     """openInfo fills the merged drawer with the info lockup, facts/tools/context
     (no descriptions) plus the bot's conversation list."""
@@ -2098,8 +2070,8 @@ def test_capabilities_facts_are_honest_when_empty(node: str) -> None:
         assert needle in full
     bare = out["bare"]
     assert "Không có công cụ nào." in bare
-    assert "Vai trò" not in bare and "Model" not in bare   # empty facts dropped
-    assert "Bot tùy chỉnh" in bare                          # non-system label
+    assert "Vai trò" not in bare and "Model" not in bare
+    assert "Bot tùy chỉnh" in bare
 
 
 def test_drawer_context_meter_fills_and_bands(node: str) -> None:
@@ -2146,7 +2118,7 @@ def test_drawer_context_drops_stale_slot_and_survives_errors(node: str) -> None:
         return { staleSafe, afterError: slot2.querySelector('.ctx-bar').className };
     """)
     assert out["staleSafe"] is True
-    assert out["afterError"] == "ctx-bar"                    # untouched on failure
+    assert out["afterError"] == "ctx-bar"
 
 
 def test_drawer_conversation_button_routes_to_conversation(node: str) -> None:
@@ -2168,10 +2140,6 @@ def test_drawer_conversation_button_routes_to_conversation(node: str) -> None:
     assert out["closed"] is True and out["open"] is False and out["otherOpen"] is False
 
 
-# ---------------------------------------------------------------------------
-# Shared shell — ui/share/shell.js + shell-app.js
-# ---------------------------------------------------------------------------
-
 def test_shell_markup_header_sidebar_and_dialogs(node: str) -> None:
     """shell.js emits the shared chrome: header nav (is-current + aria-current),
     the sidebar skeleton (with chat-only group section for SPA persistence)
@@ -2186,9 +2154,7 @@ def test_shell_markup_header_sidebar_and_dialogs(node: str) -> None:
     assert 'class="site-header"' in header and 'class="wordmark"' in header
     assert 'class="page-links"' in header
     assert 'data-page-link="memories" class="is-current" aria-current="page"' in header
-    assert 'data-page-link="chat"' in header and 'data-page-link="settings"' not in header   # settings lives in the footer dialog now
-    # The "Backend trực tiếp" prototype badge did not survive the rebuild;
-    # the menu button came back as the mobile-only sidebar trigger.
+    assert 'data-page-link="chat"' in header and 'data-page-link="settings"' not in header
     assert 'prototype-badge' not in header
     assert 'class="icon-button menu-button"' in header
     assert 'aria-controls="chat-sidebar"' in header
@@ -2196,11 +2162,8 @@ def test_shell_markup_header_sidebar_and_dialogs(node: str) -> None:
     assert 'class="bot-count"' in side
     assert 'class="session-list" id="team-bot-list"' in side
     assert 'id="open-settings"' in side and 'Cài đặt' in side
-    assert 'id="open-customize"' not in side and 'id="motion-toggle"' not in side   # footer holds only the Settings entry now
+    assert 'id="open-customize"' not in side and 'id="motion-toggle"' not in side
     assert 'class="splitter"' in side
-    # Shared sidebar now carries the chat-only group section as well so SPA
-    # navigation can show/hide it via CSS at any width (small drawer included).
-    # Visibility is controlled by `body[data-active-page]` chat-only rule.
     assert 'id="team-shared-create"' not in side
     assert 'class="section-label chat-only"' not in side
     assert 'id="group-list"' not in side
@@ -2270,9 +2233,9 @@ def test_handle_event_maps_lifecycle_and_respects_guards(node: str) -> None:
         return { seq, blocked, gated, errorMention, mentioned, unknown };
     """, via="shell")
     assert out["seq"] == ["waiting", "thinking", "working", "writing", "done"]
-    assert out["blocked"] == [False, True, "idle"]         # restored -> idle
-    assert out["gated"] is False                           # error gate for llm.content
-    assert out["errorMention"] is False                    # mentionBot refuses error bots
+    assert out["blocked"] == [False, True, "idle"]
+    assert out["gated"] is False
+    assert out["errorMention"] is False
     assert out["mentioned"] is True
     assert out["unknown"] is False
 
@@ -2311,10 +2274,6 @@ def test_toggle_motion_and_shell_adapter(node: str) -> None:
     assert out["state0"] == "a"
 
 
-# ---------------------------------------------------------------------------
-# Chat turn loop — ui/chat/js/chat.js (+ chat data.js)
-# ---------------------------------------------------------------------------
-
 _CHAT_SEED = """
         bots.length = 0;
         bots.push(...roster([{ id: 'thyca', name: 'Thyca' }, { id: 'coder', name: 'Coder' }]));
@@ -2322,8 +2281,6 @@ _CHAT_SEED = """
         currentConversation = 'dm:coder'; selectedBot = 'coder';
 """
 
-# app.js/page scripts boot() at load and fetch with the default stub — seeding
-# must wait for that boot to settle (its empty roster would splice ours out).
 _APP_SEED = "await tick();" + _CHAT_SEED
 
 
@@ -2373,12 +2330,12 @@ def test_send_turn_streams_and_finishes(node: str) -> None:
     assert out["ok"] is True
     assert out["state"] == "done"
     assert out["runsEmpty"] is True
-    assert out["live"] == []                       # terminal event clears this window's live calls
-    assert out["preview"] == ""                    # no invented thinking/writing tail
-    assert out["open"] is False                    # send never discloses the pocket
+    assert out["live"] == []
+    assert out["preview"] == ""
+    assert out["open"] is False
     assert 'class="message-user"' in out["html"] and "<p>hi</p>" in out["html"]
     assert 'class="message-assistant"' in out["html"] and "Coder" in out["html"]
-    assert "Chào" in out["html"]                          # transcript re-rendered
+    assert "Chào" in out["html"]
     assert "Coder" in out["announced"] and "hoàn tất" in out["announced"]
     assert out["busyOff"] is True
 
@@ -2442,17 +2399,12 @@ def test_stream_events_drive_live_calls_and_stream_text(node: str) -> None:
         };
     """, via="chat")
     assert out["phase"] == "writing" and out["state"] == "writing"
-    # Two colliding bash calls (tool+skill on c1) minus one finish, plus c2:
-    # skill/bash stays distinct, counts stay exact under out-of-order finish.
     remaining = {(k, n, c) for k, n, c in out["live"]}
     assert remaining == {("skill", "bash", "c1"), ("tool", "bash", "c2")}
-    assert out["groups"]["total"] == 2               # tool bash ×1 + skill bash ×1
+    assert out["groups"]["total"] == 2
     assert "bash" in out["preview"]
     assert out["byline"] == "đang viết"
-    assert out["stream"] == "Chữ đang chảy"                  # raw deltas appended
-    # the .stream-text stub is auto-vivified, so handleStreamEvent's !p branch
-    # (which would create the caret) is skipped under this harness — assert the
-    # text path only; caret markup lives in chat.css checks instead
+    assert out["stream"] == "Chữ đang chảy"
     assert out["tokenTools"] == ["bash", "bash", "bash"]
 
 def test_turn_terminal_events_cancel_and_fail(node: str) -> None:
@@ -2555,7 +2507,6 @@ def test_follow_running_turn_rejoins_inflight(node: str) -> None:
             runsEmpty: runs.size === 0,
         };
     """, via="chat")
-    # the stream finished -> transcript re-rendered over the running node
     assert out["state"] == "done"
     assert "message-assistant" in out["html"] and "done" in out["html"]
     assert out["runsEmpty"] is True
@@ -2646,7 +2597,7 @@ def test_select_bot_resolves_dm_get_only(node: str) -> None:
     assert ok["conversation"] == "dm:thyca" and ok["sel"] == "thyca"
     assert ok["title"] == "Thyca" and ok["eyebrow"] == "Sổ trò chuyện · Thyca"
     assert ok["transcript"] is True
-    assert ok["urls"] == ["/api/bots/thyca/dm", "/api/bots/thyca/exchanges"]   # DM + exchange groups, GETs only
+    assert ok["urls"] == ["/api/bots/thyca/dm", "/api/bots/thyca/exchanges"]
     assert "Không mở được phiên với Coder" in out["error"]
 
 
@@ -2674,13 +2625,13 @@ def test_render_transcript_skips_sidecars_and_attributes_bots(node: str) -> None
     """, via="chat")
     html = out["html"]
     assert out["userCount"] == 1 and "làm ơn" in html
-    assert out["assistantCount"] == 3                     # a1, a4, a5 — a2 dropped
+    assert out["assistantCount"] == 3
     assert "sys" not in html and "tool out" not in html
-    assert "Thyca" in html                                # meta.bot_id attribution
-    assert "Đã dùng: bash, edit" in html                  # tool pill
-    assert "<p>a2</p>" not in html and "<p>a3</p>" not in html   # sidecars dropped
+    assert "Thyca" in html
+    assert "Đã dùng: bash, edit" in html
+    assert "<p>a2</p>" not in html and "<p>a3</p>" not in html
     assert "<p>a4</p>" in html and "<p>a5</p>" in html
-    assert "ghost" in html                                # unknown bot id kept as name fallback
+    assert "ghost" in html
 
 
 def test_assistant_message_markup_and_fallback(node: str) -> None:
@@ -2697,8 +2648,8 @@ def test_assistant_message_markup_and_fallback(node: str) -> None:
     assert 'class="live-copy markdown-body"' in k and "<p>nội dung</p>" in k
     assert 'class="usage-pill"' in k and "Đã dùng: bash" in k
     assert 'data-retry="coder"' in k and "Thử lại" in k and "data-copy" in k
-    assert ">ghost<" in u                                 # id as display name
-    assert "--bot-color:" in u                            # fallback palette applied
+    assert ">ghost<" in u
+    assert "--bot-color:" in u
     assert 'data-retry="ghost"' in u
 
 
@@ -2724,7 +2675,7 @@ def test_busy_and_scroll_helpers(node: str) -> None:
     assert out["during"] == {"send": True, "stop": False, "aria": "true"}
     assert out["after"] == {"send": False, "aria": "false"}
     assert out["near"] is True and out["far"] is False
-    assert out["notMoved"] == 0 and out["moved"] == 1000   # force scrolls
+    assert out["notMoved"] == 0 and out["moved"] == 1000
 
 
 def test_update_composer_targets_selected_bot(node: str) -> None:
@@ -2740,10 +2691,6 @@ def test_update_composer_targets_selected_bot(node: str) -> None:
     assert "Coder" in out["ph"]
     assert out["ink"] == "#5f6e4b" or re.match(r"#[0-9a-f]{6}", out["ink"])
 
-
-# ---------------------------------------------------------------------------
-# Composer + boot — ui/chat/js/app.js
-# ---------------------------------------------------------------------------
 
 def test_composer_submit_routes_mention_and_resets(node: str) -> None:
     """The composer resolves an @mention against the live roster for the
@@ -2770,7 +2717,7 @@ def test_composer_submit_routes_mention_and_resets(node: str) -> None:
     """, via="app")
     assert out["sent"] == [["nhờ @coder build giúp", "coder", None]]
     assert out["cleared"] is True and out["popupHidden"] is True
-    assert out["kept"] is True                             # busy submit never clears
+    assert out["kept"] is True
     assert out["typedMention"] is True
 
 
@@ -2801,7 +2748,7 @@ def test_mention_popup_filters_and_completes(node: str) -> None:
     assert out["hiddenAgain"] is True
     assert out["value"] == "nhờ @coder "
     assert out["sel"] == "coder" and out["hidden2"] is True
-    assert out["flash"] is True                            # mentionBot overlay fired
+    assert out["flash"] is True
 
 
 def test_composer_keydown_enter_escape_and_arrows(node: str) -> None:
@@ -2827,7 +2774,7 @@ def test_composer_keydown_enter_escape_and_arrows(node: str) -> None:
         input.dispatch('keydown', { key: 'ArrowDown' });
         return { enter, shift, esc, focused };
     """, via="app")
-    assert out["enter"] == 1 and out["shift"] == 1         # Shift+Enter does not submit
+    assert out["enter"] == 1 and out["shift"] == 1
     assert out["esc"] is True
     assert out["focused"] == ["x"]
 
@@ -2892,10 +2839,6 @@ def test_prototype_adapter_and_demo_button(node: str) -> None:
     assert out["stopIsStopRun"] is True
 
 
-# ---------------------------------------------------------------------------
-# Page scripts — settings / memories / dashboard / trace
-# ---------------------------------------------------------------------------
-
 def test_settings_dialog_renders_bot_prefs_and_status(node: str) -> None:
     """The shared Settings dialog shows the bot shortcut (shared seal),
     machine-only prefs (defaults applied without writing) and on-demand
@@ -2931,14 +2874,13 @@ def test_settings_dialog_renders_bot_prefs_and_status(node: str) -> None:
     assert out["opened"] is True and out["open"] is True
     assert "Alpha" in out["botOptions"] and 'class="seal-avatar' in out["seal"]
     assert "Alpha" in out["seal"]
-    assert out["studio"] == "function"                   # studio shortcut retained
+    assert out["studio"] == "function"
     assert out["ready"] == "Sẵn sàng" and out["readyCls"] == "status-line s-ok"
     assert out["version"] == "1.2.3"
     assert out["pref"]["typeScale"] == "medium"
     assert out["pref"]["reduceMotion"] is False
     assert out["pref"]["ornaments"] is True
     assert out["pref"]["hook"] == "on"
-    # opening applies prefs without writing — only user edits persist
     assert out["pref"]["savedAtOpen"] is None
 
 
@@ -3033,9 +2975,8 @@ def test_settings_form_posts_merged_values(node: str) -> None:
     fields = out["fields"]
     assert 'data-section="limits"' in fields and 'data-name="maxLoops"' in fields
     assert "Vòng tối đa" in fields and 'min="1"' in fields and 'max="9"' in fields
-    assert 'data-name="secret"' not in fields              # secret fields never render
-    assert 'data-name="model"' not in fields               # hidden fields never render
-    # the whole values object posts back with only the edited field changed
+    assert 'data-name="secret"' not in fields
+    assert 'data-name="model"' not in fields
     assert out["posted"] == [{"limits": {"maxLoops": 7}, "provider": {"model": "m1", "apiKey": "keep"}}]
 
 
@@ -3067,8 +3008,6 @@ def test_settings_save_merges_limit_patch_onto_fresh_provider_config(node: str) 
         await submitSettingsConfig($('#config-form'));
         return { gets, posted, buttonDisabled: $('#save-config').disabled };
     """, via="dialog")
-    # load + submit-time fresh read + post-save refresh (the refresh keeps
-    # the display and its baseline truthful after the write)
     assert out["gets"] == 3 and len(out["posted"]) == 1
     posted = out["posted"][0]
     assert posted["limits"] == {"loopMax": 91, "hotTailKB": 4}
@@ -3102,7 +3041,7 @@ def test_settings_fresh_read_failure_never_posts_stale_config(node: str) -> None
     assert out["gets"] == 2 and out["posts"] == []
     assert out["saving"] is False and out["disabled"] is False
     assert "Không lưu được" in out["status"] and out["statusShown"] is True and out["role"] == "status"
-    assert out["kept"] == 1   # draft survives the failed submit for retry
+    assert out["kept"] == 1
 
 
 def test_settings_save_sends_base_revision_when_server_reports_it(node: str) -> None:
@@ -3212,8 +3151,8 @@ def test_settings_concurrent_edit_to_untouched_field_is_not_overwritten(node: st
     """, via="dialog")
     assert len(out["posted"]) == 1
     body = out["posted"][0]
-    assert body["baseRevision"] == "r1"                 # fresh revision, not the stale load-time one
-    assert body["limits"] == {"loopMax": 999, "hotTailKB": 5}   # theirs kept, ours applied
+    assert body["baseRevision"] == "r1"
+    assert body["limits"] == {"loopMax": 999, "hotTailKB": 5}
     assert "Đã lưu" in out["toast"] and "Đã lưu" in out["status"] and "is-ok" in out["statusOk"]
 
 
@@ -3266,7 +3205,7 @@ def test_settings_conflict_surfaces_inside_dialog_and_retry_succeeds(node: str) 
     assert out["conflicted"]["kept"] == 1 and out["conflicted"]["base"] == 80
     assert out["retried"]["status"] == "Đã lưu cài đặt." and "is-ok" in out["retried"]["cls"]
     assert out["retried"]["base"] == 91 and out["retried"]["attempts"] == 2
-    assert out["attempts"] == 2   # the no-change submit posted nothing
+    assert out["attempts"] == 2
 
 
 def test_settings_same_field_concurrent_edit_surfaces_conflict(node: str) -> None:
@@ -3453,10 +3392,10 @@ def test_settings_reopen_stores_only_dirty_fields_with_original_baselines(node: 
         await submitSettingsConfig($('#config-form'));
         return { closeDraft, restored, posted };
     """, via="dialog")
-    assert out["closeDraft"] == {"limits": {"loopMax": {"value": "11", "base": 10}}}   # only dirty, original base
-    assert out["restored"] == {"a": "11", "b": "30"}   # draft restored, fresh value kept
+    assert out["closeDraft"] == {"limits": {"loopMax": {"value": "11", "base": 10}}}
+    assert out["restored"] == {"a": "11", "b": "30"}
     assert len(out["posted"]) == 1
-    assert out["posted"][0]["limits"] == {"loopMax": 11, "hotTailKB": 30}   # stale 10 never written
+    assert out["posted"][0]["limits"] == {"loopMax": 11, "hotTailKB": 30}
     assert out["posted"][0].get("baseRevision") == "r1"
 
 
@@ -3624,7 +3563,7 @@ def test_memory_scope_echo_guard_and_request_token(node: str) -> None:
     """, via="memories", emit="memories")
     assert "không khớp phạm vi" in out["mismatch"]["status"]
     assert "s-error" in out["mismatch"]["cls"]
-    assert out["total"] == 9                               # newest request wins
+    assert out["total"] == 9
 
 
 def test_memory_leaf_rendering_and_day_groups(node: str) -> None:
@@ -3644,10 +3583,10 @@ def test_memory_leaf_rendering_and_day_groups(node: str) -> None:
     assert 'class="mem-day"' in html and "Hôm nay" in html
     assert 'class="mem-leaf"' in html and 'data-chunk="c1"' in html
     assert "Ghi chú A" in html and "08:30" in html
-    assert "Sắp hết hạn" in html                           # expiring chip
-    assert "đã dùng 2" in html and "tìm thấy 1" in html    # meta counts
-    assert "chung" in html                                 # team owner label
-    assert "ghost-id" in html                              # unknown owner renders the id
+    assert "Sắp hết hạn" in html
+    assert "đã dùng 2" in html and "tìm thấy 1" in html
+    assert "chung" in html
+    assert "ghost-id" in html
     assert 'data-act="reinforce"' in html and 'data-act="edit"' in html and 'data-act="forget"' in html
     assert out["count"] == "2 lá"
     assert out["split"] == {"time": "08:30", "title": "Ghi chú A"}
@@ -3682,10 +3621,10 @@ def test_dashboard_cost_rows_and_bot_fallbacks(node: str) -> None:
         };
     """, via="dashboard", emit="dashboard")
     rows = out["rows"]
-    assert 0 <= out["order"][0] < out["order"][1]                # token sort (Coder 700 > unknown 100 > ghost 10)
-    assert 'class="row-avatar"' in rows and 'id-chip' in rows      # real seal + fallback chip
-    assert "background:#6f7f57" in rows                            # live bot color
-    assert "background:#a08f68" in rows                            # neutral fallback bar
+    assert 0 <= out["order"][0] < out["order"][1]
+    assert 'class="row-avatar"' in rows and 'id-chip' in rows
+    assert "background:#6f7f57" in rows
+    assert "background:#a08f68" in rows
     assert "86%" in rows and "12%" in rows and "1,2%" in rows
     assert "$0.5000" in rows
     assert 'class="bot-row bot-row-scope" data-action="select-bot" data-bot-id="coder"' in rows
@@ -3720,10 +3659,6 @@ def test_usage_turn_renderer_preserves_trace_labels_and_turn_intent(node: str) -
     assert 'class="tl-turn"' in out["row"] and ">#2<" in out["row"]
 
 
-# ---------------------------------------------------------------------------
-# CSS + HTML contracts
-# ---------------------------------------------------------------------------
-
 def test_base_css_tokens_hidden_rule_and_shell_grid() -> None:
     """base.css owns the shared tokens, the [hidden] rule, notebook shell and
     the global reduced-motion reset."""
@@ -3755,24 +3690,24 @@ def test_sidebar_css_card_pocket_and_group_contract() -> None:
         assert sel in css, sel
     assert "grid-template-rows:0fr" in css and ".bot-card[data-open=true] .pocket{grid-template-rows:1fr}" in css
     assert "transition:grid-template-rows" in css
-    assert ".bot-card[data-selected=true]::before" in css   # selection accent bar (primary signal)
-    assert "color-mix" in css                                # lighter card bg + stronger role/footer text
-    assert ".bot-card[data-state=idle] .thinking-heading{display:none}" in css  # idle: footer only
+    assert ".bot-card[data-selected=true]::before" in css
+    assert "color-mix" in css
+    assert ".bot-card[data-state=idle] .thinking-heading{display:none}" in css
     assert ".bot-card[data-state=idle] .thinking-scroll{display:none}" in css
-    assert ".bot-card[data-state=idle] .paper-footer{border-top:0}" in css  # idle: no stray separator line
-    assert ".bot-card .bot-select:focus-visible" in css  # contained palette ring, never the global square
+    assert ".bot-card[data-state=idle] .paper-footer{border-top:0}" in css
+    assert ".bot-card .bot-select:focus-visible" in css
     assert ".bot-card .icon-button:focus-visible" in css
     assert ".bot-card .paper-footer button:focus-visible" in css
-    assert ".reply-action{" in css                           # reply action lives in the pocket
-    assert ".thinking-paper{margin:0 7px 7px;border:0;" in css  # inner box border removed
-    assert "height:30px" in css                              # stable compact line
-    assert ".bot-card[data-selected=false] .header-status-label" not in css  # status never hidden
+    assert ".reply-action{" in css
+    assert ".thinking-paper{margin:0 7px 7px;border:0;" in css
+    assert "height:30px" in css
+    assert ".bot-card[data-selected=false] .header-status-label" not in css
     assert ".header-status-label{display:none}" not in css
     assert "var(--bot-border)" in css and "var(--bot-paper)" in css
-    assert "text-overflow:ellipsis" in css                 # name/preview ellipsis
-    assert ".li-enter" in css and ".li-exit" in css        # keyed row animation
-    assert ".live-more:focus-visible" in css              # +N full-list button is keyboard visible
-    assert ".group-cluster{" in css and ".group-mini-member" in css  # 64px cluster
+    assert "text-overflow:ellipsis" in css
+    assert ".li-enter" in css and ".li-exit" in css
+    assert ".live-more:focus-visible" in css
+    assert ".group-cluster{" in css and ".group-mini-member" in css
     assert "ctx-ok" in css and "ctx-warn" in css and "ctx-danger" in css
     assert "[data-coordinating=true]" in css
     assert "[data-speaking=true]" in css
@@ -3793,23 +3728,21 @@ def test_chat_css_transcript_composer_and_title_head() -> None:
     head = css.split(".chat-title-head{", 1)[1].split("}", 1)[0]
     assert "z-index:1" in head and "border-bottom" in head
     assert "position:sticky" not in head and "position: sticky" not in head
-    assert "#fffaf240" in head                              # translucent, not opaque
+    assert "#fffaf240" in head
     assert ".chat-title-head:after" not in css and ".chat-title-head::after" not in css
-    assert "color:var(--bot-ink,var(--forest))" in css      # byline tinted by palette
+    assert "color:var(--bot-ink,var(--forest))" in css
     assert ".exchange-group{" in css
     pill = css.split(".exchange-group{", 1)[1].split("}", 1)[0]
     assert "dashed" in pill and "var(--bot-border,#c9b891)" in pill
     assert "var(--bot-paper,#fffdf7)" in pill and "var(--bot-ink,#5c5142)" in pill
     hover = css.split(".exchange-group:hover", 1)[1].split("}", 1)[0]
     assert "var(--bot-mid,#5c8a52)" in hover and "var(--bot-pale,#eaf3e2)" in hover
-    assert "var(--bot-muted,#a2937a)" in css               # exchange time
+    assert "var(--bot-muted,#a2937a)" in css
     assert "@keyframes cursor" in css
     user_pill = css.split(".message-user p{", 1)[1].split("}", 1)[0]
-    assert "overflow-wrap:anywhere" in user_pill            # long unbroken tokens wrap
-    assert "overflow-wrap:anywhere" in (css.split(".message-user{", 1)[1].split("}", 1)[0])  # bubble itself wraps
-    assert not re.search(r"--[a-zA-Z-]+\s*:\s*[^v]", css)   # no page-local token defs
-    # Low-window flex hardening and height tiers: canvas keeps its share and
-    # the chrome shrinks instead of collapsing the transcript to 0.
+    assert "overflow-wrap:anywhere" in user_pill
+    assert "overflow-wrap:anywhere" in (css.split(".message-user{", 1)[1].split("}", 1)[0])
+    assert not re.search(r"--[a-zA-Z-]+\s*:\s*[^v]", css)
     scroll_rule = css.split(".conversation-scroll{", 1)[1].split("}", 1)[0]
     assert "min-height:0" in scroll_rule
     assert "flex:none" in css.split(".site-footer{", 1)[1].split("}", 1)[0]
@@ -3818,7 +3751,7 @@ def test_chat_css_transcript_composer_and_title_head() -> None:
     compact = css.split("@media(max-height:430px)", 1)[1].split("@keyframes", 1)[0]
     assert ".eyebrow{display:none}" in compact and ".composer-hint{display:none}" in compact
     label_rule = compact.split(".letter-label{", 1)[1].split("}", 1)[0]
-    assert "display:none" not in label_rule           # accessible name stays
+    assert "display:none" not in label_rule
     assert ".composer textarea{" in compact and ".send-button" in compact
 
 
@@ -3849,8 +3782,8 @@ def test_index_html_scripts_defs_and_static_markup() -> None:
     for did in ("i-send", "i-stop", "i-copy"):
         assert html.count(f'id="{did}"') == 1, did
     assert 'id="dropHl"' not in html and 'id="dropShade"' not in html
-    assert 'id="wax' not in html            # shared overlays renamed with the drop
-    assert 'id="g-' not in html             # glyph spans gone, so their symbols ship no more
+    assert 'id="wax' not in html
+    assert 'id="g-' not in html
     assert 'id="composer-model"' not in html and 'id="thinking-effort"' not in html
     for sel in ('class="notebook-shell chat-shell"', 'class="site-header"',
                 'id="team-nav-title"', 'id="team-bot-list"', 'id="rail-avatar-list"',
@@ -3908,10 +3841,8 @@ def test_settings_dialog_uses_shared_avatar_engine() -> None:
     shortcut and keeps preferences localStorage-only (no API calls)."""
     js = SETTINGS_DIALOG_JS.read_text()
     assert "avatar(b)" in js
-    assert "thyca.ui.preferences" not in js  # key lives in the shared shell module
-    # prefs never hit the API
-    assert "getJson" not in js.split("function collectSettingsPrefs", 1)[1].split("/* ---------- Global limits", 1)[0]
-    # no dynamic avatar import / inline avatar copy — shared engine only
+    assert "thyca.ui.preferences" not in js
+    assert "getJson" not in js.split("function collectSettingsPrefs", 1)[1].split("let settingsConfigValues", 1)[0]
     assert "import(" not in js
     shell = SHELL_JS.read_text()
     assert "thyca.ui.preferences" in shell
@@ -4194,7 +4125,7 @@ def test_rail_uses_unified_order_with_groups_interleaved(node: str) -> None:
                  groupChatOnly: html.includes('class="rail-avatar rail-group chat-only"') };
     """)
     assert out["order"] == ["sys", "g1", "a", "b"]
-    assert out["groupChatOnly"] is True   # rail groups hide off-chat like the main list
+    assert out["groupChatOnly"] is True
 
 
 def test_active_bot_auto_expands_pocket_and_idle_collapses(node: str) -> None:
@@ -4295,10 +4226,10 @@ def test_header_bot_strip_active_first_and_selection(node: str) -> None:
             lockedDispatches, dispatches: globalThis.__spaDispatches,
         };
     """)
-    assert out["railStatic"] is False   # rail uses live avatars, not static expression previews
+    assert out["railStatic"] is False
     assert out["initialOrder"] == ["thyca", "a", "b", "c"]
     assert out["initialSelectedThyca"] == "true"
-    assert out["activeOrder"] == ["thyca", "b", "c", "a"]   # pinned system bot leads; activity orders the rest
+    assert out["activeOrder"] == ["thyca", "b", "c", "a"]
     assert out["whileMentionedState"] == "working"
     assert out["afterMentionIdleState"] == "idle"
     assert out["lockedDispatches"] == []
@@ -4861,7 +4792,7 @@ def test_sidebar_renders_provided_group_title(node: str) -> None:
     """)
     assert out["titles"] == ["Ke hoach <b>tuan</b>", "Hội thoại chung"]
     assert "Ke hoach <b>tuan</b>" in out["coderLabels"]
-    assert "Ke hoach &lt;b&gt;tuan&lt;/b&gt;" in out["html"]  # escaped, never raw markup
+    assert "Ke hoach &lt;b&gt;tuan&lt;/b&gt;" in out["html"]
     assert "<b>tuan</b>" not in out["html"]
 
 

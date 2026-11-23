@@ -2,10 +2,8 @@ from __future__ import annotations
 
 import base64
 import json
-import os
 import re
 import secrets
-import shutil
 import socket
 import struct
 import subprocess
@@ -13,22 +11,28 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import ClassVar
 from urllib.parse import quote, unquote, urlsplit
 from urllib.request import Request, urlopen
 
 import pytest
+from conftest import chromium_binary, chromium_env, cleanup_chromium_profile
 
 from thyca.serve.static import content_type, safe_file
-
 
 ROOT = Path(__file__).resolve().parents[1]
 WEBUI = ROOT / "thyca" / "webui"
 PAGES = ("chat", "memories", "profile", "provider", "dashboard")
-LEGACY_ENTRIES = PAGES + ("settings", "trace")
+LEGACY_ENTRIES = (*PAGES, "settings", "trace")
 
 
 def test_spa_static_entry_aliases_and_asset_mime() -> None:
-    for path in ("/", "/index.html", "/ui/%70rofile/index.html", *(f"/ui/{page}{suffix}" for page in LEGACY_ENTRIES for suffix in ("", "/", "/index.html"))):
+    for path in (
+        "/",
+        "/index.html",
+        "/ui/%70rofile/index.html",
+        *(f"/ui/{page}{suffix}" for page in LEGACY_ENTRIES for suffix in ("", "/", "/index.html")),
+    ):
         assert safe_file(WEBUI, path) == (WEBUI / "ui/chat/index.html").resolve()
     assert content_type(safe_file(WEBUI, "/ui/share/router.js")) == "text/javascript; charset=utf-8"
     assert content_type(safe_file(WEBUI, "/ui/share/router.css")) == "text/css; charset=utf-8"
@@ -52,15 +56,20 @@ def test_root_and_legacy_aliases_serve_entry_over_http() -> None:
         def do_GET(self) -> None:
             target = safe_file(WEBUI, urlsplit(self.path).path)
             if target is None:
-                self.send_error(404); return
+                self.send_error(404)
+                return
             body = target.read_bytes()
-            self.send_response(200); self.send_header("Content-Type", content_type(target)); self.end_headers(); self.wfile.write(body)
+            self.send_response(200)
+            self.send_header("Content-Type", content_type(target))
+            self.end_headers()
+            self.wfile.write(body)
 
         def log_message(self, *_args) -> None:
             pass
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
     try:
         bodies = []
         for path in ("/", "/index.html", "/ui/profile/index.html"):
@@ -70,7 +79,9 @@ def test_root_and_legacy_aliases_serve_entry_over_http() -> None:
                 bodies.append(response.read())
         assert bodies[0] == bodies[1] == bodies[2]
     finally:
-        server.shutdown(); server.server_close(); thread.join(timeout=3)
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=3)
 
 
 def _read_exact(sock: socket.socket, size: int) -> bytes:
@@ -96,23 +107,28 @@ def _cdp_recv(sock: socket.socket) -> dict:
     while True:
         first, second = _read_exact(sock, 2)
         size = second & 0x7F
-        if size == 126: size = struct.unpack("!H", _read_exact(sock, 2))[0]
-        elif size == 127: size = struct.unpack("!Q", _read_exact(sock, 8))[0]
+        if size == 126:
+            size = struct.unpack("!H", _read_exact(sock, 2))[0]
+        elif size == 127:
+            size = struct.unpack("!Q", _read_exact(sock, 8))[0]
         mask = _read_exact(sock, 4) if second & 0x80 else b""
         payload = _read_exact(sock, size)
-        if mask: payload = bytes(value ^ mask[i % 4] for i, value in enumerate(payload))
+        if mask:
+            payload = bytes(value ^ mask[i % 4] for i, value in enumerate(payload))
         opcode = first & 0x0F
-        if opcode == 8: raise ConnectionError("Chrome DevTools websocket closed")
-        if opcode == 1: return json.loads(payload)
+        if opcode == 8:
+            raise ConnectionError("Chrome DevTools websocket closed")
+        if opcode == 1:
+            return json.loads(payload)
 
 
-## Headless Chrome can take several seconds to answer its first DevTools
-## request on a loaded CI runner. These limits are generous on purpose.
 CDP_REQUEST_TIMEOUT = 10
 CDP_STARTUP_TIMEOUT = 40
 
 
-def _wait_cdp_ready(process: subprocess.Popen, port: int, timeout: float = CDP_STARTUP_TIMEOUT) -> None:
+def _wait_cdp_ready(
+    process: subprocess.Popen, port: int, timeout: float = CDP_STARTUP_TIMEOUT
+) -> None:
     """Wait until Chrome answers /json/version on its debugging port.
 
     Fails at once if Chrome exits, and reports the last error on timeout.
@@ -121,87 +137,191 @@ def _wait_cdp_ready(process: subprocess.Popen, port: int, timeout: float = CDP_S
     last_error: Exception | None = None
     while True:
         if process.poll() is not None:
-            raise RuntimeError(f"Chrome exited early with code {process.returncode} before DevTools was ready")
+            raise RuntimeError(
+                f"Chrome exited early with code {process.returncode} before DevTools was ready"
+            )
         try:
             with urlopen(f"http://127.0.0.1:{port}/json/version", timeout=CDP_REQUEST_TIMEOUT):
                 return
         except OSError as error:
             last_error = error
         if time.monotonic() >= deadline:
-            raise TimeoutError(f"Chrome DevTools not ready on port {port} after {timeout}s: {last_error!r}")
+            raise TimeoutError(
+                f"Chrome DevTools not ready on port {port} after {timeout}s: {last_error!r}"
+            )
         time.sleep(0.1)
 
 
-def _cdp_browser_result(chrome: str, url: str, width: int, screenshot: Path | None, user_data: Path, *, mobile: bool = False) -> dict:
+def _cdp_browser_result(
+    chrome: str,
+    url: str,
+    width: int,
+    screenshot: Path | None,
+    user_data: Path,
+    *,
+    mobile: bool = False,
+) -> dict:
     with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0)); port = probe.getsockname()[1]
-    process = subprocess.Popen([
-        chrome, "--headless=new", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage",
-        "--no-first-run", "--no-default-browser-check", "--no-proxy-server",
-        f"--remote-debugging-port={port}", f"--user-data-dir={user_data}", "about:blank",
-    ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=dict(os.environ, HOME="/tmp/sandbox-home"))
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    process = subprocess.Popen(
+        [
+            chrome,
+            "--headless=new",
+            "--no-sandbox",
+            "--disable-gpu",
+            "--disable-dev-shm-usage",
+            "--no-first-run",
+            "--no-default-browser-check",
+            "--no-proxy-server",
+            f"--remote-debugging-port={port}",
+            f"--user-data-dir={user_data}",
+            "about:blank",
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        env=chromium_env(chrome),
+    )
     sock = None
     try:
         _wait_cdp_ready(process, port)
-        with urlopen(Request(f"http://127.0.0.1:{port}/json/new?{quote('about:blank', safe=':')}", method="PUT"), timeout=CDP_REQUEST_TIMEOUT) as response:
+        with urlopen(
+            Request(
+                f"http://127.0.0.1:{port}/json/new?{quote('about:blank', safe=':')}", method="PUT"
+            ),
+            timeout=CDP_REQUEST_TIMEOUT,
+        ) as response:
             target = json.loads(response.read())
         ws_url = urlsplit(target["webSocketDebuggerUrl"])
         sock = socket.create_connection((ws_url.hostname, ws_url.port), timeout=10)
         key = base64.b64encode(secrets.token_bytes(16)).decode()
-        sock.sendall((f"GET {ws_url.path} HTTP/1.1\r\nHost: {ws_url.netloc}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n\r\n").encode())
+        sock.sendall(
+            (
+                f"GET {ws_url.path} HTTP/1.1\r\nHost: {ws_url.netloc}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n\r\n"
+            ).encode()
+        )
         header = bytearray()
-        while not header.endswith(b"\r\n\r\n"): header.extend(sock.recv(1))
-        if b" 101 " not in header: raise ConnectionError(header.decode(errors="replace"))
+        while not header.endswith(b"\r\n\r\n"):
+            header.extend(sock.recv(1))
+        if b" 101 " not in header:
+            raise ConnectionError(header.decode(errors="replace"))
         next_id = 0
+
         def call(method: str, params: dict | None = None) -> dict:
             nonlocal next_id
-            next_id += 1; command_id = next_id
-            _cdp_frame(sock, json.dumps({"id": command_id, "method": method, "params": params or {}}).encode())
+            next_id += 1
+            command_id = next_id
+            _cdp_frame(
+                sock,
+                json.dumps({"id": command_id, "method": method, "params": params or {}}).encode(),
+            )
             while True:
                 response = _cdp_recv(sock)
                 if response.get("id") == command_id:
-                    if "error" in response: raise RuntimeError(response["error"])
+                    if "error" in response:
+                        raise RuntimeError(response["error"])
                     return response.get("result", {})
+
         call("Page.enable")
         call("Runtime.enable")
-        call("Emulation.setDeviceMetricsOverride", {"width": width, "height": 900, "deviceScaleFactor": 1, "mobile": mobile})
+        call(
+            "Emulation.setDeviceMetricsOverride",
+            {"width": width, "height": 900, "deviceScaleFactor": 1, "mobile": mobile},
+        )
         call("Page.navigate", {"url": url})
         end = time.monotonic() + 30
         while time.monotonic() < end:
-            result = call("Runtime.evaluate", {"expression": "document.body?.dataset.spaTestResult || ''", "returnByValue": True})
+            result = call(
+                "Runtime.evaluate",
+                {"expression": "document.body?.dataset.spaTestResult || ''", "returnByValue": True},
+            )
             encoded = result.get("result", {}).get("value")
             if encoded:
                 data = json.loads(encoded)
-                dom = call("Runtime.evaluate", {"expression": "document.documentElement.outerHTML", "returnByValue": True}).get("result", {}).get("value", "")
+                dom = (
+                    call(
+                        "Runtime.evaluate",
+                        {"expression": "document.documentElement.outerHTML", "returnByValue": True},
+                    )
+                    .get("result", {})
+                    .get("value", "")
+                )
                 if screenshot is None:
-                    Path('/tmp/thyca-usage-trace-spa-last-result.json').write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
-                    Path('/tmp/thyca-usage-trace-spa-last-dom.html').write_text(dom, encoding='utf-8')
+                    Path("/tmp/thyca-usage-trace-spa-last-result.json").write_text(
+                        json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
+                    )
+                    Path("/tmp/thyca-usage-trace-spa-last-dom.html").write_text(
+                        dom, encoding="utf-8"
+                    )
                 else:
-                    screenshot.with_suffix('.json').write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
-                    screenshot.with_suffix('.html').write_text(dom, encoding='utf-8')
+                    screenshot.with_suffix(".json").write_text(
+                        json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
+                    )
+                    screenshot.with_suffix(".html").write_text(dom, encoding="utf-8")
                 if screenshot is not None:
-                    png = call("Page.captureScreenshot", {"format": "png", "captureBeyondViewport": False})
+                    png = call(
+                        "Page.captureScreenshot", {"format": "png", "captureBeyondViewport": False}
+                    )
                     screenshot.write_bytes(base64.b64decode(png["data"]))
                 return data
             time.sleep(0.05)
-        diagnostic = call("Runtime.evaluate", {"expression": "JSON.stringify({stage:window.__spaTestStage||'',route:window.ThycaRouter?.currentRoute(),visible:[...document.querySelectorAll('[data-page-workspace]')].filter(view=>!view.hidden).map(view=>view.dataset.pageWorkspace),errors:window.__scriptErrors||[],rejections:window.__promiseErrors||[]})", "returnByValue": True}).get("result", {}).get("value", "{}")
-        dom = call("Runtime.evaluate", {"expression": "document.documentElement.outerHTML", "returnByValue": True}).get("result", {}).get("value", "")
+        diagnostic = (
+            call(
+                "Runtime.evaluate",
+                {
+                    "expression": "JSON.stringify({stage:window.__spaTestStage||'',route:window.ThycaRouter?.currentRoute(),visible:[...document.querySelectorAll('[data-page-workspace]')].filter(view=>!view.hidden).map(view=>view.dataset.pageWorkspace),errors:window.__scriptErrors||[],rejections:window.__promiseErrors||[]})",
+                    "returnByValue": True,
+                },
+            )
+            .get("result", {})
+            .get("value", "{}")
+        )
+        dom = (
+            call(
+                "Runtime.evaluate",
+                {"expression": "document.documentElement.outerHTML", "returnByValue": True},
+            )
+            .get("result", {})
+            .get("value", "")
+        )
         if screenshot is None:
-            Path('/tmp/thyca-usage-trace-spa-last-result.json').write_text(diagnostic, encoding='utf-8')
-            Path('/tmp/thyca-usage-trace-spa-last-dom.html').write_text(dom, encoding='utf-8')
+            Path("/tmp/thyca-usage-trace-spa-last-result.json").write_text(
+                diagnostic, encoding="utf-8"
+            )
+            Path("/tmp/thyca-usage-trace-spa-last-dom.html").write_text(dom, encoding="utf-8")
         else:
-            screenshot.with_suffix('.json').write_text(diagnostic, encoding='utf-8')
-            screenshot.with_suffix('.html').write_text(dom, encoding='utf-8')
+            screenshot.with_suffix(".json").write_text(diagnostic, encoding="utf-8")
+            screenshot.with_suffix(".html").write_text(dom, encoding="utf-8")
         raise TimeoutError(f"SPA browser did not finish: {url}; diagnostic={diagnostic}")
     finally:
-        if sock: sock.close()
-        process.terminate()
-        try: process.wait(timeout=5)
-        except subprocess.TimeoutExpired: process.kill(); process.wait(timeout=5)
+        if sock:
+            try:
+                _cdp_frame(
+                    sock,
+                    json.dumps({"id": 999999, "method": "Browser.close", "params": {}}).encode(),
+                )
+            except OSError:
+                pass
+            sock.close()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=5)
+        cleanup_chromium_profile(chrome, user_data)
 
 
-@pytest.mark.skipif(not shutil.which("google-chrome"), reason="Google Chrome is required for the real-browser SPA lifecycle test")
-def test_root_spa_retains_all_workspaces_and_restores_history(tmp_path: Path, request: pytest.FixtureRequest) -> None:
+@pytest.mark.skipif(
+    not chromium_binary(),
+    reason="Chromium/Chrome is required for the real-browser SPA lifecycle test",
+)
+def test_root_spa_retains_all_workspaces_and_restores_history(
+    tmp_path: Path, request: pytest.FixtureRequest
+) -> None:
     result_script = r"""
 (async () => {
   const wait = async (predicate, label = predicate.toString()) => {
@@ -786,9 +906,9 @@ def test_root_spa_retains_all_workspaces_and_restores_history(tmp_path: Path, re
 """
 
     class Handler(BaseHTTPRequestHandler):
-        api_requests: list[str] = []
-        api_urls: list[str] = []
-        static_requests: list[tuple[str, int]] = []
+        api_requests: ClassVar[list[str]] = []
+        api_urls: ClassVar[list[str]] = []
+        static_requests: ClassVar[list[tuple[str, int]]] = []
         stream_release = threading.Event()
         provider_css_started = threading.Event()
         provider_css_release = threading.Event()
@@ -802,13 +922,25 @@ def test_root_spa_retains_all_workspaces_and_restores_history(tmp_path: Path, re
         initial_dm_started = threading.Event()
         initial_dm_release = threading.Event()
         initial_dm_hits = 0
-        settings_posts: list[tuple[str, dict]] = []
-        canonical_posts: list[dict] = []
-        settings = {
-            "thyca": {"bot_id": "thyca", "model": {"id": "model-a", "thinking": "low"}, "effective": {"model": "model-a", "provider": "mock", "thinking": "low"}},
-            "coder": {"bot_id": "coder", "model": {"id": "model-a", "thinking": "medium"}, "effective": {"model": "model-a", "provider": "mock", "thinking": "medium"}},
+        settings_posts: ClassVar[list[tuple[str, dict]]] = []
+        canonical_posts: ClassVar[list[dict]] = []
+        settings: ClassVar[dict] = {
+            "thyca": {
+                "bot_id": "thyca",
+                "model": {"id": "model-a", "thinking": "low"},
+                "effective": {"model": "model-a", "provider": "mock", "thinking": "low"},
+            },
+            "coder": {
+                "bot_id": "coder",
+                "model": {"id": "model-a", "thinking": "medium"},
+                "effective": {"model": "model-a", "provider": "mock", "thinking": "medium"},
+            },
         }
-        canonical = {"USER.md": "Original user profile", "SOUL.md": "Original voice", "IDENTITY.md": "Original identity"}
+        canonical: ClassVar[dict[str, str]] = {
+            "USER.md": "Original user profile",
+            "SOUL.md": "Original voice",
+            "IDENTITY.md": "Original identity",
+        }
         turn_posts = 0
         turn_cancels = 0
 
@@ -817,107 +949,369 @@ def test_root_spa_retains_all_workspaces_and_restores_history(tmp_path: Path, re
 
         def _json(self, payload: dict, status: int = 200) -> None:
             body = json.dumps(payload).encode()
-            self.send_response(status); self.send_header("Content-Type", "application/json"); self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
 
         def do_GET(self) -> None:
             path = urlsplit(self.path).path
             if path == "/api/test/stream/continue":
                 self.stream_release.set()
-                self.send_response(204); self.end_headers(); return
+                self.send_response(204)
+                self.end_headers()
+                return
             if path == "/api/test/state":
                 counts = {}
-                for request_path in self.api_requests: counts[request_path] = counts.get(request_path, 0) + 1
-                self._json({"providerCssStarted": self.provider_css_started.is_set(), "settingsStarted": self.settings_started.is_set(), "settingsReleased": self.settings_release.is_set(), "initialDmStarted": self.initial_dm_started.is_set(), "initialDmHits": self.initial_dm_hits, "settingsPosts": len(self.settings_posts), "canonicalPosts": len(self.canonical_posts), "apiCounts": counts, "apiUrls": list(self.api_urls)})
+                for request_path in self.api_requests:
+                    counts[request_path] = counts.get(request_path, 0) + 1
+                self._json(
+                    {
+                        "providerCssStarted": self.provider_css_started.is_set(),
+                        "settingsStarted": self.settings_started.is_set(),
+                        "settingsReleased": self.settings_release.is_set(),
+                        "initialDmStarted": self.initial_dm_started.is_set(),
+                        "initialDmHits": self.initial_dm_hits,
+                        "settingsPosts": len(self.settings_posts),
+                        "canonicalPosts": len(self.canonical_posts),
+                        "apiCounts": counts,
+                        "apiUrls": list(self.api_urls),
+                    }
+                )
                 return
             if path == "/api/test/delay-provider-css":
-                self.provider_css_hold.set(); self.provider_css_started.clear(); self.provider_css_release.clear()
-                self._json({"ok": True}); return
+                self.provider_css_hold.set()
+                self.provider_css_started.clear()
+                self.provider_css_release.clear()
+                self._json({"ok": True})
+                return
             if path == "/api/test/release-provider-css":
-                self.provider_css_release.set(); self.provider_css_hold.clear(); self._json({"ok": True}); return
+                self.provider_css_release.set()
+                self.provider_css_hold.clear()
+                self._json({"ok": True})
+                return
             if path == "/api/test/fail-dashboard-css":
-                type(self).fail_dashboard_css = True; self._json({"ok": True}); return
+                type(self).fail_dashboard_css = True
+                self._json({"ok": True})
+                return
             if path == "/api/test/fail-canonical-once":
-                type(self).fail_canonical_once = True; self._json({"ok": True}); return
+                type(self).fail_canonical_once = True
+                self._json({"ok": True})
+                return
             if path == "/api/test/delay-settings":
-                type(self).settings_delay = True; self.settings_started.clear(); self.settings_release.clear(); self._json({"ok": True}); return
+                type(self).settings_delay = True
+                self.settings_started.clear()
+                self.settings_release.clear()
+                self._json({"ok": True})
+                return
             if path == "/api/test/release-settings":
-                type(self).settings_release.set(); type(self).settings_delay = False; self._json({"ok": True}); return
+                type(self).settings_release.set()
+                type(self).settings_delay = False
+                self._json({"ok": True})
+                return
             if path == "/api/test/delay-initial-dm":
-                type(self).initial_dm_hits = 0; type(self).initial_dm_delay = True
-                self.initial_dm_started.clear(); self.initial_dm_release.clear(); self._json({"ok": True}); return
+                type(self).initial_dm_hits = 0
+                type(self).initial_dm_delay = True
+                self.initial_dm_started.clear()
+                self.initial_dm_release.clear()
+                self._json({"ok": True})
+                return
             if path == "/api/test/release-initial-dm":
-                type(self).initial_dm_release.set(); type(self).initial_dm_delay = False; self._json({"ok": True}); return
-            if path.startswith("/ui/provider/providercss/provider.css") and self.provider_css_hold.is_set():
-                self.provider_css_started.set(); self.provider_css_release.wait()
+                type(self).initial_dm_release.set()
+                type(self).initial_dm_delay = False
+                self._json({"ok": True})
+                return
+            if (
+                path.startswith("/ui/provider/providercss/provider.css")
+                and self.provider_css_hold.is_set()
+            ):
+                self.provider_css_started.set()
+                self.provider_css_release.wait()
             if path == "/ui/dashboard/dashboardcss/dashboard.css" and self.fail_dashboard_css:
-                type(self).fail_dashboard_css = False; self.send_error(404, "test CSS failure"); return
+                type(self).fail_dashboard_css = False
+                self.send_error(404, "test CSS failure")
+                return
             if path.startswith("/api/"):
-                self.api_requests.append(path); self.api_urls.append(self.path)
+                self.api_requests.append(path)
+                self.api_urls.append(self.path)
                 if path == "/api/bots":
-                    payload = {"bots": [{"id": "thyca", "name": "Thyca", "tint": "botanical", "role": "assistant"}, {"id": "coder", "name": "Coder", "tint": "botanical", "role": "coding"}]}
-                elif path == "/api/conversations": payload = {"conversations": []}
+                    payload = {
+                        "bots": [
+                            {
+                                "id": "thyca",
+                                "name": "Thyca",
+                                "tint": "botanical",
+                                "role": "assistant",
+                            },
+                            {"id": "coder", "name": "Coder", "tint": "botanical", "role": "coding"},
+                        ]
+                    }
+                elif path == "/api/conversations":
+                    payload = {"conversations": []}
                 elif path == "/api/bots/thyca/dm":
                     type(self).initial_dm_hits += 1
                     if self.initial_dm_delay and self.initial_dm_hits == 1:
-                        self.initial_dm_started.set(); self.initial_dm_release.wait()
+                        self.initial_dm_started.set()
+                        self.initial_dm_release.wait()
                     payload = {"kind": "dm", "bot_id": "thyca", "messages": []}
                 elif path in ("/api/bots/thyca/settings", "/api/bots/coder/settings"):
-                    bot_id = path.split("/")[3]; payload = self.settings[bot_id]
-                elif path == "/api/config": payload = {"values": {"models": {"model-a": {"provider": "mock", "reasoningEfforts": ["low", "medium"]}, "model-b": {"provider": "mock", "reasoningEfforts": ["high", "max"]}}, "defaultModel": "model-a", "defaultProvider": "mock", "providers": {"mock": {}}}, "schema": {"sections": [{"fields": [{"key": "provider.reasoningEffort", "choices": ["low", "medium", "high", "max"]}]}]}, "defaults": {}}
-                elif path == "/api/config/status": payload = {"ready": True}
-                elif path == "/api/memory/stats": payload = {"files": [{"name": name, "content": content} for name, content in self.canonical.items()], "canonical": [], "total": len(self.canonical)}
-                elif path == "/api/traces/stats": payload = {"totals": {"requests": 2, "tool_calls": 1, "prompt_tokens": 10, "cached_tokens": 2, "completion_tokens": 3, "total_tokens": 13, "cost_usd": 0.125, "latency_ms_p50": 120, "latency_ms_p90": 120}, "by_day": [{"day": "2026-09-20", "requests": 2, "cost_usd": 0.125}], "by_bot": [{"bot_id": "thyca", "requests": 2, "tool_calls": 1, "total_tokens": 13, "cost_usd": 0.125}], "by_model": [{"model": "fixture-model", "requests": 2, "total_tokens": 13, "cost_usd": 0.125, "latency_ms_p50": 120}], "by_hour": [], "models": ["fixture-model"], "by_status": [{"status": "completed", "requests": 2}]}
-                elif path == "/api/traces": payload = {"traces": [{"kind": "dm", "bot_id": "thyca", "turn_index": 0, "title": "Synthetic Usage turn", "started_at": "2026-09-20T10:00:00Z", "status": "completed", "model": "fixture-model", "requests": 2, "tool_calls": 1, "total_tokens": 13, "cost_usd": 0.125, "latency_ms": 120}], "total": 1}
-                elif path == "/api/traces/dm/thyca/0": payload = {"kind": "dm", "bot_id": "thyca", "turn_index": 0, "title": "Synthetic Usage turn", "started_at": "2026-09-20T10:00:00Z", "ended_at": "2026-09-20T10:00:01Z", "status": "completed", "model": "fixture-model", "requests": 2, "rounds": 2, "tool_calls": 1, "prompt_tokens": 10, "cached_tokens": 2, "completion_tokens": 3, "total_tokens": 13, "cost_usd": 0.125, "latency_ms": 120, "messages": [{"role": "user", "content": "Synthetic detail body"}, {"role": "assistant", "content": "Synthetic detail reply", "meta": {"bot_id": "thyca", "model": "fixture-model"}}]}
-                elif path == "/api/traces/dm/coder/1": payload = {"kind": "dm", "bot_id": "coder", "turn_index": 1, "title": "Coder Usage turn", "started_at": "2026-09-20T10:01:00Z", "ended_at": "2026-09-20T10:01:01Z", "status": "completed", "model": "fixture-model", "requests": 1, "rounds": 1, "tool_calls": 0, "prompt_tokens": 5, "cached_tokens": 0, "completion_tokens": 2, "total_tokens": 7, "cost_usd": 0.05, "latency_ms": 90, "messages": [{"role": "user", "content": "Coder detail body"}, {"role": "assistant", "content": "Coder detail reply", "meta": {"bot_id": "coder", "model": "fixture-model"}}]}
-                else: payload = {}
+                    bot_id = path.split("/")[3]
+                    payload = self.settings[bot_id]
+                elif path == "/api/config":
+                    payload = {
+                        "values": {
+                            "models": {
+                                "model-a": {
+                                    "provider": "mock",
+                                    "reasoningEfforts": ["low", "medium"],
+                                },
+                                "model-b": {
+                                    "provider": "mock",
+                                    "reasoningEfforts": ["high", "max"],
+                                },
+                            },
+                            "defaultModel": "model-a",
+                            "defaultProvider": "mock",
+                            "providers": {"mock": {}},
+                        },
+                        "schema": {
+                            "sections": [
+                                {
+                                    "fields": [
+                                        {
+                                            "key": "provider.reasoningEffort",
+                                            "choices": ["low", "medium", "high", "max"],
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        "defaults": {},
+                    }
+                elif path == "/api/config/status":
+                    payload = {"ready": True}
+                elif path == "/api/memory/stats":
+                    payload = {
+                        "files": [
+                            {"name": name, "content": content}
+                            for name, content in self.canonical.items()
+                        ],
+                        "canonical": [],
+                        "total": len(self.canonical),
+                    }
+                elif path == "/api/traces/stats":
+                    payload = {
+                        "totals": {
+                            "requests": 2,
+                            "tool_calls": 1,
+                            "prompt_tokens": 10,
+                            "cached_tokens": 2,
+                            "completion_tokens": 3,
+                            "total_tokens": 13,
+                            "cost_usd": 0.125,
+                            "latency_ms_p50": 120,
+                            "latency_ms_p90": 120,
+                        },
+                        "by_day": [{"day": "2026-09-20", "requests": 2, "cost_usd": 0.125}],
+                        "by_bot": [
+                            {
+                                "bot_id": "thyca",
+                                "requests": 2,
+                                "tool_calls": 1,
+                                "total_tokens": 13,
+                                "cost_usd": 0.125,
+                            }
+                        ],
+                        "by_model": [
+                            {
+                                "model": "fixture-model",
+                                "requests": 2,
+                                "total_tokens": 13,
+                                "cost_usd": 0.125,
+                                "latency_ms_p50": 120,
+                            }
+                        ],
+                        "by_hour": [],
+                        "models": ["fixture-model"],
+                        "by_status": [{"status": "completed", "requests": 2}],
+                    }
+                elif path == "/api/traces":
+                    payload = {
+                        "traces": [
+                            {
+                                "kind": "dm",
+                                "bot_id": "thyca",
+                                "turn_index": 0,
+                                "title": "Synthetic Usage turn",
+                                "started_at": "2026-09-20T10:00:00Z",
+                                "status": "completed",
+                                "model": "fixture-model",
+                                "requests": 2,
+                                "tool_calls": 1,
+                                "total_tokens": 13,
+                                "cost_usd": 0.125,
+                                "latency_ms": 120,
+                            }
+                        ],
+                        "total": 1,
+                    }
+                elif path == "/api/traces/dm/thyca/0":
+                    payload = {
+                        "kind": "dm",
+                        "bot_id": "thyca",
+                        "turn_index": 0,
+                        "title": "Synthetic Usage turn",
+                        "started_at": "2026-09-20T10:00:00Z",
+                        "ended_at": "2026-09-20T10:00:01Z",
+                        "status": "completed",
+                        "model": "fixture-model",
+                        "requests": 2,
+                        "rounds": 2,
+                        "tool_calls": 1,
+                        "prompt_tokens": 10,
+                        "cached_tokens": 2,
+                        "completion_tokens": 3,
+                        "total_tokens": 13,
+                        "cost_usd": 0.125,
+                        "latency_ms": 120,
+                        "messages": [
+                            {"role": "user", "content": "Synthetic detail body"},
+                            {
+                                "role": "assistant",
+                                "content": "Synthetic detail reply",
+                                "meta": {"bot_id": "thyca", "model": "fixture-model"},
+                            },
+                        ],
+                    }
+                elif path == "/api/traces/dm/coder/1":
+                    payload = {
+                        "kind": "dm",
+                        "bot_id": "coder",
+                        "turn_index": 1,
+                        "title": "Coder Usage turn",
+                        "started_at": "2026-09-20T10:01:00Z",
+                        "ended_at": "2026-09-20T10:01:01Z",
+                        "status": "completed",
+                        "model": "fixture-model",
+                        "requests": 1,
+                        "rounds": 1,
+                        "tool_calls": 0,
+                        "prompt_tokens": 5,
+                        "cached_tokens": 0,
+                        "completion_tokens": 2,
+                        "total_tokens": 7,
+                        "cost_usd": 0.05,
+                        "latency_ms": 90,
+                        "messages": [
+                            {"role": "user", "content": "Coder detail body"},
+                            {
+                                "role": "assistant",
+                                "content": "Coder detail reply",
+                                "meta": {"bot_id": "coder", "model": "fixture-model"},
+                            },
+                        ],
+                    }
+                else:
+                    payload = {}
                 self._json(payload)
                 return
             target = safe_file(WEBUI, path)
             if target is None:
-                self.static_requests.append((path, 404)); self.send_error(404); return
+                self.static_requests.append((path, 404))
+                self.send_error(404)
+                return
             self.static_requests.append((path, 200))
             body = target.read_bytes()
-            if path == "/" or unquote(path) in {f"/ui/{page}{suffix}" for page in LEGACY_ENTRIES for suffix in ("", "/", "/index.html")}:
-                head_script = (f"<script>window.__spaControlBase={json.dumps(control_base)};window.__spaMode=new URLSearchParams(location.search).get('spaMode');window.__spaLandingPath=location.pathname;window.__scriptErrors=[];window.__promiseErrors=[];window.__intervalCalls=0;const __setInterval=window.setInterval.bind(window);window.setInterval=(...a)=>{{window.__intervalCalls++;return __setInterval(...a)}};window.addEventListener('error',e=>window.__scriptErrors.push(String(e.message)+' '+String(e.filename)));window.addEventListener('unhandledrejection',e=>window.__promiseErrors.push(String(e.reason)))</script></head>").encode()
+            if path == "/" or unquote(path) in {
+                f"/ui/{page}{suffix}"
+                for page in LEGACY_ENTRIES
+                for suffix in ("", "/", "/index.html")
+            }:
+                head_script = (
+                    f"<script>window.__spaControlBase={json.dumps(control_base)};window.__spaMode=new URLSearchParams(location.search).get('spaMode');window.__spaLandingPath=location.pathname;window.__scriptErrors=[];window.__promiseErrors=[];window.__intervalCalls=0;const __setInterval=window.setInterval.bind(window);window.setInterval=(...a)=>{{window.__intervalCalls++;return __setInterval(...a)}};window.addEventListener('error',e=>window.__scriptErrors.push(String(e.message)+' '+String(e.filename)));window.addEventListener('unhandledrejection',e=>window.__promiseErrors.push(String(e.reason)))</script></head>"
+                ).encode()
                 body = body.replace(b"</head>", head_script)
-                body = body.replace(b"</body>", b"<script>" + result_script.encode() + b"</script></body>")
-            self.send_response(200); self.send_header("Content-Type", content_type(target)); self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
+                body = body.replace(
+                    b"</body>", b"<script>" + result_script.encode() + b"</script></body>"
+                )
+            self.send_response(200)
+            self.send_header("Content-Type", content_type(target))
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
 
         def do_POST(self) -> None:
             path = urlsplit(self.path).path
             self.api_requests.append(path)
             if path == "/api/bots/thyca/dm/turn/stream":
                 type(self).turn_posts += 1
-                self.send_response(200); self.send_header("Content-Type", "application/x-ndjson"); self.send_header("Transfer-Encoding", "chunked"); self.end_headers()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/x-ndjson")
+                self.send_header("Transfer-Encoding", "chunked")
+                self.end_headers()
+
                 def chunk(event: dict) -> None:
                     data = (json.dumps(event) + "\n").encode()
-                    self.wfile.write(f"{len(data):X}\r\n".encode() + data + b"\r\n"); self.wfile.flush()
+                    self.wfile.write(f"{len(data):X}\r\n".encode() + data + b"\r\n")
+                    self.wfile.flush()
+
                 chunk({"type": "turn.accepted", "bot_id": "thyca"})
                 chunk({"type": "llm.started", "bot_id": "thyca"})
                 chunk({"type": "llm.content", "bot_id": "thyca", "delta": "FAKE STREAM TOKEN"})
                 self.stream_release.wait()
                 chunk({"type": "llm.finished", "bot_id": "thyca"})
-                chunk({"type": "turn.completed", "bot_id": "thyca", "detail": {"kind": "dm", "bot_id": "thyca", "messages": [{"role": "user", "content": "keep this streamed turn"}, {"role": "assistant", "content": "FAKE STREAM TOKEN", "meta": {"bot_id": "thyca"}}]}})
-                self.wfile.write(b"0\r\n\r\n"); self.wfile.flush(); return
+                chunk(
+                    {
+                        "type": "turn.completed",
+                        "bot_id": "thyca",
+                        "detail": {
+                            "kind": "dm",
+                            "bot_id": "thyca",
+                            "messages": [
+                                {"role": "user", "content": "keep this streamed turn"},
+                                {
+                                    "role": "assistant",
+                                    "content": "FAKE STREAM TOKEN",
+                                    "meta": {"bot_id": "thyca"},
+                                },
+                            ],
+                        },
+                    }
+                )
+                self.wfile.write(b"0\r\n\r\n")
+                self.wfile.flush()
+                return
             length = int(self.headers.get("Content-Length", "0"))
             payload = json.loads(self.rfile.read(length) or b"{}")
             if path in ("/api/bots/thyca/settings", "/api/bots/coder/settings"):
                 bot_id = path.split("/")[3]
                 self.settings_posts.append((bot_id, payload))
                 if bot_id == "coder" and self.settings_delay:
-                    self.settings_started.set(); self.settings_release.wait()
+                    self.settings_started.set()
+                    self.settings_release.wait()
                 model = payload.get("model", {})
-                response = {"bot_id": bot_id, "model": model, "effective": {"model": model.get("id"), "provider": "mock", "thinking": model.get("thinking")}}
+                response = {
+                    "bot_id": bot_id,
+                    "model": model,
+                    "effective": {
+                        "model": model.get("id"),
+                        "provider": "mock",
+                        "thinking": model.get("thinking"),
+                    },
+                }
                 self.settings[bot_id] = response
-                self._json(response); return
+                self._json(response)
+                return
             if path == "/api/memory/canonical":
                 self.canonical_posts.append(payload)
                 if self.fail_canonical_once:
                     type(self).fail_canonical_once = False
-                    self._json({"error": "injected canonical failure"}, status=500); return
+                    self._json({"error": "injected canonical failure"}, status=500)
+                    return
                 self.canonical[payload["name"]] = payload["content"]
-                self._json({"ok": True}); return
+                self._json({"ok": True})
+                return
             if path.endswith("/turn/cancel"):
                 type(self).turn_cancels += 1
             self._json({})
@@ -928,40 +1322,89 @@ def test_root_spa_retains_all_workspaces_and_restores_history(tmp_path: Path, re
 
         def _json(self, payload: dict) -> None:
             body = json.dumps(payload).encode()
-            self.send_response(200); self.send_header("Access-Control-Allow-Origin", "*"); self.send_header("Content-Type", "application/json"); self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
+            self.send_response(200)
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
 
         def do_GET(self) -> None:
             path = urlsplit(self.path).path
             if path == "/release-settings":
-                Handler.settings_release.set(); Handler.settings_delay = False
-                self._json({"ok": True}); return
+                Handler.settings_release.set()
+                Handler.settings_delay = False
+                self._json({"ok": True})
+                return
             if path == "/release-initial-dm":
-                Handler.initial_dm_release.set(); Handler.initial_dm_delay = False
-                self._json({"ok": True}); return
+                Handler.initial_dm_release.set()
+                Handler.initial_dm_delay = False
+                self._json({"ok": True})
+                return
             if path == "/state":
                 counts = {}
-                for request_path in Handler.api_requests: counts[request_path] = counts.get(request_path, 0) + 1
-                self._json({"providerCssStarted": Handler.provider_css_started.is_set(), "settingsStarted": Handler.settings_started.is_set(), "settingsReleased": Handler.settings_release.is_set(), "initialDmStarted": Handler.initial_dm_started.is_set(), "initialDmHits": Handler.initial_dm_hits, "settingsPosts": len(Handler.settings_posts), "canonicalPosts": len(Handler.canonical_posts), "apiCounts": counts, "apiUrls": list(Handler.api_urls)}); return
+                for request_path in Handler.api_requests:
+                    counts[request_path] = counts.get(request_path, 0) + 1
+                self._json(
+                    {
+                        "providerCssStarted": Handler.provider_css_started.is_set(),
+                        "settingsStarted": Handler.settings_started.is_set(),
+                        "settingsReleased": Handler.settings_release.is_set(),
+                        "initialDmStarted": Handler.initial_dm_started.is_set(),
+                        "initialDmHits": Handler.initial_dm_hits,
+                        "settingsPosts": len(Handler.settings_posts),
+                        "canonicalPosts": len(Handler.canonical_posts),
+                        "apiCounts": counts,
+                        "apiUrls": list(Handler.api_urls),
+                    }
+                )
+                return
             if path == "/reset-api-counts":
-                Handler.api_requests.clear(); Handler.api_urls.clear(); self._json({"ok": True}); return
+                Handler.api_requests.clear()
+                Handler.api_urls.clear()
+                self._json({"ok": True})
+                return
             self.send_error(404)
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
     control_server = ThreadingHTTPServer(("127.0.0.1", 0), ControlHandler)
-    control_thread = threading.Thread(target=control_server.serve_forever, daemon=True); control_thread.start()
+    control_thread = threading.Thread(target=control_server.serve_forever, daemon=True)
+    control_thread.start()
     control_base = f"http://127.0.0.1:{control_server.server_port}"
+
     def stop_mock_server() -> None:
-        Handler.settings_release.set(); Handler.provider_css_release.set(); Handler.stream_release.set(); Handler.initial_dm_release.set()
-        server.shutdown(); server.server_close(); thread.join(timeout=3)
-        control_server.shutdown(); control_server.server_close(); control_thread.join(timeout=3)
+        Handler.settings_release.set()
+        Handler.provider_css_release.set()
+        Handler.stream_release.set()
+        Handler.initial_dm_release.set()
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=3)
+        control_server.shutdown()
+        control_server.server_close()
+        control_thread.join(timeout=3)
+
     request.addfinalizer(stop_mock_server)
-    browser = shutil.which("google-chrome")
+    browser = chromium_binary()
+    assert browser is not None
     root_url = f"http://127.0.0.1:{server.server_port}/"
-    result = _cdp_browser_result(browser, root_url, 1280, Path('/tmp/thyca-usage-trace-spa-desktop.png'), tmp_path / "chrome-profile")
-    Path('/tmp/thyca-usage-trace-spa-last-result.json').write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8')
-    if Path('/tmp/thyca-usage-trace-spa-desktop.html').exists():
-        Path('/tmp/thyca-usage-trace-spa-last-dom.html').write_text(Path('/tmp/thyca-usage-trace-spa-desktop.html').read_text(encoding='utf-8'), encoding='utf-8')
+    result = _cdp_browser_result(
+        browser,
+        root_url,
+        1280,
+        Path("/tmp/thyca-usage-trace-spa-desktop.png"),
+        tmp_path / "chrome-profile",
+    )
+    Path("/tmp/thyca-usage-trace-spa-last-result.json").write_text(
+        json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    if Path("/tmp/thyca-usage-trace-spa-desktop.html").exists():
+        Path("/tmp/thyca-usage-trace-spa-last-dom.html").write_text(
+            Path("/tmp/thyca-usage-trace-spa-desktop.html").read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
     assert "error" not in result, {**result, "static_requests": Handler.static_requests}
     assert result["reloaded"] is True
     assert result["route"] == {"page": "profile", "search": "?bot=coder", "hash": ""}
@@ -983,127 +1426,258 @@ def test_root_spa_retains_all_workspaces_and_restores_history(tmp_path: Path, re
     assert [post["name"] for post in Handler.canonical_posts] == ["USER.md", "USER.md"]
     assert Handler.canonical["USER.md"] == "Edited from SPA test"
     assert not any("provider" in path and "api-key" in path for path in Handler.api_requests)
-    browser_results = {"desktop": result, "mobile": [], "legacy": [], "delayedChat": {}, "freshDetail": {}}
+    browser_results = {
+        "desktop": result,
+        "mobile": [],
+        "legacy": [],
+        "delayedChat": {},
+        "freshDetail": {},
+    }
     legacy_cases = (
-        ("/ui/%70rofile/index.html?spaMode=legacy-check", {"page": "profile", "search": "", "hash": ""}),
-        ("/ui/provider/index.html?bot=coder&spaMode=legacy-check", {"page": "profile", "search": "?bot=coder", "hash": ""}),
-        ("/ui/chat/index.html?bot=thyca&spaMode=legacy-check", {"page": "chat", "search": "?bot=thyca", "hash": ""}),
-        ("/ui/dashboard/index.html?s=s9&t=2&spaMode=legacy-check#dm/thyca/2", {"page": "dashboard", "search": "?view=trace", "hash": "#dm/thyca/2"}),
-        ("/ui/trace/index.html?s=s9&t=2&spaMode=legacy-check#dm/thyca/2", {"page": "dashboard", "search": "?range=all&view=trace", "hash": "#dm/thyca/2"}),
-        # Removed page: old Settings URLs land on chat (first bot highlighted by
-        # chat's own onEnter) with the shared dialog open.
-        ("/ui/settings/index.html?spaMode=legacy-check", {"page": "chat", "search": "?bot=thyca", "hash": ""}),
-        ("/ui/settings/?spaMode=legacy-check", {"page": "chat", "search": "?bot=thyca", "hash": ""}),
-        # A trace-shaped fragment on a Settings URL must not divert to Usage.
-        ("/ui/settings/index.html?spaMode=legacy-check#dm/thyca/2", {"page": "chat", "search": "?bot=thyca", "hash": ""}),
+        (
+            "/ui/%70rofile/index.html?spaMode=legacy-check",
+            {"page": "profile", "search": "", "hash": ""},
+        ),
+        (
+            "/ui/provider/index.html?bot=coder&spaMode=legacy-check",
+            {"page": "profile", "search": "?bot=coder", "hash": ""},
+        ),
+        (
+            "/ui/chat/index.html?bot=thyca&spaMode=legacy-check",
+            {"page": "chat", "search": "?bot=thyca", "hash": ""},
+        ),
+        (
+            "/ui/dashboard/index.html?s=s9&t=2&spaMode=legacy-check#dm/thyca/2",
+            {"page": "dashboard", "search": "?view=trace", "hash": "#dm/thyca/2"},
+        ),
+        (
+            "/ui/trace/index.html?s=s9&t=2&spaMode=legacy-check#dm/thyca/2",
+            {"page": "dashboard", "search": "?range=all&view=trace", "hash": "#dm/thyca/2"},
+        ),
+        (
+            "/ui/settings/index.html?spaMode=legacy-check",
+            {"page": "chat", "search": "?bot=thyca", "hash": ""},
+        ),
+        (
+            "/ui/settings/?spaMode=legacy-check",
+            {"page": "chat", "search": "?bot=thyca", "hash": ""},
+        ),
+        (
+            "/ui/settings/index.html?spaMode=legacy-check#dm/thyca/2",
+            {"page": "chat", "search": "?bot=thyca", "hash": ""},
+        ),
     )
     for index, (legacy, expected) in enumerate(legacy_cases):
-        legacy_result = _cdp_browser_result(browser, f"http://127.0.0.1:{server.server_port}{legacy}", 1280, None, tmp_path / f'legacy-{index}')
+        legacy_result = _cdp_browser_result(
+            browser,
+            f"http://127.0.0.1:{server.server_port}{legacy}",
+            1280,
+            None,
+            tmp_path / f"legacy-{index}",
+        )
         assert legacy_result["legacy"] is True and legacy_result["route"] == expected
         assert legacy_result["state"] == expected and legacy_result["href"].endswith("/")
         assert legacy_result["frames"] == 0
         if "/ui/settings" in legacy:
             assert legacy_result["dialogOpen"] is True, legacy_result
         browser_results["legacy"].append(legacy_result)
-    invalid_dates = _cdp_browser_result(browser, f"http://127.0.0.1:{server.server_port}/?spaMode=invalid-dashboard-dates", 1280, None, tmp_path / 'invalid-dates')
-    assert invalid_dates["invalidDay"]["search"] == "?bot=thyca&to=2026-03-01&view=trace", invalid_dates
+    invalid_dates = _cdp_browser_result(
+        browser,
+        f"http://127.0.0.1:{server.server_port}/?spaMode=invalid-dashboard-dates",
+        1280,
+        None,
+        tmp_path / "invalid-dates",
+    )
+    assert invalid_dates["invalidDay"]["search"] == "?bot=thyca&to=2026-03-01&view=trace", (
+        invalid_dates
+    )
     assert invalid_dates["inverted"]["search"] == "?bot=thyca&view=trace", invalid_dates
-    assert invalid_dates["leapDay"]["search"] == "?from=2024-02-29&to=2024-03-01&view=trace", invalid_dates
+    assert invalid_dates["leapDay"]["search"] == "?from=2024-02-29&to=2024-03-01&view=trace", (
+        invalid_dates
+    )
     assert invalid_dates["invalidView"]["search"] == ""
     assert invalid_dates["validView"]["search"] == "?view=cost"
     assert invalid_dates["scriptErrors"] == [] and invalid_dates["unhandledRejections"] == []
     browser_results["invalidDates"] = invalid_dates
-    fresh_default = _cdp_browser_result(browser, f"http://127.0.0.1:{server.server_port}/?spaMode=fresh-default-detail", 1280, None, tmp_path / 'fresh-default')
+    fresh_default = _cdp_browser_result(
+        browser,
+        f"http://127.0.0.1:{server.server_port}/?spaMode=fresh-default-detail",
+        1280,
+        None,
+        tmp_path / "fresh-default",
+    )
     assert fresh_default.get("freshDefaultDetail") is True, fresh_default
     assert fresh_default["route"]["page"] == "dashboard" and fresh_default["route"]["hash"] == ""
     assert fresh_default["apiCounts"].get("/api/traces/dm/thyca/0") == 1
-    assert fresh_default["apiCounts"].get("/api/traces") == 1 and fresh_default["apiCounts"].get("/api/traces/stats") == 1
+    assert (
+        fresh_default["apiCounts"].get("/api/traces") == 1
+        and fresh_default["apiCounts"].get("/api/traces/stats") == 1
+    )
     assert "from=" in fresh_default["apiUrls"][-1] and "to=" in fresh_default["apiUrls"][-1]
     browser_results["freshDefaultDetail"] = fresh_default
-    fresh_detail_result = _cdp_browser_result(browser, f"http://127.0.0.1:{server.server_port}/?spaMode=fresh-detail", 1280, None, tmp_path / 'fresh-detail')
+    fresh_detail_result = _cdp_browser_result(
+        browser,
+        f"http://127.0.0.1:{server.server_port}/?spaMode=fresh-detail",
+        1280,
+        None,
+        tmp_path / "fresh-detail",
+    )
     assert fresh_detail_result.get("freshDetail") is True, fresh_detail_result
-    assert fresh_detail_result["freshDefaultRoute"] == {"page": "dashboard", "search": "?range=all&view=trace", "hash": ""}
-    assert fresh_detail_result["route"]["page"] == "dashboard" and re.fullmatch(r"\?from=\d{4}-\d{2}-\d{2}&to=\d{4}-\d{2}-\d{2}&view=trace", fresh_detail_result["route"]["search"])
+    assert fresh_detail_result["freshDefaultRoute"] == {
+        "page": "dashboard",
+        "search": "?range=all&view=trace",
+        "hash": "",
+    }
+    assert fresh_detail_result["route"]["page"] == "dashboard" and re.fullmatch(
+        r"\?from=\d{4}-\d{2}-\d{2}&to=\d{4}-\d{2}-\d{2}&view=trace",
+        fresh_detail_result["route"]["search"],
+    )
     assert fresh_detail_result["route"]["hash"] == ""
     assert fresh_detail_result["externalReturnRoute"] == {"page": "chat", "search": "", "hash": ""}
-    assert fresh_detail_result["externalEntryPreserved"] is True and fresh_detail_result["detailToDetailFallback"] is True
+    assert (
+        fresh_detail_result["externalEntryPreserved"] is True
+        and fresh_detail_result["detailToDetailFallback"] is True
+    )
     assert fresh_detail_result["overviewRequests"].get("/api/traces/dm/thyca/0") == 1
-    assert fresh_detail_result["overviewRequests"].get("/api/traces", 0) == 1 and fresh_detail_result["overviewRequests"].get("/api/traces/stats", 0) == 1
+    assert (
+        fresh_detail_result["overviewRequests"].get("/api/traces", 0) == 1
+        and fresh_detail_result["overviewRequests"].get("/api/traces/stats", 0) == 1
+    )
     browser_results["freshDetail"] = fresh_detail_result
     for width in (320, 375):
         mobile_result = _cdp_browser_result(
-            browser, f"http://127.0.0.1:{server.server_port}/?spaMode=profile-screenshot", width,
-            Path(f"/tmp/thyca-usage-trace-spa-{width}.png"), tmp_path / f"chrome-{width}", mobile=True,
+            browser,
+            f"http://127.0.0.1:{server.server_port}/?spaMode=profile-screenshot",
+            width,
+            Path(f"/tmp/thyca-usage-trace-spa-{width}.png"),
+            tmp_path / f"chrome-{width}",
+            mobile=True,
         )
         assert mobile_result.get("screenshot") is True, mobile_result
         assert mobile_result["href"].endswith("/") and mobile_result["frames"] == 0
         assert mobile_result["documentWidth"] <= mobile_result["viewport"], mobile_result
         assert mobile_result["bodyWidth"] <= mobile_result["viewport"], mobile_result
         m_insets = mobile_result["insets"]
-        assert len(m_insets) == 2 and abs(m_insets[0] - m_insets[1]) <= 1 and 12 <= m_insets[0] <= 20, mobile_result
+        assert (
+            len(m_insets) == 2 and abs(m_insets[0] - m_insets[1]) <= 1 and 12 <= m_insets[0] <= 20
+        ), mobile_result
         assert mobile_result["cardCount"] == 1, mobile_result
-        assert mobile_result["overflow"] is False and mobile_result["mobileMenuClosed"] is True, mobile_result
+        assert mobile_result["overflow"] is False and mobile_result["mobileMenuClosed"] is True, (
+            mobile_result
+        )
         assert [item["page"] for item in mobile_result["mobileViews"]] == list(PAGES), mobile_result
-        assert all(abs(item["left"] - item["gridLeft"]) <= 1 and abs(item["right"] - item["gridRight"]) <= 1 and abs(item["width"] - item["gridWidth"]) <= 1 for item in mobile_result["mobileViews"]), mobile_result
+        assert all(
+            abs(item["left"] - item["gridLeft"]) <= 1
+            and abs(item["right"] - item["gridRight"]) <= 1
+            and abs(item["width"] - item["gridWidth"]) <= 1
+            for item in mobile_result["mobileViews"]
+        ), mobile_result
         browser_results["mobile"].append(mobile_result)
     for width in (1280, 320, 375):
         for mode in ("overview", "detail"):
             usage_result = _cdp_browser_result(
-                browser, f"http://127.0.0.1:{server.server_port}/?spaMode=usage-{mode}-screenshot", width,
-                Path(f"/tmp/thyca-usage-trace-{mode}-spa-{width}.png"), tmp_path / f"usage-{mode}-{width}", mobile=width < 850,
+                browser,
+                f"http://127.0.0.1:{server.server_port}/?spaMode=usage-{mode}-screenshot",
+                width,
+                Path(f"/tmp/thyca-usage-trace-{mode}-spa-{width}.png"),
+                tmp_path / f"usage-{mode}-{width}",
+                mobile=width < 850,
             )
             assert usage_result.get("usageScreenshot") == mode, usage_result
             assert usage_result["detailVisible"] is (mode == "detail")
             assert usage_result["overviewVisible"] is (mode == "overview")
             assert usage_result["headerControlsHidden"] is (mode == "detail")
-            assert usage_result["frames"] == 0 and usage_result["scriptErrors"] == [] and usage_result["unhandledRejections"] == []
+            assert (
+                usage_result["frames"] == 0
+                and usage_result["scriptErrors"] == []
+                and usage_result["unhandledRejections"] == []
+            )
             assert usage_result["route"]["page"] == "dashboard"
             assert usage_result["route"]["hash"] == ("#dm/thyca/0" if mode == "detail" else "")
-            assert usage_result["viewport"] == width and usage_result["documentWidth"] <= width and usage_result["bodyWidth"] <= width
+            assert (
+                usage_result["viewport"] == width
+                and usage_result["documentWidth"] <= width
+                and usage_result["bodyWidth"] <= width
+            )
             assert usage_result["overflows"] == [], usage_result
-            assert usage_result["nav"][0] <= usage_result["activeLink"][0] and usage_result["activeLink"][1] <= usage_result["nav"][1]
+            assert (
+                usage_result["nav"][0] <= usage_result["activeLink"][0]
+                and usage_result["activeLink"][1] <= usage_result["nav"][1]
+            )
             if mode == "detail":
-                assert usage_result["returnTo"]["page"] == "dashboard" and usage_result["returnTo"]["hash"] == ""
+                assert (
+                    usage_result["returnTo"]["page"] == "dashboard"
+                    and usage_result["returnTo"]["hash"] == ""
+                )
             else:
-                assert usage_result["statValues"] and "Synthetic Usage turn" in usage_result["turnText"]
-            browser_results.setdefault("usageScreenshots", {}).setdefault(str(width), {})[mode] = usage_result
+                assert (
+                    usage_result["statValues"]
+                    and "Synthetic Usage turn" in usage_result["turnText"]
+                )
+            browser_results.setdefault("usageScreenshots", {}).setdefault(str(width), {})[mode] = (
+                usage_result
+            )
     with urlopen(f"http://127.0.0.1:{server.server_port}/api/test/delay-initial-dm", timeout=3):
         pass
-    delayed_result = _cdp_browser_result(browser, f"http://127.0.0.1:{server.server_port}/?spaMode=delayed-chat", 1280, None, tmp_path / 'delayed-chat')
+    delayed_result = _cdp_browser_result(
+        browser,
+        f"http://127.0.0.1:{server.server_port}/?spaMode=delayed-chat",
+        1280,
+        None,
+        tmp_path / "delayed-chat",
+    )
     assert delayed_result.get("delayedDmRecovered") is True, delayed_result
-    assert delayed_result["conversation"] == "dm:thyca" and delayed_result["bot"] == "thyca" and delayed_result["dmHits"] >= 2
+    assert (
+        delayed_result["conversation"] == "dm:thyca"
+        and delayed_result["bot"] == "thyca"
+        and delayed_result["dmHits"] >= 2
+    )
     assert delayed_result["scriptErrors"] == [] and delayed_result["unhandledRejections"] == []
     browser_results["delayedChat"] = delayed_result
     for width in (1280, 375):
         background_result = _cdp_browser_result(
-            browser, f"http://127.0.0.1:{server.server_port}/?spaMode=background-audit", width,
-            Path(f"/tmp/thyca-background-spa-{width}.png"), tmp_path / f"background-{width}", mobile=width < 850,
+            browser,
+            f"http://127.0.0.1:{server.server_port}/?spaMode=background-audit",
+            width,
+            Path(f"/tmp/thyca-background-spa-{width}.png"),
+            tmp_path / f"background-{width}",
+            mobile=width < 850,
         )
         assert background_result.get("backgroundAudit") is True, background_result
         assert background_result["frames"] == 0
-        assert background_result["scriptErrors"] == [] and background_result["unhandledRejections"] == []
+        assert (
+            background_result["scriptErrors"] == []
+            and background_result["unhandledRejections"] == []
+        )
         assert set(background_result["onPages"]) == set(PAGES), background_result["onPages"].keys()
         for page, audit in background_result["onPages"].items():
             assert "thyca-bg-paper.png" in audit["art"], (page, audit["art"])
             assert audit["hook"] == "on", (page, audit)
             assert audit["paneOrnaments"] == 0, (page, audit)
             if width < 850:
-                # Narrow: the sidebar is a paper-backed overlay drawer (opaque
-                # for readability); the workspace veil still shows the art.
                 assert audit["drawerOpen"] is True, (page, audit)
                 assert "thyca-bg-paper.png" in audit["sidebarArt"], (page, audit)
                 assert audit["sidebarAlpha"] == 1, (page, audit)
             else:
-                assert audit["sidebarArt"] == "none", (page, audit)  # flat veil; art comes from the shell layer
-                assert 0.5 <= audit["sidebarAlpha"] < 1, (page, audit)  # flat translucent veil, not opaque
+                assert audit["sidebarArt"] == "none", (
+                    page,
+                    audit,
+                )
+                assert 0.5 <= audit["sidebarAlpha"] < 1, (
+                    page,
+                    audit,
+                )
             assert 0.5 <= audit["workspaceAlpha"] < 1, (page, audit)
             assert audit["documentWidth"] <= width and audit["bodyWidth"] <= width, (page, audit)
-        off_states = [("offSettings", background_result["offSettings"]),
-                      ("offChat", background_result["offChat"])]
-        off_states.extend((f"reloaded:{page}", audit) for page, audit in background_result["reloadedPages"].items())
+        off_states = [
+            ("offSettings", background_result["offSettings"]),
+            ("offChat", background_result["offChat"]),
+        ]
+        off_states.extend(
+            (f"reloaded:{page}", audit)
+            for page, audit in background_result["reloadedPages"].items()
+        )
         for label, audit in off_states:
-            # Saved preference off: flat cream everywhere, no paper image,
-            # hook hydrated from storage on every route and after reload.
             assert audit["hook"] == "off", (label, audit)
             assert audit["art"] == "none", (label, audit)
             assert audit["sidebarArt"] == "none", (label, audit)
@@ -1114,24 +1688,56 @@ def test_root_spa_retains_all_workspaces_and_restores_history(tmp_path: Path, re
         assert restored["hook"] == "on" and "thyca-bg-paper.png" in restored["art"], restored
         if width < 850:
             assert "thyca-bg-paper.png" in restored["sidebarArt"], restored
-        assert background_result["phase1Errors"] == [] and background_result["phase1Rejections"] == [], background_result
+        assert (
+            background_result["phase1Errors"] == [] and background_result["phase1Rejections"] == []
+        ), background_result
         browser_results.setdefault("backgroundAudit", {})[str(width)] = background_result
-    Path("/tmp/thyca-usage-trace-spa-browser.json").write_text(json.dumps(browser_results, indent=2) + "\\n", encoding="utf-8")
+    Path("/tmp/thyca-usage-trace-spa-browser.json").write_text(
+        json.dumps(browser_results, indent=2) + "\\n", encoding="utf-8"
+    )
 
 
-@pytest.mark.skipif(not shutil.which("google-chrome"), reason="Google Chrome is required for the setup-gate browser test")
+@pytest.mark.skipif(
+    not chromium_binary(), reason="Chromium/Chrome is required for the setup-gate browser test"
+)
 def test_first_run_setup_gate_in_real_spa(tmp_path: Path) -> None:
     class Handler(BaseHTTPRequestHandler):
         gate_case = "required"
         ready = False
         config_error = False
-        config = {"values": {"providers": {"legacy": {"baseUrl": "https://legacy.invalid/v1", "api": "openai_chat", "apiKeyEnv": "THYCA_SETUP_GATE_MISSING"}}, "models": {}, "defaultProvider": "legacy", "defaultModel": "legacy/unregistered"}, "schema": {"sections": [{"fields": [{"key": "provider.reasoningEffort", "choices": ["low", "high", "max"], "default": "high"}]}]}}
+        config: ClassVar[dict] = {
+            "values": {
+                "providers": {
+                    "legacy": {
+                        "baseUrl": "https://legacy.invalid/v1",
+                        "api": "openai_chat",
+                        "apiKeyEnv": "THYCA_SETUP_GATE_MISSING",
+                    }
+                },
+                "models": {},
+                "defaultProvider": "legacy",
+                "defaultModel": "legacy/unregistered",
+            },
+            "schema": {
+                "sections": [
+                    {
+                        "fields": [
+                            {
+                                "key": "provider.reasoningEffort",
+                                "choices": ["low", "high", "max"],
+                                "default": "high",
+                            }
+                        ]
+                    }
+                ]
+            },
+        }
         status_hits = 0
         status_started = threading.Event()
         status_release = threading.Event()
-        api_requests: list[str] = []
+        api_requests: ClassVar[list[str]] = []
         dm_hits = 0
-        verification_meta: dict = {}
+        verification_meta: ClassVar[dict] = {}
         save_count = 0
 
         def log_message(self, *_args) -> None:
@@ -1139,58 +1745,174 @@ def test_first_run_setup_gate_in_real_spa(tmp_path: Path) -> None:
 
         def _json(self, payload: dict, status: int = 200) -> None:
             body = json.dumps(payload).encode()
-            self.send_response(status); self.send_header("Content-Type", "application/json"); self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
 
         def do_GET(self) -> None:
             path = urlsplit(self.path).path
-            query = dict(__import__("urllib.parse", fromlist=["parse_qsl"]).parse_qsl(urlsplit(self.path).query))
+            query = dict(
+                __import__("urllib.parse", fromlist=["parse_qsl"]).parse_qsl(
+                    urlsplit(self.path).query
+                )
+            )
             if path.startswith("/api/test/"):
                 if path == "/api/test/state":
-                    self._json({"statusHits": Handler.status_hits, "statusStarted": Handler.status_started.is_set(), "dmHits": Handler.dm_hits, "verification": Handler.verification_meta, "saveCount": Handler.save_count, "apiRequests": Handler.api_requests}); return
-                if path == "/api/test/release": Handler.status_release.set(); self._json({"ok": True}); return
-                if path == "/api/test/ready": Handler.gate_case = "ready"; Handler.ready = True; self._json({"ok": True}); return
-                self.send_error(404); return
+                    self._json(
+                        {
+                            "statusHits": Handler.status_hits,
+                            "statusStarted": Handler.status_started.is_set(),
+                            "dmHits": Handler.dm_hits,
+                            "verification": Handler.verification_meta,
+                            "saveCount": Handler.save_count,
+                            "apiRequests": Handler.api_requests,
+                        }
+                    )
+                    return
+                if path == "/api/test/release":
+                    Handler.status_release.set()
+                    self._json({"ok": True})
+                    return
+                if path == "/api/test/ready":
+                    Handler.gate_case = "ready"
+                    Handler.ready = True
+                    self._json({"ok": True})
+                    return
+                self.send_error(404)
+                return
             if path.startswith("/api/"):
                 Handler.api_requests.append(path)
                 if path == "/api/config/status":
                     Handler.status_hits += 1
                     if Handler.gate_case == "stale" and Handler.status_hits == 1:
-                        Handler.status_started.set(); Handler.status_release.wait(timeout=8); payload = {"ready": True}
+                        Handler.status_started.set()
+                        Handler.status_release.wait(timeout=8)
+                        payload = {"ready": True}
                     elif Handler.gate_case == "stale" and Handler.status_hits == 2:
                         payload = {"ready": False}
-                    elif Handler.gate_case == "error": payload = {"ready": "invalid"}
-                    else: payload = {"ready": Handler.ready}
-                    self._json(payload); return
+                    elif Handler.gate_case == "error":
+                        payload = {"ready": "invalid"}
+                    else:
+                        payload = {"ready": Handler.ready}
+                    self._json(payload)
+                    return
                 if path == "/api/config":
-                    if Handler.config_error: self._json({"error": "synthetic config error"}, 503); return
+                    if Handler.config_error:
+                        self._json({"error": "synthetic config error"}, 503)
+                        return
                     config = json.loads(json.dumps(Handler.config))
                     providers = config["values"].get("providers", {})
                     meta = {pid: bool(value.get("apiKey")) for pid, value in providers.items()}
-                    for value in providers.values(): value["apiKey"] = ""
-                    config["meta"] = {"providers": meta, "hasApiKey": meta.get(config["values"].get("defaultProvider", ""), False)}
-                    self._json(config); return
-                if path == "/api/bots": self._json({"bots": [{"id": "thyca", "name": "Thyca", "tint": "botanical", "role": "assistant"}, {"id": "coder", "name": "Coder", "tint": "botanical", "role": "coding"}]}); return
-                if path == "/api/conversations": self._json({"conversations": []}); return
-                if path == "/api/bots/thyca/dm": Handler.dm_hits += 1; self._json({"id": "dm-thyca", "dm": "thyca", "messages": []}); return
-                if path == "/api/bots/coder/settings": self._json({"bot_id": "coder", "model": {"id": "default", "thinking": None}, "effective": {"model": "legacy/unregistered", "provider": "legacy", "thinking": None}}); return
-                if path == "/api/memory/stats": self._json({"files": [], "canonical": [], "total": 0}); return
-                if path == "/api/traces/stats": self._json({"totals": {}, "by_bot": []}); return
-                self._json({}); return
+                    for value in providers.values():
+                        value["apiKey"] = ""
+                    config["meta"] = {
+                        "providers": meta,
+                        "hasApiKey": meta.get(config["values"].get("defaultProvider", ""), False),
+                    }
+                    self._json(config)
+                    return
+                if path == "/api/bots":
+                    self._json(
+                        {
+                            "bots": [
+                                {
+                                    "id": "thyca",
+                                    "name": "Thyca",
+                                    "tint": "botanical",
+                                    "role": "assistant",
+                                },
+                                {
+                                    "id": "coder",
+                                    "name": "Coder",
+                                    "tint": "botanical",
+                                    "role": "coding",
+                                },
+                            ]
+                        }
+                    )
+                    return
+                if path == "/api/conversations":
+                    self._json({"conversations": []})
+                    return
+                if path == "/api/bots/thyca/dm":
+                    Handler.dm_hits += 1
+                    self._json({"id": "dm-thyca", "dm": "thyca", "messages": []})
+                    return
+                if path == "/api/bots/coder/settings":
+                    self._json(
+                        {
+                            "bot_id": "coder",
+                            "model": {"id": "default", "thinking": None},
+                            "effective": {
+                                "model": "legacy/unregistered",
+                                "provider": "legacy",
+                                "thinking": None,
+                            },
+                        }
+                    )
+                    return
+                if path == "/api/memory/stats":
+                    self._json({"files": [], "canonical": [], "total": 0})
+                    return
+                if path == "/api/traces/stats":
+                    self._json({"totals": {}, "by_bot": []})
+                    return
+                self._json({})
+                return
             if query.get("gateCase"):
                 Handler.gate_case = query["gateCase"]
                 Handler.ready = Handler.gate_case in ("ready", "ready-mobile")
                 Handler.config_error = Handler.gate_case == "config-error"
                 Handler.status_hits = Handler.dm_hits = Handler.save_count = 0
-                Handler.status_started.clear(); Handler.status_release.clear(); Handler.api_requests.clear(); Handler.verification_meta = {}
-                Handler.config = {"values": {"providers": {"legacy": {"baseUrl": "https://legacy.invalid/v1", "api": "openai_chat", "apiKeyEnv": "THYCA_SETUP_GATE_MISSING"}}, "models": {}, "defaultProvider": "legacy", "defaultModel": "legacy/unregistered"}, "schema": {"sections": [{"fields": [{"key": "provider.reasoningEffort", "choices": ["low", "high", "max"], "default": "high"}]}]}}
+                Handler.status_started.clear()
+                Handler.status_release.clear()
+                Handler.api_requests.clear()
+                Handler.verification_meta = {}
+                Handler.config = {
+                    "values": {
+                        "providers": {
+                            "legacy": {
+                                "baseUrl": "https://legacy.invalid/v1",
+                                "api": "openai_chat",
+                                "apiKeyEnv": "THYCA_SETUP_GATE_MISSING",
+                            }
+                        },
+                        "models": {},
+                        "defaultProvider": "legacy",
+                        "defaultModel": "legacy/unregistered",
+                    },
+                    "schema": {
+                        "sections": [
+                            {
+                                "fields": [
+                                    {
+                                        "key": "provider.reasoningEffort",
+                                        "choices": ["low", "high", "max"],
+                                        "default": "high",
+                                    }
+                                ]
+                            }
+                        ]
+                    },
+                }
             target = safe_file(WEBUI, path)
-            if target is None: self.send_error(404); return
+            if target is None:
+                self.send_error(404)
+                return
             body = target.read_bytes()
-            if path == "/" or path.startswith("/ui/") and path.endswith(("", "/", "/index.html")):
+            if path == "/" or (path.startswith("/ui/") and path.endswith(("", "/", "/index.html"))):
                 head = f'<script>window.__spaGateCase=new URLSearchParams(location.search).get("gateCase");window.__controlBase={json.dumps(Handler.control_base)};window.__scriptErrors=[];window.__promiseErrors=[];window.addEventListener("error",e=>window.__scriptErrors.push(String(e.message)));window.addEventListener("unhandledrejection",e=>window.__promiseErrors.push(String(e.reason)))</script></head>'.encode()
                 script = SETUP_GATE_RESULT_SCRIPT.encode()
-                body = body.replace(b"</head>", head).replace(b"</body>", b"<script>" + script + b"</script></body>")
-            self.send_response(200); self.send_header("Content-Type", content_type(target)); self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
+                body = body.replace(b"</head>", head).replace(
+                    b"</body>", b"<script>" + script + b"</script></body>"
+                )
+            self.send_response(200)
+            self.send_header("Content-Type", content_type(target))
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
 
         def do_POST(self) -> None:
             path = urlsplit(self.path).path
@@ -1198,70 +1920,211 @@ def test_first_run_setup_gate_in_real_spa(tmp_path: Path) -> None:
             payload = json.loads(self.rfile.read(length) or b"{}")
             Handler.api_requests.append("POST " + path)
             if path == "/api/onboarding/verify":
-                Handler.verification_meta = {"apiKeyProvided": bool(payload.get("apiKey")), "providerIdProvided": "providerId" in payload}
-                self._json({"models": ["fixture-model"], "apiKeyOk": True}); return
+                Handler.verification_meta = {
+                    "apiKeyProvided": bool(payload.get("apiKey")),
+                    "providerIdProvided": "providerId" in payload,
+                }
+                self._json({"models": ["fixture-model"], "apiKeyOk": True})
+                return
             if path == "/api/config":
                 Handler.config = {"values": payload, "schema": Handler.config.get("schema", {})}
-                Handler.ready = bool(payload.get("defaultModel") and payload.get("providers", {}).get("local", {}).get("apiKey"))
+                Handler.ready = bool(
+                    payload.get("defaultModel")
+                    and payload.get("providers", {}).get("local", {}).get("apiKey")
+                )
                 Handler.save_count += 1
-                self._json({"ok": True, "ready": Handler.ready}); return
+                self._json({"ok": True, "ready": Handler.ready})
+                return
             self._json({"ok": True})
 
     class ControlHandler(BaseHTTPRequestHandler):
-        def log_message(self, *_args) -> None: pass
+        def log_message(self, *_args) -> None:
+            pass
+
         def _json(self, payload: dict) -> None:
-            body = json.dumps(payload).encode(); self.send_response(200); self.send_header("Access-Control-Allow-Origin", "*"); self.send_header("Content-Type", "application/json"); self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
+            body = json.dumps(payload).encode()
+            self.send_response(200)
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
         def do_GET(self) -> None:
             path = urlsplit(self.path).path
-            if path == "/release": Handler.status_release.set(); self._json({"ok": True}); return
-            if path == "/ready": Handler.gate_case = "ready"; Handler.ready = True; self._json({"ok": True}); return
-            if path == "/config-ok": Handler.config_error = False; self._json({"ok": True}); return
-            if path == "/state": self._json({"statusHits": Handler.status_hits, "statusStarted": Handler.status_started.is_set(), "dmHits": Handler.dm_hits, "verification": Handler.verification_meta, "saveCount": Handler.save_count, "apiRequests": Handler.api_requests}); return
+            if path == "/release":
+                Handler.status_release.set()
+                self._json({"ok": True})
+                return
+            if path == "/ready":
+                Handler.gate_case = "ready"
+                Handler.ready = True
+                self._json({"ok": True})
+                return
+            if path == "/config-ok":
+                Handler.config_error = False
+                self._json({"ok": True})
+                return
+            if path == "/state":
+                self._json(
+                    {
+                        "statusHits": Handler.status_hits,
+                        "statusStarted": Handler.status_started.is_set(),
+                        "dmHits": Handler.dm_hits,
+                        "verification": Handler.verification_meta,
+                        "saveCount": Handler.save_count,
+                        "apiRequests": Handler.api_requests,
+                    }
+                )
+                return
             self.send_error(404)
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
     control = ThreadingHTTPServer(("127.0.0.1", 0), ControlHandler)
-    control_thread = threading.Thread(target=control.serve_forever, daemon=True); control_thread.start()
+    control_thread = threading.Thread(target=control.serve_forever, daemon=True)
+    control_thread.start()
     request_state = f"http://127.0.0.1:{control.server_port}"
     Handler.control_base = request_state
     try:
-        chrome = shutil.which("google-chrome")
-        required = _cdp_browser_result(chrome, f"http://127.0.0.1:{server.server_port}/ui/profile?bot=coder&gateCase=required", 1280, Path("/tmp/thyca-setup-gate-ready.png"), tmp_path / "required")
+        chrome = chromium_binary()
+        assert chrome is not None
+        required = _cdp_browser_result(
+            chrome,
+            f"http://127.0.0.1:{server.server_port}/ui/profile?bot=coder&gateCase=required",
+            1280,
+            Path("/tmp/thyca-setup-gate-ready.png"),
+            tmp_path / "required",
+        )
         assert required.get("passed") is True, required
         assert required["finalRoute"] == {"page": "profile", "search": "?bot=coder", "hash": ""}
         assert required["beforeSave"]["route"] == {"page": "provider", "search": "", "hash": ""}
-        assert required["beforeSave"]["setupState"] == "required" and required["beforeSave"]["chatHidden"] is True and required["beforeSave"]["chatInert"] is True
-        assert required["beforeSave"]["sidebarInert"] is True and required["beforeSave"]["menuDisabled"] is True
+        assert (
+            required["beforeSave"]["setupState"] == "required"
+            and required["beforeSave"]["chatHidden"] is True
+            and required["beforeSave"]["chatInert"] is True
+        )
+        assert (
+            required["beforeSave"]["sidebarInert"] is True
+            and required["beforeSave"]["menuDisabled"] is True
+        )
         assert required["beforeSave"]["noticeText"] == "Thiết lập model để bắt đầu"
-        assert required["beforeSave"]["statePage"] == "provider" and required["beforeSave"]["dmHits"] == 0
+        assert (
+            required["beforeSave"]["statePage"] == "provider"
+            and required["beforeSave"]["dmHits"] == 0
+        )
         assert required["verification"] == {"apiKeyProvided": True, "providerIdProvided": False}
         assert required["afterEscape"] is True and required["afterResize"] is True
-        assert required["afterOpen"] == {"inert": True, "open": False, "overlayHidden": True, "menuDisabled": True, "chatInert": True, "groupDialogOpen": False}
-        assert required["saveCount"] == 1 and required["dmHits"] == 0 and "POST /api/conversations" not in required["apiRequests"]
-        assert required["dialogOpenedAfterSetup"] is True  # historical settings entry marker survives the gate
-        ready = _cdp_browser_result(chrome, f"http://127.0.0.1:{server.server_port}/ui/profile?bot=coder&gateCase=ready", 1280, None, tmp_path / "ready")
-        assert ready.get("passed") is True and ready["setupState"] == "ready" and ready["notice"] is False and ready["ordinaryEventIgnored"] is True
+        assert required["afterOpen"] == {
+            "inert": True,
+            "open": False,
+            "overlayHidden": True,
+            "menuDisabled": True,
+            "chatInert": True,
+            "groupDialogOpen": False,
+        }
+        assert (
+            required["saveCount"] == 1
+            and required["dmHits"] == 0
+            and "POST /api/conversations" not in required["apiRequests"]
+        )
+        assert (
+            required["dialogOpenedAfterSetup"] is True
+        )
+        ready = _cdp_browser_result(
+            chrome,
+            f"http://127.0.0.1:{server.server_port}/ui/profile?bot=coder&gateCase=ready",
+            1280,
+            None,
+            tmp_path / "ready",
+        )
+        assert (
+            ready.get("passed") is True
+            and ready["setupState"] == "ready"
+            and ready["notice"] is False
+            and ready["ordinaryEventIgnored"] is True
+        )
         assert ready["route"] == {"page": "profile", "search": "?bot=coder", "hash": ""}
         assert ready["desktopSidebarUnlocked"] is True
-        ready_mobile = _cdp_browser_result(chrome, f"http://127.0.0.1:{server.server_port}/ui/profile?bot=coder&gateCase=ready-mobile", 375, None, tmp_path / "ready-mobile")
-        assert ready_mobile.get("passed") is True and ready_mobile["mobileSidebarInitiallyInert"] and ready_mobile["mobileOpenAllowed"] and ready_mobile["mobileCloseRestoresInert"]
-        error = _cdp_browser_result(chrome, f"http://127.0.0.1:{server.server_port}/ui/profile?bot=coder&gateCase=error", 1280, None, tmp_path / "error")
-        assert error.get("passed") is True and error["errorState"] == "error" and error["retryRestored"] is True
-        config_error = _cdp_browser_result(chrome, f"http://127.0.0.1:{server.server_port}/ui/profile?bot=coder&gateCase=config-error", 1280, None, tmp_path / "config-error")
-        assert config_error.get("passed") is True and config_error["errorState"] == "error" and config_error["retryRequired"] is True
-        stale = _cdp_browser_result(chrome, f"http://127.0.0.1:{server.server_port}/ui/profile?bot=coder&gateCase=stale", 1280, None, tmp_path / "stale")
-        assert stale.get("passed") is True and stale["checkingVisible"] is True and stale["staleStayedLocked"] is True and stale["retryRestored"] is True
-        evidence = {"required": required, "readyLegacy": ready, "readyMobile": ready_mobile, "errorRetry": error, "configErrorRetry": config_error, "staleRetry": stale}
+        ready_mobile = _cdp_browser_result(
+            chrome,
+            f"http://127.0.0.1:{server.server_port}/ui/profile?bot=coder&gateCase=ready-mobile",
+            375,
+            None,
+            tmp_path / "ready-mobile",
+        )
+        assert (
+            ready_mobile.get("passed") is True
+            and ready_mobile["mobileSidebarInitiallyInert"]
+            and ready_mobile["mobileOpenAllowed"]
+            and ready_mobile["mobileCloseRestoresInert"]
+        )
+        error = _cdp_browser_result(
+            chrome,
+            f"http://127.0.0.1:{server.server_port}/ui/profile?bot=coder&gateCase=error",
+            1280,
+            None,
+            tmp_path / "error",
+        )
+        assert (
+            error.get("passed") is True
+            and error["errorState"] == "error"
+            and error["retryRestored"] is True
+        )
+        config_error = _cdp_browser_result(
+            chrome,
+            f"http://127.0.0.1:{server.server_port}/ui/profile?bot=coder&gateCase=config-error",
+            1280,
+            None,
+            tmp_path / "config-error",
+        )
+        assert (
+            config_error.get("passed") is True
+            and config_error["errorState"] == "error"
+            and config_error["retryRequired"] is True
+        )
+        stale = _cdp_browser_result(
+            chrome,
+            f"http://127.0.0.1:{server.server_port}/ui/profile?bot=coder&gateCase=stale",
+            1280,
+            None,
+            tmp_path / "stale",
+        )
+        assert (
+            stale.get("passed") is True
+            and stale["checkingVisible"] is True
+            and stale["staleStayedLocked"] is True
+            and stale["retryRestored"] is True
+        )
+        evidence = {
+            "required": required,
+            "readyLegacy": ready,
+            "readyMobile": ready_mobile,
+            "errorRetry": error,
+            "configErrorRetry": config_error,
+            "staleRetry": stale,
+        }
         for stage in ("ready", "ready-mobile", "error", "config-error", "stale"):
             html_artifact = Path(f"/tmp/thyca-setup-gate-{stage}.html")
             if html_artifact.exists():
-                html_artifact.write_text(html_artifact.read_text(encoding="utf-8").replace("synthetic-only-key", "[redacted]"), encoding="utf-8")
-        Path("/tmp/thyca-setup-gate-browser.json").write_text(json.dumps(evidence, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+                html_artifact.write_text(
+                    html_artifact.read_text(encoding="utf-8").replace(
+                        "synthetic-only-key", "[redacted]"
+                    ),
+                    encoding="utf-8",
+                )
+        Path("/tmp/thyca-setup-gate-browser.json").write_text(
+            json.dumps(evidence, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
     finally:
         Handler.status_release.set()
-        server.shutdown(); server.server_close(); thread.join(timeout=3)
-        control.shutdown(); control.server_close(); control_thread.join(timeout=3)
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=3)
+        control.shutdown()
+        control.server_close()
+        control_thread.join(timeout=3)
 
 
 SETUP_GATE_RESULT_SCRIPT = r"""
@@ -1508,21 +2371,62 @@ SETTINGS_DIALOG_AUDIT_SCRIPT = r"""
 """
 
 
-@pytest.mark.skipif(not shutil.which("google-chrome"), reason="Google Chrome is required for the Settings dialog browser audit")
+@pytest.mark.skipif(
+    not chromium_binary(),
+    reason="Chromium/Chrome is required for the Settings dialog browser audit",
+)
 def test_settings_dialog_modal_feedback_scale_and_merge(tmp_path: Path) -> None:
     """Real browser: Settings conflict/merge feedback inside the modal, dialog
     text-scale zoom within the viewport, and draft survival across reopen."""
+
     class Handler(BaseHTTPRequestHandler):
-        values = {"providers": {}, "models": {}, "defaultProvider": "", "defaultModel": "",
-                  "limits": {"loopMax": 80, "hotTailKB": 4, "contextTokens": 100000, "softTimeoutS": 20}}
-        schema = {"sections": [{"key": "limits", "label": "Giới hạn", "fields": [
-            {"key": "limits.loopMax", "label": "Số vòng agent tối đa", "type": "number", "min": 1, "max": 200},
-            {"key": "limits.hotTailKB", "label": "Dung lượng nhớ nóng (KB)", "type": "number", "min": 1, "max": 64},
-            {"key": "limits.contextTokens", "label": "Trần ngữ cảnh gửi lên model (tokens)", "type": "number", "min": 1000, "max": 2000000},
-            {"key": "limits.softTimeoutS", "label": "Soft timeout chờ tool (giây)", "type": "number", "min": 1, "max": 300},
-        ]}]}
+        values: ClassVar[dict] = {
+            "providers": {},
+            "models": {},
+            "defaultProvider": "",
+            "defaultModel": "",
+            "limits": {"loopMax": 80, "hotTailKB": 4, "contextTokens": 100000, "softTimeoutS": 20},
+        }
+        schema: ClassVar[dict] = {
+            "sections": [
+                {
+                    "key": "limits",
+                    "label": "Giới hạn",
+                    "fields": [
+                        {
+                            "key": "limits.loopMax",
+                            "label": "Số vòng agent tối đa",
+                            "type": "number",
+                            "min": 1,
+                            "max": 200,
+                        },
+                        {
+                            "key": "limits.hotTailKB",
+                            "label": "Dung lượng nhớ nóng (KB)",
+                            "type": "number",
+                            "min": 1,
+                            "max": 64,
+                        },
+                        {
+                            "key": "limits.contextTokens",
+                            "label": "Trần ngữ cảnh gửi lên model (tokens)",
+                            "type": "number",
+                            "min": 1000,
+                            "max": 2000000,
+                        },
+                        {
+                            "key": "limits.softTimeoutS",
+                            "label": "Soft timeout chờ tool (giây)",
+                            "type": "number",
+                            "min": 1,
+                            "max": 300,
+                        },
+                    ],
+                }
+            ]
+        }
         revision = "r0"
-        posts: list[dict] = []
+        posts: ClassVar[list[dict]] = []
         conflict_armed = False
 
         def log_message(self, *_args) -> None:
@@ -1530,36 +2434,104 @@ def test_settings_dialog_modal_feedback_scale_and_merge(tmp_path: Path) -> None:
 
         def _json(self, payload: dict, status: int = 200) -> None:
             body = json.dumps(payload).encode()
-            self.send_response(status); self.send_header("Content-Type", "application/json"); self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
 
         def do_GET(self) -> None:
             path = urlsplit(self.path).path
             if path == "/api/test/mutate":
-                Handler.values["limits"]["loopMax"] = 999; Handler.revision = "r9"; self._json({"ok": True}); return
-            if path == "/api/test/conflict": Handler.conflict_armed = True; self._json({"ok": True}); return
-            if path == "/api/test/calm": Handler.conflict_armed = False; self._json({"ok": True}); return
+                Handler.values["limits"]["loopMax"] = 999
+                Handler.revision = "r9"
+                self._json({"ok": True})
+                return
+            if path == "/api/test/conflict":
+                Handler.conflict_armed = True
+                self._json({"ok": True})
+                return
+            if path == "/api/test/calm":
+                Handler.conflict_armed = False
+                self._json({"ok": True})
+                return
             if path == "/api/test/reset":
-                Handler.values = {"providers": {}, "models": {}, "defaultProvider": "", "defaultModel": "",
-                                  "limits": {"loopMax": 80, "hotTailKB": 4, "contextTokens": 100000, "softTimeoutS": 20}}
-                Handler.revision = "r0"; Handler.posts = []; Handler.conflict_armed = False
-                self._json({"ok": True}); return
-            if path == "/api/test/state": self._json({"revision": Handler.revision, "values": Handler.values, "posts": Handler.posts}); return
+                Handler.values = {
+                    "providers": {},
+                    "models": {},
+                    "defaultProvider": "",
+                    "defaultModel": "",
+                    "limits": {
+                        "loopMax": 80,
+                        "hotTailKB": 4,
+                        "contextTokens": 100000,
+                        "softTimeoutS": 20,
+                    },
+                }
+                Handler.revision = "r0"
+                Handler.posts = []
+                Handler.conflict_armed = False
+                self._json({"ok": True})
+                return
+            if path == "/api/test/state":
+                self._json(
+                    {"revision": Handler.revision, "values": Handler.values, "posts": Handler.posts}
+                )
+                return
             if path.startswith("/api/"):
-                if path == "/api/config/status": self._json({"ready": True, "version": "9.9.9"}); return
-                if path == "/api/config": self._json({"values": Handler.values, "schema": Handler.schema, "revision": Handler.revision}); return
-                if path == "/api/bots": self._json({"bots": [{"id": "thyca", "name": "Thyca", "role": "assistant"}, {"id": "coder", "name": "Coder", "role": "coding"}]}); return
-                if path == "/api/conversations": self._json({"conversations": []}); return
-                if path == "/api/bots/thyca/dm": self._json({"id": "dm-thyca", "dm": "thyca", "messages": []}); return
-                self._json({}); return
+                if path == "/api/config/status":
+                    self._json({"ready": True, "version": "9.9.9"})
+                    return
+                if path == "/api/config":
+                    self._json(
+                        {
+                            "values": Handler.values,
+                            "schema": Handler.schema,
+                            "revision": Handler.revision,
+                        }
+                    )
+                    return
+                if path == "/api/bots":
+                    self._json(
+                        {
+                            "bots": [
+                                {"id": "thyca", "name": "Thyca", "role": "assistant"},
+                                {"id": "coder", "name": "Coder", "role": "coding"},
+                            ]
+                        }
+                    )
+                    return
+                if path == "/api/conversations":
+                    self._json({"conversations": []})
+                    return
+                if path == "/api/bots/thyca/dm":
+                    self._json({"id": "dm-thyca", "dm": "thyca", "messages": []})
+                    return
+                self._json({})
+                return
             target = safe_file(WEBUI, path)
-            if target is None: self.send_error(404); return
+            if target is None:
+                self.send_error(404)
+                return
             body = target.read_bytes()
-            if path == "/" or (path.startswith("/ui/") and (path.endswith("/") or path.endswith("/index.html"))):
+            if path == "/" or (
+                path.startswith("/ui/") and (path.endswith("/") or path.endswith("/index.html"))
+            ):
                 head = b'<script>window.__scriptErrors=[];window.__promiseErrors=[];window.addEventListener("error",e=>window.__scriptErrors.push(String(e.message)));window.addEventListener("unhandledrejection",e=>window.__promiseErrors.push(String(e.reason)))</script></head>'
                 query = urlsplit(self.path).query
-                audit_script = STARTUP_SETTINGS_MARKER_SCRIPT if "startup-marker" in query else SETTINGS_DIALOG_AUDIT_SCRIPT
-                body = body.replace(b"</head>", head).replace(b"</body>", b"<script>" + audit_script.encode() + b"</script></body>")
-            self.send_response(200); self.send_header("Content-Type", content_type(target)); self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
+                audit_script = (
+                    STARTUP_SETTINGS_MARKER_SCRIPT
+                    if "startup-marker" in query
+                    else SETTINGS_DIALOG_AUDIT_SCRIPT
+                )
+                body = body.replace(b"</head>", head).replace(
+                    b"</body>", b"<script>" + audit_script.encode() + b"</script></body>"
+                )
+            self.send_response(200)
+            self.send_header("Content-Type", content_type(target))
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
 
         def do_POST(self) -> None:
             path = urlsplit(self.path).path
@@ -1567,32 +2539,69 @@ def test_settings_dialog_modal_feedback_scale_and_merge(tmp_path: Path) -> None:
             payload = json.loads(self.rfile.read(length) or b"{}")
             if path == "/api/config":
                 if Handler.conflict_armed or payload.get("baseRevision") != Handler.revision:
-                    self._json({"code": "config_changed", "error": "cấu hình đã thay đổi ở nơi khác"}, 409); return
+                    self._json(
+                        {"code": "config_changed", "error": "cấu hình đã thay đổi ở nơi khác"}, 409
+                    )
+                    return
                 values = {key: value for key, value in payload.items() if key != "baseRevision"}
                 Handler.values = values
                 Handler.revision = f"r{len(Handler.posts) + 2}"
                 Handler.posts.append(payload)
-                self._json({"ok": True, "ready": True}); return
+                self._json({"ok": True, "ready": True})
+                return
             self._json({"ok": True})
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
     try:
-        chrome = shutil.which("google-chrome")
-        desktop = _cdp_browser_result(chrome, f"http://127.0.0.1:{server.server_port}/?spaMode=settings-dialog-audit", 1280, Path("/tmp/thyca-settings-dialog-audit.png"), tmp_path / "settings-audit")
+        chrome = chromium_binary()
+        assert chrome is not None
+        desktop = _cdp_browser_result(
+            chrome,
+            f"http://127.0.0.1:{server.server_port}/?spaMode=settings-dialog-audit",
+            1280,
+            Path("/tmp/thyca-settings-dialog-audit.png"),
+            tmp_path / "settings-audit",
+        )
         assert desktop.get("passed") is True, desktop
         merge = next(post for post in desktop["mergedPosts"] if post.get("baseRevision") == "r9")
-        assert merge["limits"] == {"loopMax": 999, "hotTailKB": 5, "contextTokens": 100000, "softTimeoutS": 20}
-        assert desktop["finalValues"] == {"loopMax": 20, "hotTailKB": 5, "contextTokens": 100000, "softTimeoutS": 20}
+        assert merge["limits"] == {
+            "loopMax": 999,
+            "hotTailKB": 5,
+            "contextTokens": 100000,
+            "softTimeoutS": 20,
+        }
+        assert desktop["finalValues"] == {
+            "loopMax": 20,
+            "hotTailKB": 5,
+            "contextTokens": 100000,
+            "softTimeoutS": 20,
+        }
         assert desktop["sameFieldBlockedPosts"] == 2 and desktop["finalPosts"] == 4
         assert desktop["dialogStillOpen"] is True
         assert desktop["scriptErrors"] == [] and desktop["unhandledRejections"] == []
-        mobile = _cdp_browser_result(chrome, f"http://127.0.0.1:{server.server_port}/?spaMode=settings-dialog-audit", 375, None, tmp_path / "settings-audit-mobile", mobile=True)
+        mobile = _cdp_browser_result(
+            chrome,
+            f"http://127.0.0.1:{server.server_port}/?spaMode=settings-dialog-audit",
+            375,
+            None,
+            tmp_path / "settings-audit-mobile",
+            mobile=True,
+        )
         assert mobile.get("passed") is True, mobile
         assert mobile["scriptErrors"] == [] and mobile["unhandledRejections"] == []
-        startup = _cdp_browser_result(chrome, f"http://127.0.0.1:{server.server_port}/ui/settings/index.html?spaMode=startup-marker", 1280, None, tmp_path / "settings-startup-marker")
+        startup = _cdp_browser_result(
+            chrome,
+            f"http://127.0.0.1:{server.server_port}/ui/settings/index.html?spaMode=startup-marker",
+            1280,
+            None,
+            tmp_path / "settings-startup-marker",
+        )
         assert startup.get("passed") is True, startup
         assert startup["dialogStillOpen"] is True
         assert startup["scriptErrors"] == [] and startup["unhandledRejections"] == []
     finally:
-        server.shutdown(); server.server_close(); thread.join(timeout=3)
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=3)

@@ -8,6 +8,8 @@ import time
 from pathlib import Path
 from urllib.parse import quote
 
+import pytest
+from conftest import chromium_binary as _chromium_binary
 from test_webui_setup_gate_source_e2e import (
     _browser_e2e,
     _free_port,
@@ -15,6 +17,13 @@ from test_webui_setup_gate_source_e2e import (
     _stop_source_cli,
     _wait_server,
 )
+
+from thyca.app.chat_app import ChatApp
+from thyca.bots.card import BotCard
+from thyca.bots.timeline import WorkspaceTimeline
+from thyca.configs import Config, ModelCfg, ProviderEntry, save
+from thyca.conversations.runtime.manager import ConversationManager
+from thyca.core.protocol import Message, ToolCall
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -91,7 +100,7 @@ BROWSER_SCRIPT = r"""
       activePanel: activePanel?.id || null,
       botCostHidden: view.querySelector('#card-bot-cost').hidden,
       headerControlsHidden: view.querySelector('#usage-header-controls').hidden,
-      rangeControlsVisible: ['#range-from', '#range-to'].every(selector => {
+      rangeControlsVisible: ['.range-presets', '#range-custom-toggle'].every(selector => {
         const rect = view.querySelector(selector).getBoundingClientRect();
         return rect.width > 0 && rect.height > 0;
       }),
@@ -166,9 +175,9 @@ BROWSER_SCRIPT = r"""
     const statValues = [...view.querySelectorAll('#stat-grid .stat-value')].map(el => el.textContent.trim());
     const total = payloads.stats.totals || {};
     const costText = value => '$' + Number(value || 0).toFixed(value >= 1 ? 2 : value >= 0.01 ? 4 : 6);
-    if (statValues[0] !== Number(total.requests || 0).toLocaleString('vi-VN') ||
-        statValues[2] !== Number(total.total_tokens || 0).toLocaleString('vi-VN') ||
-        statValues[3] !== costText(total.cost_usd)) throw new Error('overview stat cards disagree with the exact stats API response: ' + JSON.stringify({ statValues, total }));
+    if (statValues[0] !== Number(total.total_tokens || 0).toLocaleString('vi-VN') ||
+        statValues[1] !== costText(total.cost_usd) ||
+        statValues[2] !== Number(total.requests || 0).toLocaleString('vi-VN')) throw new Error('overview stat cards disagree with the exact stats API response: ' + JSON.stringify({ statValues, total }));
     const groupButton = [...view.querySelectorAll('#trace-conversations button[data-conv]')]
       .find(button => button.dataset.conv === 'group:' + groupId && button.dataset.turn === '0');
     // A group turn's API title is its group id, so the row reads as the
@@ -264,12 +273,6 @@ BROWSER_SCRIPT = r"""
 
 
 def _seed_source_fixture(root: Path) -> tuple[str, dict[str, bytes]]:
-    from thyca.bots.card import BotCard
-    from thyca.bots.timeline import WorkspaceTimeline
-    from thyca.configs import Config, ModelCfg, ProviderEntry, save
-    from thyca.core.protocol import Message, ToolCall
-    from thyca.conversations.runtime.manager import ConversationManager
-    from thyca.app.chat_app import ChatApp
 
     provider = ProviderEntry(baseUrl="http://127.0.0.1:1/v1", apiKey="synthetic-source-fixture-key")
     config = Config(providers={"fixture": provider}, defaultProvider="fixture",
@@ -367,15 +370,9 @@ def _source_cli(chrome: str, tmp_path: Path, mode: str, *, width: int = 1280, he
     return result
 
 
-def _chromium_binary() -> str | None:
-    return (os.environ.get("THYCA_CHROME") or shutil.which("google-chrome")
-            or shutil.which("chromium") or shutil.which("chromium-browser"))
-
-
 def test_source_usage_detail_and_overview_are_canonical_read_only(tmp_path: Path) -> None:
     chrome = _chromium_binary()
     if not chrome:
-        import pytest
         pytest.skip("Chromium is not installed; source-backed Usage E2E is required in the review environment")
     result = _source_cli(chrome, tmp_path, "source-flow")
     mobile = _source_cli(chrome, tmp_path / "mobile", "source-flow-mobile", width=375, mobile=True)
@@ -394,7 +391,7 @@ def test_source_usage_detail_and_overview_are_canonical_read_only(tmp_path: Path
     assert result["groupTurn"].get("requests") == 2 and result["groupTurn"].get("total_tokens") == 13
     assert "q=" in result["searchUrl"] and result["searchTotal"] < result["listTotal"]
     assert result["overview"].get("overflows") == []
-    assert result["overview"].get("overviewRowGap") == "22px"
+    assert result["overview"].get("overviewRowGap") == "12px"
     assert result["overview"].get("activePanel") == "usage-panel-trace"
     assert result["scopedBot"] == "coder" and result["scopedSessions"] == 2
     assert result["scopedTraceDetail"] is True and result["scopedCostHidden"] is True
@@ -405,7 +402,6 @@ def test_source_usage_detail_and_overview_are_canonical_read_only(tmp_path: Path
 def test_source_usage_overview_and_detail_responsive_screenshots(tmp_path: Path) -> None:
     chrome = _chromium_binary()
     if not chrome:
-        import pytest
         pytest.skip("Chromium is not installed; source-backed Usage E2E is required in the review environment")
     artifacts = []
     for mode, width, height, mobile in (("source-overview", 1280, 900, False),

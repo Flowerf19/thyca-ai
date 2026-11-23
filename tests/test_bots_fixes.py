@@ -8,9 +8,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time as _time
 from pathlib import Path
 
 import pytest
+from seeded_config import seeded_config
 
 from thyca.agents.meta import tool_message
 from thyca.app.chat_app import ChatApp
@@ -22,24 +24,23 @@ from thyca.bots.policy import BotPolicy, bind_allowed_tools, reset_allowed_tools
 from thyca.bots.registry import BotRegistry
 from thyca.bots.runtime import BotRuntime
 from thyca.configs import load, save
-from seeded_config import seeded_config
 from thyca.core.protocol import ToolCall, ToolResult
 from thyca.llms.llm_base import ChatReply
 from thyca.memories.facade import MemoryFacade
 from thyca.memories.identity import bind_bot_id, reset_bot_id
+from thyca.serve.server import start_scheduler
+from thyca.skills.sharing import SharingService
 from thyca.tools.builtin import register_file_tools
 from thyca.tools.gateway import ToolGateway
 from thyca.tools.gateway.policy import PolicyDenied
 from thyca.tools.path_guard import PathDenied, PathGuard
-from thyca.tools.registry import ToolRegistry
+from thyca.tools.registry import ToolRegistry, ToolSpec
 from thyca.tools.task_store import TaskStore
 
 
 def _as(bot_id: str | None):
     return bind_bot_id(bot_id)
 
-
-# --- CRITICAL: card self-escalation -------------------------------------
 
 def test_child_bot_cannot_read_write_edit_team_control_files(tmp_path: Path) -> None:
     (tmp_path / "bots" / "coder").mkdir(parents=True)
@@ -77,12 +78,10 @@ def test_child_bot_cannot_read_write_edit_team_control_files(tmp_path: Path) -> 
     finally:
         reset_bot_id(token)
     assert all(value == "denied" for value in results.values()), results
-    # Gains nothing by trying: every target is byte-identical.
     assert card_file.read_text(encoding="utf-8") == "original card"
     assert (tmp_path / "config.json").read_text(encoding="utf-8") == '{"secret": 1}'
     assert team_skill.read_text(encoding="utf-8") == "team skill"
 
-    # The user (no bot) and Thyca keep access.
     token = _as("thyca")
     try:
         guard = PathGuard(tmp_path)
@@ -112,7 +111,6 @@ def test_gateway_policy_denies_child_paths_bash_and_unlisted_tools(tmp_path: Pat
     finally:
         reset_bot_id(token)
         reset_bot_turn_context(ctx_token)
-    # Fail-closed allowlist at the gateway: empty set denies everything.
     token = _as("coder")
     allowed = bind_allowed_tools(frozenset())
     try:
@@ -124,8 +122,6 @@ def test_gateway_policy_denies_child_paths_bash_and_unlisted_tools(tmp_path: Pat
 
 
 def test_team_skill_seeds_ship_and_child_index_is_private_plus_team(tmp_path: Path) -> None:
-    # SIMPLE sharing: team seeds exist but stay hidden until Thyca shares them.
-    from thyca.skills.sharing import SharingService
 
     registry = BotRegistry(tmp_path)
     registry.ensure_thyca()
@@ -141,8 +137,6 @@ def test_team_skill_seeds_ship_and_child_index_is_private_plus_team(tmp_path: Pa
     assert "create-mcp-tool" in index
 
 
-# --- IMPORTANT: cross-bot tracked executions ----------------------------
-
 def test_gateway_executions_are_owner_scoped_for_bots() -> None:
     async def scenario() -> tuple[str, str]:
         registry = ToolRegistry()
@@ -152,7 +146,6 @@ def test_gateway_executions_are_owner_scoped_for_bots() -> None:
             await asyncio.sleep(5)
             return "done"
 
-        from thyca.tools.registry import ToolSpec
 
         registry.register(ToolSpec(
             name="slow", description="slow",
@@ -166,7 +159,6 @@ def test_gateway_executions_are_owner_scoped_for_bots() -> None:
             reset_bot_id(token)
         exec_id = started.exec_ref
         assert exec_id
-        # Another bot: read/kill read as unknown and enumerate nothing.
         token = _as("researcher")
         try:
             with pytest.raises(ValueError) as read_err:
@@ -180,7 +172,6 @@ def test_gateway_executions_are_owner_scoped_for_bots() -> None:
         for err in (read_err, kill_err, unknown_err):
             assert "(known: none)" in str(err.value)
             assert exec_id not in str(err.value).split("(known:")[-1]
-        # The owner can still read and kill it.
         token = _as("coder")
         try:
             running = await gateway.read(exec_id)
@@ -193,8 +184,6 @@ def test_gateway_executions_are_owner_scoped_for_bots() -> None:
 
     asyncio.run(scenario())
 
-
-# --- MINOR: tool_message, paused, bus drain ------------------------------
 
 def test_tool_message_error_keeps_bot_id() -> None:
     msg = tool_message(
@@ -214,8 +203,6 @@ def test_bus_drain_log_is_per_room() -> None:
     assert [event.envelope.payload for event in bus.drain_log("room2")] == ["2"]
     assert bus.drain_log("room1") == []
 
-
-# --- ChatApp-level: delivery, cost, memory.read, paused, skills ---------
 
 def _chat(tmp_path: Path, connect=None) -> ChatApp:
     save(seeded_config(), tmp_path / "config.json")
@@ -247,7 +234,6 @@ class _ChainLLM:
                 ToolCall(id="c-send", name="bot_send",
                          arguments={"bot_id": "helper", "message": "help me"}),
             ])
-        # Thyca (system persona).
         if "coder done" in tool_text:
             return ChatReply(content="thyca final", model="m")
         return ChatReply(content=None, model="m", tool_calls=[
@@ -278,18 +264,14 @@ def test_a2a_delivery_multihop_records_attributed_room_rows(tmp_path: Path) -> N
             meta = row.get("meta") or {}
             if meta.get("bot_id"):
                 by_bot_kind.setdefault((meta["bot_id"], meta.get("kind")), row)
-        # Both delivered bots actually ran and landed attributed results.
         coder_result = by_bot_kind[("coder", "result")]
         helper_result = by_bot_kind[("helper", "result")]
         assert coder_result["content"] == "coder done"
         assert helper_result["content"] == "helper done"
-        # Cost attribution: the internal turns' meta rides on room rows.
         assert coder_result["meta"]["model"] == "m-coder"
         assert coder_result["meta"]["usage"]["total_tokens"] == 23
         assert isinstance(coder_result["meta"]["latency_ms"], int)
         assert helper_result["meta"]["usage"]["total_tokens"] == 12
-        # FE delegation tree: every bot row has its own span; delivered
-        # results parent to their envelope's span.
         for row in (coder_result, helper_result):
             assert row["meta"]["span_id"].startswith("sp_")
             assert row["meta"]["parent_span_id"].startswith("sp_")
@@ -382,8 +364,8 @@ def test_child_prompt_skill_index_excludes_thyca_private(tmp_path: Path) -> None
         created = app.create(bots=["coder"])
         app.turn(created["conversation_id"], "hi")
         prompt = llm.prompts[0]
-        assert "create-skill" in prompt  # team seed is there
-        assert "thyca-only-skill" not in prompt  # Thyca private never leaks
+        assert "create-skill" in prompt
+        assert "thyca-only-skill" not in prompt
     finally:
         app.shutdown()
 
@@ -395,19 +377,16 @@ def test_paused_bot_removable_and_responder_skips_paused(tmp_path: Path) -> None
                                  description="D", persona="P"))
         created = app.create(bots=["thyca", "coder"])
         app._bots.set_paused("coder", True)
-        # Removable while paused; a paused mention is skipped for Thyca.
         assert app.set_room_bots(created["conversation_id"], "coder", "remove") == ["thyca"]
         resolve = ChatApp._resolve_responder
         assert resolve(["thyca", "coder"], "hi @coder", paused={"coder"}) == "thyca"
-        assert resolve(["coder"], "hi", paused={"coder"}) == "coder"  # caller errors
+        assert resolve(["coder"], "hi", paused={"coder"}) == "coder"
     finally:
         app.shutdown()
 
 
 def test_serve_scheduler_timer_ticks(tmp_path: Path) -> None:
-    import time as _time
 
-    from thyca.serve.server import start_scheduler
 
     class _Bots:
         def list(self):
@@ -423,7 +402,7 @@ def test_serve_scheduler_timer_ticks(tmp_path: Path) -> None:
             return {}
 
     fake = _App()
-    _thread, stop = start_scheduler(fake, interval_s=0.02)  # type: ignore[arg-type]
+    _thread, stop = start_scheduler(fake, interval_s=0.02)  # type: ignore[arg-type] -- reason: intentional invalid-type or test-double argument
     try:
         _time.sleep(0.09)
     finally:

@@ -9,6 +9,7 @@ private ``sessions/`` dir. Team-shared skills live in
 from __future__ import annotations
 
 import shutil
+import stat as _stat
 from dataclasses import replace
 from pathlib import Path
 
@@ -31,20 +32,24 @@ from thyca.bots.settings import (
     SettingsError,
     lock_path_for,
     read_settings,
-    settings_path as _settings_path,
     strip_card_model_text,
     write_settings,
 )
+from thyca.bots.settings import (
+    settings_path as _settings_path,
+)
 from thyca.configs import atomic_write_text
 from thyca.configs.store import config_path
-from thyca.skills.store import _NAME_RE, NAME_MAX, SkillStore
+from thyca.skills import sharing as _sharing
+from thyca.skills.sharing import SharingCorrupt, load_shared_names
+from thyca.skills.store import _NAME_RE, NAME_MAX, SkillMeta, SkillStore
 
 SYSTEM_BOT_ID = "thyca"
 
 _PACKAGED_BOTS = Path(__file__).resolve().parents[1] / "seeds" / "bots"
 _PACKAGED_TEAM_SKILLS = Path(__file__).resolve().parents[1] / "seeds" / "skills-team"
 
-__all__ = ["BotRegistry", "CARD_FILENAME", "RegistryError", "SYSTEM_BOT_ID"]
+__all__ = ["CARD_FILENAME", "SYSTEM_BOT_ID", "BotRegistry", "RegistryError"]
 
 
 class RegistryError(RuntimeError):
@@ -55,7 +60,6 @@ class BotRegistry:
     """CRUD over bot directories. No LLM, no turns, no I/O policy."""
 
     def __init__(self, thyca_dir: Path | None = None) -> None:
-        # Single source for the home default: config_path().parent.
         self.thyca_dir = Path(thyca_dir or config_path().parent)
 
     @property
@@ -178,8 +182,6 @@ class BotRegistry:
         if not doc.ok or doc.card is None:
             raise RegistryError(f"Thyca system card invalid: {doc.error}")
         if seeded:
-            # First run only: seed settings from the template card, then
-            # strip the model key so the canonical TWIN holds no duplicate.
             with self._bot_lock(SYSTEM_BOT_ID):
                 self._persist_settings_first(SYSTEM_BOT_ID, doc.card)
                 self._strip_legacy_model(SYSTEM_BOT_ID)
@@ -256,7 +258,7 @@ class BotRegistry:
         bot to ``accent``, so the whole team rendered one color. The
         suggested value is still just a card field — explicit tints
         always win, and the FE falls back by hash for unknown values."""
-        counts = {tint: 0 for tint in TEAM_TINTS}
+        counts = dict.fromkeys(TEAM_TINTS, 0)
         for doc in self.list():
             if doc.card is not None and doc.card.tint in counts:
                 counts[doc.card.tint] += 1
@@ -268,7 +270,7 @@ class BotRegistry:
         Mirrors :meth:`suggest_tint`: creation without an explicit
         avatar persists the suggestion, so twins stay distinguishable
         instead of every new bot rendering the same note shape."""
-        counts = {variant: 0 for variant in CHILD_AVATAR_VARIANTS}
+        counts = dict.fromkeys(CHILD_AVATAR_VARIANTS, 0)
         for doc in self.list():
             if doc.card is not None and not doc.card.system:
                 variant = effective_avatar(doc.card)
@@ -319,8 +321,6 @@ class BotRegistry:
             doc = parse_bot_card(render_bot_card(card), bot_id)
             if not doc.ok or doc.card is None:
                 raise RegistryError(f"invalid card: {doc.error}")
-            # Preserve the paused flag unless the update explicitly changes it:
-            # pause/restore own that transition.
             if card.paused != current.paused:
                 raise RegistryError("use pause/restore to change paused state")
             self._persist_settings_first(bot_id, doc.card)
@@ -383,8 +383,6 @@ class BotRegistry:
             pass
 
     def set_paused(self, bot_id: str, paused: bool) -> BotCard:
-        # The full read-modify-write happens inside the lock so a
-        # concurrent settings save cannot be overwritten with a stale model.
         with self._bot_lock(bot_id):
             card = self.require(bot_id)
             if card.system and paused:
@@ -435,16 +433,12 @@ class BotRegistry:
         Private wins on clash, but an explicit shared path stays readable
         through file tools. Team names filter before metadata loads, and
         linked skill targets never index."""
-        from thyca.skills.sharing import SharingCorrupt, load_shared_names
 
         proto = SkillStore(self.thyca_dir)
         seen: dict[str, str] = {}
         order: list[str] = []
 
         def _link_disallowed(entry: Path) -> bool:
-            # Reject symlink components and unsafe skill files before any
-            # metadata read. Ordinary unrelated hardlinks are untouched
-            # because this runs only for recognized skill dirs.
             try:
                 if entry.is_symlink():
                     return True
@@ -452,16 +446,14 @@ class BotRegistry:
                 try:
                     st = md.lstat()
                 except FileNotFoundError:
-                    return False  # missing file -> invalid diagnostic, not link
+                    return False
                 except OSError:
                     return True
-                import stat as _stat
 
                 if not _stat.S_ISREG(st.st_mode):
                     return True
                 if st.st_nlink != 1:
                     return True
-                # Symlinked SKILL.md reports via lstat above; double-check.
                 try:
                     if md.is_symlink():
                         return True
@@ -485,10 +477,6 @@ class BotRegistry:
                     seen[meta.name] = f"- {meta.name} (SKILL.md invalid: {meta.error})"
 
         def _metas_for(path: Path, names: set[str] | None) -> list:
-            # Team names filter before any content read: hidden team metadata
-            # is never opened. Remaining entries read through the checked
-            # descriptor (no pathname reopen), so a swapped link cannot
-            # inject another bot's description and parent symlinks fail.
             if not path.is_dir() or path.is_symlink():
                 return []
             entries: list[Path] = []
@@ -506,8 +494,6 @@ class BotRegistry:
                     entries.append(entry)
             except OSError:
                 return []
-            from thyca.skills.sharing import read_skill_checked
-            from thyca.skills.store import SkillMeta
 
             metas: list = []
             for entry in entries:
@@ -515,9 +501,6 @@ class BotRegistry:
                 try:
                     md_path.lstat()
                 except FileNotFoundError:
-                    # Missing file diagnostic is constructed directly; the
-                    # pathname is never reopened, so a swapped-in link
-                    # cannot inject another bot's description here.
                     metas.append(SkillMeta(
                         entry.name, "", md_path, ok=False,
                         error="missing SKILL.md"))
@@ -525,11 +508,8 @@ class BotRegistry:
                 except OSError:
                     continue
                 try:
-                    text = read_skill_checked(self.thyca_dir, md_path)
+                    text = _sharing.read_skill_checked(self.thyca_dir, md_path)
                 except UnicodeDecodeError as exc:
-                    # Safe decode failure keeps its diagnostic and the
-                    # private-name precedence below; unsafe links stay
-                    # excluded and never reach this branch.
                     metas.append(SkillMeta(
                         entry.name, "", md_path, ok=False,
                         error=f"unreadable: {exc}"))
@@ -543,7 +523,6 @@ class BotRegistry:
                         "skill directory", "skill target",
                         "cannot open",
                     )):
-                        # Unsafe alias/link/swap: fail closed, never index.
                         continue
                     metas.append(SkillMeta(
                         entry.name, "", md_path, ok=False,
@@ -559,26 +538,20 @@ class BotRegistry:
             return metas
 
         if bot_id == "thyca":
-            # Thyca owns both global roots; private wins. Team: all skills
-            # for maintenance, private wins on clash.
             global_root = self.thyca_dir / "skills"
             thyca_private = self.bot_dir("thyca") / "skills"
             for path in (thyca_private, global_root):
                 _emit(_metas_for(path, None))
-            # Team: every skill dir, links disallowed, invalid diagnostic.
             _emit(_metas_for(self.team_skills_root, None))
             return "\n".join(seen[name] for name in order)
-        # Child: own private plus shared team only.
         private = self.bot_dir(bot_id) / "skills"
         _emit(_metas_for(private, None))
         try:
             shared = load_shared_names(self.thyca_dir)
         except SharingCorrupt as exc:
-            # Block shared usage but keep private; report the problem.
             diag = f"- (sharing state invalid: {exc})"
             base = "\n".join(seen[name] for name in order)
             return f"{base}\n{diag}" if base else diag
-        # Filter team names before metadata loads.
         _emit(_metas_for(self.team_skills_root, shared))
         return "\n".join(seen[name] for name in order)
 
@@ -599,8 +572,6 @@ class BotRegistry:
                     "avatar": effective_avatar(card),
                     "status": "paused" if card.paused else "active",
                     "system": card.system,
-                    # Read-only drawer specs (FE normalizeBots already
-                    # carries these display fields when supplied).
                     "model": (
                         {"id": card.model.id, "thinking": card.model.thinking}
                         if card.model is not None else None

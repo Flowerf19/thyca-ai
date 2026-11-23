@@ -65,5 +65,4 @@ console.log(JSON.stringify({{ outcome, seen }}));
         "turn.accepted", "llm.thinking", "tool.started", "llm.thinking", terminal,
     ]
     assert "".join(e["delta"] for e in data["seen"] if "delta" in e) == "Suy nghĩ đầy đủ — tiếp tục"
-    # The terminal event arrives whole — callers read .detail off it.
     assert data["seen"][-1]["detail"] == {"running": False}

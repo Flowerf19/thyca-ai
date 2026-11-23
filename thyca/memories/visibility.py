@@ -26,8 +26,8 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
+from thyca.conversations.runtime.errors import ConversationNotFound
 from thyca.core.channel import WindowRef
-from thyca.conversations.runtime.store import ConversationStore
 
 
 @dataclass(frozen=True)
@@ -37,9 +37,6 @@ class MemoryView:
     window: WindowRef | None
     bot_id: str
     thyca_dir: Path
-    # Turn-local denied origins (private delivery): group IDs this
-    # invocation must never read, even through same-window shortcuts,
-    # roster reloads, or missing-origin fallbacks. Empty by default.
     denied_origins: frozenset[str] = frozenset()
 
     @property
@@ -52,7 +49,8 @@ class MemoryView:
         Only a genuinely missing session resolves to None; corrupt or
         unreadable files raise — downgrading them to "private" would hide
         a data problem."""
-        from thyca.conversations.runtime.errors import ConversationNotFound
+
+        from thyca.conversations.runtime.store import ConversationStore  # noqa: PLC0415 -- reason: break circular import with conversations.runtime
 
         try:
             conversation = ConversationStore(self.thyca_dir / "sessions").load(chat)
@@ -62,10 +60,6 @@ class MemoryView:
         return conversation.dm_bot is not None, conversation.dm_bot, participants
 
     def can_read_origin(self, chat: str | None) -> bool:
-        # A pinned denial wins before every shortcut, reload, and
-        # missing-origin fallback. Origin-level checks carry no owner
-        # info, so the concrete own-entry exemption lives one layer up
-        # in can_read_entry.
         if isinstance(chat, str) and chat and chat in self.denied_origins:
             return False
         if self.is_group:
@@ -96,9 +90,8 @@ class MemoryView:
         self, chat: str | None, bots: tuple | None,
         allow_own_cross_window: bool = False,
     ) -> bool:
-        # Entry-level read check: the owner rule first, then the origin
-        # window, with an opt-in exemption for the bot's own entries.
-        from thyca.memories.active import visible_to
+
+        from thyca.memories.active import visible_to  # noqa: PLC0415 -- reason: break circular import with memories.active
 
         if not visible_to(bots, self.bot_id):
             return False
@@ -109,11 +102,8 @@ class MemoryView:
             and "team" not in bots
         ):
             if isinstance(chat, str) and chat:
-                # Resolve the origin anyway so a corrupt session still raises.
                 self._origin_info(chat)
             return True
-        # Pinned private denial: team, mixed-team, and unowned entries
-        # stay hidden. Concrete own entries already returned above.
         if isinstance(chat, str) and chat and chat in self.denied_origins:
             return False
         return self.can_read_origin(chat)

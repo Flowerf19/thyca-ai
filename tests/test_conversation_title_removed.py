@@ -8,15 +8,20 @@ The title module is gone (clean cutover, no compatibility layer):
 """
 from __future__ import annotations
 
+import importlib
 import uuid
 from pathlib import Path
 
 import pytest
-
 from seeded_config import seeded_config
 
-from thyca.conversations.runtime import ConversationRuntime
-from thyca.conversations.runtime.wire import is_sidecar_message, conversation_detail, conversation_summary
+from thyca.app.chat_app import ChatApp
+from thyca.conversations.runtime import ConversationManager, ConversationRuntime, ConversationStore
+from thyca.conversations.runtime.wire import (
+    conversation_detail,
+    conversation_summary,
+    is_sidecar_message,
+)
 from thyca.conversations.store import (
     AdminStore,
     AgentStore,
@@ -28,7 +33,6 @@ from thyca.conversations.store import (
     summary_for,
     validate_metadata,
 )
-from thyca.core.conversation import ConversationRef
 from thyca.core.protocol import Message
 
 
@@ -67,7 +71,6 @@ def test_read_adapter_summary_and_detail_have_no_title(tmp_path: Path) -> None:
     summary = summary_for(conversation, created)
     detail = detail_for(conversation, seeded_config())
     assert "title" not in summary and "title" not in detail
-    # Identity carries the display for a non-empty DM.
     assert summary["kind"] == "dm" and summary["dm"] == "coder"
     assert summary["message_count"] == 1 and summary["turns"] == 1
 
@@ -84,7 +87,6 @@ def test_empty_door_still_lists_with_identity(tmp_path: Path) -> None:
     summary = summary_for(conversation, created)
     assert conversation.messages == ()
     assert "title" not in summary
-    # The empty door keeps its identity label from kind/dm/message_count.
     assert summary["kind"] == "dm" and summary["dm"] == "coder"
     assert summary["message_count"] == 0 and summary["updated_at"] == created
 
@@ -124,14 +126,11 @@ def test_naming_kind_is_not_a_sidecar() -> None:
 
 
 def test_removed_interfaces_stay_removed() -> None:
-    from thyca.app.chat_app import ChatApp
-    from thyca.conversations.runtime import ConversationManager, ConversationStore
 
     assert not hasattr(ConversationStore, "append_meta")
     assert not hasattr(ConversationManager, "set_title")
     assert not hasattr(ConversationManager, "rename")
     assert not hasattr(ChatApp, "rename_conversation")
-    import importlib
 
     with pytest.raises(ModuleNotFoundError):
         importlib.import_module("thyca.conversations.runtime.title")

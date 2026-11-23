@@ -4,15 +4,22 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
-
-from thyca.app.chat_app import ChatApp
-from thyca.bots.card import BotCard, BotModel
-from thyca.bots.context import current_bot_turn_context
-from thyca.configs import ModelCfg, ProviderEntry, default_config, load, save
 from seeded_config import seeded_config
+
+from thyca.app.chat_app import ChatApp, ConnectFactory
+from thyca.bots.card import BotCard, BotMemoryPolicy, BotModel
+from thyca.bots.context import current_bot_turn_context
+from thyca.bots.workspace_context import build_workspace_hot
+from thyca.configs import ModelCfg, PricingCfg, ProviderEntry, default_config, load, save
+from thyca.conversations.runtime import ConversationManager
+from thyca.conversations.store.contracts import _view
+from thyca.conversations.store.runtime import resolve_ref
+from thyca.conversations.store.turn_pipeline import project_for_trace
+from thyca.core.channel import WindowRef
 from thyca.core.protocol import Message, ToolCall
 from thyca.llms.llm_base import ChatReply
-from thyca.conversations.runtime import ConversationManager
+from thyca.memories.active import ActiveSnapshot
+from thyca.memories.visibility import current_memory_view
 from thyca.serve.trace import turns_from_conversation
 
 
@@ -30,7 +37,6 @@ class RecordingLLM:
     async def chat(self, messages, tools=None) -> ChatReply:
         ctx = current_bot_turn_context()
         view = None
-        from thyca.memories.visibility import current_memory_view
 
         current = current_memory_view()
         if current is not None:
@@ -89,8 +95,6 @@ def _append_long_canonical_history(app: ChatApp, bot_id: str, room_id: str) -> N
 def test_bot_and_operation_model_precedence_reaches_chat_and_compaction(
     tmp_path: Path, monkeypatch
 ) -> None:
-    from thyca.app.chat_app import ConnectFactory
-    from thyca.configs import PricingCfg
 
     cfg = replace(
         default_config(),
@@ -229,10 +233,6 @@ def test_bot_and_operation_model_precedence_reaches_chat_and_compaction(
 def test_workspace_hot_composer_shares_prepared_inputs_and_memory_gate(
     tmp_path: Path,
 ) -> None:
-    from thyca.bots.workspace_context import build_workspace_hot
-    from thyca.core.channel import WindowRef
-    from thyca.memories.active import ActiveSnapshot
-    from thyca.bots.card import BotMemoryPolicy
 
     window = WindowRef(
         window_id="room", channel_id="webui", kind="dm", participants=("coder",)
@@ -281,7 +281,6 @@ def test_root_and_child_use_private_canonical_runtime_and_admin_policy(tmp_path:
             ctx = current_bot_turn_context()
             bot_id = ctx.sender_id if ctx else "thyca"
             self.calls[bot_id] += 1
-            from thyca.memories.visibility import current_memory_view
 
             view = current_memory_view()
             self.views.append((
@@ -437,15 +436,10 @@ def test_root_and_child_retry_truncate_both_transcripts_and_keep_mail(tmp_path: 
             assert app._runtime.room_cursor(bot_id, room) == old_cursor
             public_after_failure = app._conversations.store.load(room).messages
             assert [row.role for row in public_after_failure].count("user") == public_users_before_retry
-            # Append-only: the failure is a trailing system marker; the
-            # trace projection stamps it onto its user row.
             _markers = [row for row in public_after_failure
                         if row.role == "system"
                         and isinstance((row.meta or {}).get("error"), dict)]
             assert _markers and _markers[-1].meta["error"].get("code")
-            from thyca.conversations.store.turn_pipeline import project_for_trace
-            from thyca.conversations.store.contracts import _view
-            from thyca.conversations.store.runtime import resolve_ref
 
             _proj = project_for_trace(_view(
                 resolve_ref(app._root, room),
@@ -470,7 +464,6 @@ def test_root_and_child_retry_truncate_both_transcripts_and_keep_mail(tmp_path: 
             internal = _rows(app, bot_id, room)
             assert [row.role for row in public].count("user") == public_users_before_retry
             assert [row.role for row in internal].count("user") == 1
-            # Recovered: the projection no longer reports a failure.
             _proj2 = project_for_trace(_view(
                 resolve_ref(app._root, room),
                 {"title": None, "title_source": None,
@@ -490,9 +483,6 @@ def test_root_and_child_retry_truncate_both_transcripts_and_keep_mail(tmp_path: 
 
 
 def test_effort_and_model_override_reach_factory_before_connect(tmp_path: Path, monkeypatch) -> None:
-    from thyca.llms.llm_factory import ConnectFactory
-    from seeded_config import seeded_config
-
     cfg = replace(
         seeded_config(),
         models={"custom-model": ModelCfg(reasoningEfforts=("low", "custom"))},
@@ -582,7 +572,6 @@ def test_multi_bot_compact_preserves_room_and_reports_absent_and_failed_contexts
 
 
 def test_context_limit_status_survives_aggregate_room_row(tmp_path: Path, monkeypatch) -> None:
-    from thyca.core.protocol import Message
 
     class ContextLimitLoop:
         def __init__(self, conversations) -> None:
@@ -631,9 +620,6 @@ def test_compaction_does_not_pollute_next_turn_usage_or_trace(tmp_path: Path) ->
             usage={"prompt_tokens": 11, "completion_tokens": 2},
         )
     )
-    # 9000 (was 8500): the baseline tool set (incl. the compact and
-    # group_delete tools) counts as prompt overhead in the backstop
-    # estimate.
     app = _app(tmp_path, llm, context_tokens=9000)
     try:
         group = app.create(bots=["thyca"])["conversation_id"]

@@ -88,10 +88,6 @@ def _responses_reasoning_detail(item: object, key: str = "") -> dict[str, Any] |
     if isinstance(raw_summary, list):
         summary = _reasoning_summary_parts(raw_summary, key)
         if summary or not raw_summary:
-            # An explicitly present valid empty summary is kept: the
-            # official input schema requires summary but not nonemptiness.
-            # A nonempty raw list validating to nothing is malformed input
-            # and stays dropped.
             out["summary"] = summary
     content = _reasoning_content_parts(item.get("content"), key)
     if content:
@@ -113,13 +109,9 @@ def _reasoning_input_item(detail: dict[str, Any] | None) -> dict[str, Any] | Non
         return None
     summary = detail.get("summary")
     if "summary" not in detail or not isinstance(summary, list):
-        # Missing or malformed summary (never the wire: live 400). An
-        # explicitly present empty list passes — empty is not missing.
         return None
     item_id = detail.get("id")
     if not isinstance(item_id, str) or not item_id.strip():
-        # Native reasoning without a usable id cannot round-trip: the
-        # official input schema requires id alongside summary and type.
         return None
     item: dict[str, Any] = {"type": "reasoning", "summary": summary}
     item["id"] = item_id
@@ -132,22 +124,10 @@ def _reasoning_input_item(detail: dict[str, Any] | None) -> dict[str, Any] | Non
 def _message_items(message: Message) -> list[dict[str, Any]]:
     """One transcript message to zero or more ``input[]`` items."""
     if message.role == "system":
-        # Empty (or None) system content passes through as empty: the
-        # provider decides, mirroring the chat path which never drops.
         return [{"role": "system", "content": message.content or ""}]
     if message.role == "user":
         return [{"role": "user", "content": message.content or ""}]
     if message.role == "assistant":
-        # Round-trip prior reasoning items for tool-loop continuity (chat
-        # parity: _to_openai_message sends reasoning_details verbatim).
-        # Native reasoning items only; chat shapes/invalid ignored, never
-        # raises. Providers require `summary` on reasoning inputs, so
-        # summary-less items (id/encrypted-only) are dropped, and only the
-        # input-contract keys (id/summary/encrypted_content) are sent. The
-        # official input schema also permits `content`, but this path omits
-        # content/signature: output-observed fields with no evidenced
-        # acceptance on the supported compatible endpoint — do not re-add
-        # them without a passing transport test.
         prefix: list[dict[str, Any]] = []
         if message.reasoning_details:
             for detail in message.reasoning_details:
@@ -171,8 +151,6 @@ def _message_items(message: Message) -> list[dict[str, Any]]:
         ]
     if message.role == "tool":
         if not message.tool_call_id:
-            # Always a bug (a result must answer a call): fail fast instead
-            # of sending a function_call the provider sees as unanswered.
             raise ValueError("tool message is missing tool_call_id")
         return [
             {
@@ -181,7 +159,6 @@ def _message_items(message: Message) -> list[dict[str, Any]]:
                 "output": message.content if isinstance(message.content, str) else "",
             }
         ]
-    # Unknown roles are ignored for forward compatibility.
     return []
 
 
@@ -202,8 +179,6 @@ def parse_responses_payload(raw: dict, key: str) -> ChatReply:
     if isinstance(raw.get("error"), dict):
         raise LLMError(f"provider error: {redact(cap(json.dumps(raw['error'])), key)}")
     status = raw.get("status")
-    # Failed means failed: a terminal bad status without an error object is
-    # still a provider error, never a silent empty turn.
     if status in ("failed", "incomplete"):
         raise LLMError(f"provider response {status}")
     output = raw.get("output")
@@ -218,8 +193,6 @@ def parse_responses_payload(raw: dict, key: str) -> ChatReply:
         if item.get("type") == "message":
             content_parts.extend(_output_texts(item.get("content")))
         elif item.get("type") == "reasoning":
-            # Reuse the validator (already redacted; the final redact below
-            # is idempotent) so non-list summary cannot iterate chars.
             reasoning_parts.extend(
                 part["text"]
                 for part in _reasoning_summary_parts(item.get("summary"), key)
@@ -314,8 +287,6 @@ async def read_responses_sse(
                 if isinstance(arguments, str) and arguments and not slot["arguments"]:
                     slot["arguments"] = arguments
             elif item.get("type") == "reasoning":
-                # Done carries the full item (id/summary/encrypted_content);
-                # added is id-only and would duplicate, so only done is kept.
                 detail = _responses_reasoning_detail(item, key)
                 if detail is not None:
                     details.append(detail)
@@ -337,7 +308,6 @@ async def read_responses_sse(
                     )
                 if status in ("failed", "incomplete"):
                     raise LLMError(f"provider response {status}")
-        # Unknown events (created, in_progress, subscription_usage, ...) are ignored.
 
     if not completed:
         raise LLMError("provider response incomplete")
@@ -380,8 +350,6 @@ class OpenAIResponses(BaseConnect):
                 payload["tools"] = converted
         if self._provider.reasoningEffort:
             payload["reasoning"] = {"effort": self._provider.reasoningEffort, "summary": "auto"}
-        # Same output-cap contract as the chat path (survives drop-retry:
-        # only the reasoning key is ever stripped).
         if self._provider.maxTokens:
             payload["max_output_tokens"] = self._provider.maxTokens
 

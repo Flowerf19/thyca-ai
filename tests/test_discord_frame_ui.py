@@ -101,12 +101,9 @@ def test_framed_conversation_renders_names_not_json(framed: dict) -> None:
     assert "Bạn A" in html and "Chủ kênh" in html
     assert "@Chủ kênh" in html
     assert "xuống dòng nè" in html
-    # Unknown sender falls back to a shortened uid; unknown mention likewise.
     assert "333333" in html and "@000" in html
     assert "Hội thoại ngoài" in html
     assert "Từ Discord" not in html
-    # Rendered properly: one conversation block, one row per message, the
-    # triggering message (new_message_id=m1, Bạn A) highlighted, reply named.
     assert 'class="framed-convo"' in html
     assert html.count('class="framed-msg') == 2
     assert 'framed-msg is-new' in html

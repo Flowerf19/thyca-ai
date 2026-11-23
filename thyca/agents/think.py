@@ -4,11 +4,10 @@ import re
 import time
 from typing import Protocol
 
-from thyca.llms.llm_base import ChatReply
 from thyca.core.protocol import Message
+from thyca.llms.llm_base import ChatReply
 
 from .stage import Stage
-
 
 _UNEXPECTED_KWARG = re.compile(r"got an unexpected keyword argument '([^']+)'")
 
@@ -50,19 +49,14 @@ class Think:
         return reply
 
     async def _chat_with_callbacks(self, on_reasoning, on_content, stage: Stage):
-        # Callback support is opt-in per port: older/custom ports accept
-        # neither or only one of the kwargs. Degrade per missing kwarg.
         try:
             return await self._llm.chat(
                 stage.messages, stage.tools, on_reasoning=on_reasoning, on_content=on_content
             )
         except TypeError as exc:
             message = str(exc)
-            # Match the quoted kwarg, not substrings: the message embeds the
-            # qualname, which may itself contain "on_content"/"on_reasoning".
             rejected = _rejected_kwarg(message)
             if rejected is None:
-                # Non-standard TypeError: keep the old substring priority.
                 if "on_content" in message:
                     rejected = "on_content"
                 elif "on_reasoning" in message:
@@ -75,20 +69,14 @@ class Think:
                         stage.messages, stage.tools, on_reasoning=on_reasoning
                     )
                 except TypeError as inner:
-                    # Swallow only a proven second rejection; anything else
-                    # is a real bug and must surface.
                     if _rejected_kwarg(str(inner)) != "on_reasoning":
                         raise
             elif rejected == "on_reasoning":
-                # Content-only port: keep on_content working instead of
-                # falling through to a bare chat().
                 try:
                     return await self._llm.chat(
                         stage.messages, stage.tools, on_content=on_content
                     )
                 except TypeError as inner:
-                    # Swallow only a proven second rejection; anything else
-                    # is a real bug and must surface.
                     if _rejected_kwarg(str(inner)) != "on_content":
                         raise
             else:

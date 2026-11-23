@@ -3,13 +3,16 @@ from __future__ import annotations
 
 import json
 import threading
+from http.client import HTTPException
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.error import HTTPError, URLError
 
 import pytest
 
-from thyca.configs import Config, ProviderEntry
 from thyca.app.onboarding import (
     ProviderProbeError,
+    _map_network_error,
+    _request_json,
     apply_provider,
     provider_ready,
     validate_provider,
@@ -17,6 +20,7 @@ from thyca.app.onboarding import (
 from thyca.app.onboarding import test_chat as probe_test_chat
 from thyca.app.onboarding import test_provider_api as probe_dispatch
 from thyca.app.onboarding import test_responses_chat as probe_test_responses
+from thyca.configs import Config, ProviderEntry
 
 
 def _models_server(payload: bytes, status: int = 200):
@@ -127,8 +131,6 @@ def test_provider_ready_false_without_key(monkeypatch: pytest.MonkeyPatch) -> No
 
 
 def test_provider_ready_false_without_default_model() -> None:
-    # First save before set-default: a stored key alone must not unlock
-    # setup. An unregistered but nonempty legacy default still counts.
     keyed = Config(
         providers={"default": ProviderEntry(apiKey="sk-1")},
         defaultProvider="default",
@@ -156,7 +158,6 @@ def test_apply_provider_sets_values_and_preserves_rest(tmp_path) -> None:
     assert updated.provider.reasoningEffort == "high"
     assert updated.timeline == cfg.timeline
     assert updated.limits == cfg.limits
-    # frozen input untouched
     assert cfg.provider.apiKey is None
 
 
@@ -305,8 +306,6 @@ def test_responses_auth_error_has_no_key() -> None:
 
 
 def test_responses_rejects_bad_schema() -> None:
-    # The real Connect parser accepts an empty output list as an empty turn;
-    # a non-list output is what it rejects.
     httpd, thread = _chat_server(b'{"output": {}}')
     try:
         base = f"http://127.0.0.1:{httpd.server_address[1]}"
@@ -317,8 +316,6 @@ def test_responses_rejects_bad_schema() -> None:
 
 
 def test_responses_rejects_non_dict_json() -> None:
-    # Regression: the non-dict branch once chained `from exc` out of scope
-    # (NameError) instead of raising a clean probe error.
     httpd, thread = _chat_server(b'["not", "a", "dict"]')
     try:
         base = f"http://127.0.0.1:{httpd.server_address[1]}"
@@ -350,7 +347,6 @@ def test_provider_api_dispatches_to_wire_api() -> None:
         result = probe_dispatch("openai_chat", base, "sk", "chat-model")
         assert result["model"] == "chat-model"
         assert seen[-1]["path"] == "/chat/completions"
-        # Unknown kinds fall back to chat completions.
         probe_dispatch("bogus", base, "sk", "chat-model")
         assert seen[-1]["path"] == "/chat/completions"
     finally:
@@ -366,15 +362,8 @@ def test_provider_api_dispatches_to_wire_api() -> None:
         _stop(rhttpd, rthread)
 
 
-# Moved from test_b4_unification.py / test_b4_p2.py (B4 batch).
-import pytest
-
 def test_x22_network_error_mapping_matrix() -> None:
-    import socket
-    from http.client import HTTPException
-    from urllib.error import HTTPError, URLError
 
-    from thyca.app.onboarding import ProviderProbeError, _map_network_error
 
     def msg(exc: Exception, **kwargs) -> str:
         mapped = _map_network_error(exc, 7.0, **kwargs)
@@ -390,7 +379,7 @@ def test_x22_network_error_mapping_matrix() -> None:
     assert msg(http404, model="m") == "model 'm' không có trên provider (HTTP 404)"
     assert msg(HTTPError("u", 500, "x", {}, None)) == "provider trả HTTP 500"
     assert msg(URLError(TimeoutError())) == "provider quá thời gian phản hồi (7s)"
-    assert msg(URLError(socket.timeout())) == "provider quá thời gian phản hồi (7s)"
+    assert msg(URLError(TimeoutError())) == "provider quá thời gian phản hồi (7s)"
     assert msg(URLError("conn refused")) == "không kết nối được provider"
     assert msg(TimeoutError()) == "provider quá thời gian phản hồi (7s)"
     assert msg(OSError("down")) == "không kết nối được provider"
@@ -399,7 +388,6 @@ def test_x22_network_error_mapping_matrix() -> None:
 
 
 def test_x22_scheme_check_stays_first() -> None:
-    from thyca.app.onboarding import ProviderProbeError, _request_json
 
     with pytest.raises(ProviderProbeError, match="baseUrl phải bắt đầu"):
         _request_json("ftp://x", "/models", "k", body=None, timeout=1.0, model="  ")

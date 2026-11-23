@@ -3,21 +3,43 @@ from __future__ import annotations
 
 import asyncio
 import json
+import json as _json
+import threading
+import time
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 
 import pytest
+from test_serve_chat import FakeLLM, _chat
 
-from thyca.bots.admin_tools import ADMIN_TOOL_NAMES, apply_card_edit, visible_for_bot
-from thyca.bots.card import BotCard
+from thyca.app.chat_app import ChatApp
+from thyca.bots.admin_tools import (
+    ADMIN_TOOL_NAMES,
+    AdminDeps,
+    apply_card_edit,
+    lifecycle,
+    register_admin_tools,
+    visible_for_bot,
+)
+from thyca.bots.bus import Bus
+from thyca.bots.card import BASELINE_BOT_TOOLS, CHILD_AVATAR_VARIANTS, TEAM_TINTS, BotCard, BotModel
+from thyca.bots.card import BotCard as _BotCard
+from thyca.bots.registry import BotRegistry
+from thyca.bots.registry import BotRegistry as _Registry
+from thyca.bots.runtime import BotRuntime, filtered_tool_schemas
 from thyca.bots.scheduler import CronError, due, match_field
+from thyca.configs import ModelCfg, ProviderEntry, default_config, load, save
+from thyca.configs.coordination import CoordinationError, hold
+from thyca.conversations.store.admin import AdminStore
+from thyca.llms.llm_base import ChatReply
 from thyca.memories.identity import bind_bot_id, reset_bot_id
 from thyca.tools.registry import ToolRegistry
 
 
 def _card(**overrides) -> BotCard:
-    base = dict(bot_id="coder", name="coder", role="Coder",
-                description="Codes.", persona="persona")
+    base = {"bot_id": "coder", "name": "coder", "role": "Coder",
+                "description": "Codes.", "persona": "persona"}
     base.update(overrides)
     return BotCard(**base)
 
@@ -30,12 +52,7 @@ def test_admin_names_shape() -> None:
 
 
 def test_admin_handlers_deny_child_bot(tmp_path: Path) -> None:
-    import json
 
-    from thyca.bots.admin_tools import AdminDeps, register_admin_tools
-    from thyca.bots.bus import Bus
-    from thyca.bots.registry import BotRegistry
-    from thyca.bots.runtime import BotRuntime
 
     registry = BotRegistry(tmp_path)
     registry.ensure_thyca()
@@ -49,7 +66,7 @@ def test_admin_handlers_deny_child_bot(tmp_path: Path) -> None:
         for name in ADMIN_TOOL_NAMES:
             spec = tool_registry.get(name)
             args = {"bot_id": "x", "task": "t", "conversation_id": "s"}
-            out = asyncio.run(spec.handler({k: v for k, v in args.items()}))
+            out = asyncio.run(spec.handler(dict(args.items())))
             assert out.startswith("denied:"), name
     finally:
         reset_bot_id(token)
@@ -79,12 +96,7 @@ def test_apply_card_edit() -> None:
 
 
 def _create_via_tool(tmp_path: Path, args: dict):
-    import json as _json
 
-    from thyca.bots.admin_tools import AdminDeps, register_admin_tools
-    from thyca.bots.bus import Bus
-    from thyca.bots.registry import BotRegistry
-    from thyca.bots.runtime import BotRuntime
 
     registry = BotRegistry(tmp_path)
     registry.ensure_thyca()
@@ -103,8 +115,6 @@ def _schemas(*names: str) -> list[dict]:
 
 
 def test_bot_create_grants_baseline_tools(tmp_path: Path) -> None:
-    from thyca.bots.card import BASELINE_BOT_TOOLS
-    from thyca.bots.runtime import filtered_tool_schemas
 
     card, out = _create_via_tool(tmp_path, {
         "bot_id": "helper", "role": "Helper", "description": "Helps.",
@@ -113,12 +123,10 @@ def test_bot_create_grants_baseline_tools(tmp_path: Path) -> None:
     assert set(out["tools"]) == set(card.tools)
     schemas = _schemas(*BASELINE_BOT_TOOLS, "read", "bash")
     names = [s["function"]["name"] for s in filtered_tool_schemas(schemas, card)]
-    # Baseline is in the filtered schema; unlisted tools stay fail-closed.
     assert set(names) == set(BASELINE_BOT_TOOLS)
 
 
 def test_bot_create_explicit_tools_union_and_hidden_wins(tmp_path: Path) -> None:
-    from thyca.bots.runtime import filtered_tool_schemas
 
     card, _ = _create_via_tool(tmp_path, {
         "bot_id": "helper", "role": "Helper", "description": "Helps.",
@@ -130,12 +138,11 @@ def test_bot_create_explicit_tools_union_and_hidden_wins(tmp_path: Path) -> None
                        "memory_get", "read")
     names = [s["function"]["name"] for s in filtered_tool_schemas(schemas, card)]
     assert "read" in names and "memory_remember" in names
-    assert "memory_search" not in names  # hidden wins over explicit+baseline
+    assert "memory_search" not in names
     assert "bot_send" not in names
 
 
 def test_bot_create_memory_policy_still_filters_baseline(tmp_path: Path) -> None:
-    from thyca.bots.runtime import filtered_tool_schemas
 
     card, _ = _create_via_tool(tmp_path, {
         "bot_id": "helper", "role": "Helper", "description": "Helps.",
@@ -148,14 +155,7 @@ def test_bot_create_memory_policy_still_filters_baseline(tmp_path: Path) -> None
 
 
 def _tooled_registry(tmp_path: Path, models: dict):
-    from thyca.bots.admin_tools import AdminDeps, register_admin_tools
-    from thyca.bots.bus import Bus
-    from thyca.bots.registry import BotRegistry
-    from thyca.bots.runtime import BotRuntime
-    from thyca.configs import ModelCfg, ProviderEntry, default_config, save
-    from thyca.tools.registry import ToolRegistry
 
-    from dataclasses import replace
 
     cfg = replace(
         default_config(),
@@ -175,8 +175,6 @@ def _tooled_registry(tmp_path: Path, models: dict):
 
 
 def _run_tool(tool_registry, name: str, args: dict) -> str:
-    import asyncio
-    import json as _json
 
     spec = tool_registry.get(name)
     out = asyncio.run(spec.handler(args))
@@ -205,8 +203,6 @@ def test_bot_create_validates_model_against_live_config(tmp_path: Path) -> None:
 
 
 def test_bot_edit_card_validates_model_changes_only(tmp_path: Path) -> None:
-    from thyca.bots.card import BotCard, BotModel
-    from thyca.bots.registry import BotRegistry
 
     tools = _tooled_registry(tmp_path, {"m1": {}})
     _run_tool(tools, "bot_create", {
@@ -216,18 +212,12 @@ def test_bot_edit_card_validates_model_changes_only(tmp_path: Path) -> None:
     assert failed == "bot_edit_card failed: unknown model"
     moved = _run_tool(tools, "bot_edit_card", {"bot_id": "helper", "role": "Senior"})
     assert '"ok": true' in moved
-    # Identity edits stay allowed on a legacy bot whose stored model is
-    # unknown: validation only gates actual model changes.
     BotRegistry(tmp_path).create(BotCard(
         bot_id="legacy", name="legacy", role="Old", description="Old.",
         persona="p", model=BotModel(id="ghost"),
     ))
     renamed = _run_tool(tools, "bot_edit_card", {"bot_id": "legacy", "role": "New"})
     assert '"ok": true' in renamed
-    # A thinking-only edit on a model-less legacy card validates against
-    # the same "default" fallback instead of crashing on a missing model.
-    from thyca.bots.card import BotCard as _BotCard
-    from thyca.bots.registry import BotRegistry as _Registry
 
     _Registry(tmp_path).create(_BotCard(
         bot_id="plain-legacy", name="plain-legacy", role="Old", description="Old.",
@@ -239,25 +229,7 @@ def test_bot_edit_card_validates_model_changes_only(tmp_path: Path) -> None:
 
 
 def test_bot_edit_card_model_change_serializes_with_settings_update(tmp_path: Path) -> None:
-    # A thinking-only admin edit must not clobber a concurrent model
-    # assignment: the card is read, patched, validated, and persisted
-    # inside one coordination hold. The hook pauses the handler between
-    # its read and its write; the settings update provably cannot land in
-    # between because it blocks on the same lock, so the final model is
-    # deterministically the settings update (on the old code the stale
-    # patched model would win instead).
-    import threading
-    import time
 
-    from thyca.app.chat_app import ChatApp
-    from thyca.bots.admin_tools import AdminDeps, register_admin_tools
-    from thyca.bots.admin_tools import lifecycle
-    from thyca.bots.bus import Bus
-    from thyca.bots.card import BotModel
-    from thyca.bots.registry import BotRegistry
-    from thyca.bots.runtime import BotRuntime
-    from thyca.configs import load
-    from thyca.configs.coordination import CoordinationError, hold
 
     tools = _tooled_registry(tmp_path, {"m1": {}, "m2": {}})
     BotRegistry(tmp_path).create(_card(model=BotModel(id="m1", thinking=None)))
@@ -281,25 +253,22 @@ def test_bot_edit_card_model_change_serializes_with_settings_update(tmp_path: Pa
                 try:
                     outcome["edit"] = asyncio.run(
                         spec.handler({"bot_id": "coder", "thinking": "low"}))
-                except Exception as exc:  # noqa: BLE001 — recorded for assert
+                except Exception as exc:
                     outcome["error"] = exc
 
             editor = threading.Thread(target=run_edit)
             editor.start()
             try:
                 assert entered.wait(timeout=10)
-                # The handler holds coordination across read→patch→persist:
-                # anything else serializes behind it instead of interleaving.
-                with pytest.raises(CoordinationError):
-                    with hold(tmp_path, timeout=0.3):
-                        pass
+                with pytest.raises(CoordinationError), hold(tmp_path, timeout=0.3):
+                    pass
                 outcome["settings"] = None
 
                 def run_settings() -> None:
                     try:
                         outcome["settings"] = app.update_bot_settings(
                             "coder", {"model": {"id": "m2", "thinking": None}})
-                    except Exception as exc:  # noqa: BLE001 — recorded for assert
+                    except Exception as exc:
                         outcome["settings_error"] = exc
 
                 setter = threading.Thread(target=run_settings)
@@ -336,20 +305,17 @@ def test_cron_matcher() -> None:
 
 
 def test_due_minute_precision() -> None:
-    # Monday 2026-08-03 09:30. Standard cron: Monday=1, Sunday=0 and 7.
     now = datetime(2026, 8, 3, 9, 30)
     assert due("30 9 * * *", now) is True
     assert due("31 9 * * *", now) is False
     assert due("* * * * *", now) is True
     assert due(None, now) is False
-    assert due("30 9 * * 1", now) is True  # Monday
-    assert due("30 9 * * 2", now) is False  # Tuesday
-    assert due("30 9 * * 0", now) is False  # Sunday
+    assert due("30 9 * * 1", now) is True
+    assert due("30 9 * * 2", now) is False
+    assert due("30 9 * * 0", now) is False
     sunday = datetime(2026, 8, 2, 9, 30)
     assert due("30 9 * * 0", sunday) is True
     assert due("30 9 * * 7", sunday) is True
-    # DOM/DOW OR when both are restricted: Monday the 3rd fires on DOW,
-    # Tuesday the 15th fires on DOM, Wednesday the 16th on neither.
     assert due("30 9 15 * 1", now) is True
     assert due("30 9 15 * 1", datetime(2026, 9, 15, 9, 30)) is True
     assert due("30 9 15 * 1", datetime(2026, 9, 16, 9, 30)) is False
@@ -362,16 +328,10 @@ def test_due_minute_precision() -> None:
 
 
 def test_suggest_tint_picks_least_used_and_create_uses_it(tmp_path: Path) -> None:
-    import json
 
-    from thyca.bots.admin_tools import AdminDeps, register_admin_tools
-    from thyca.bots.bus import Bus
-    from thyca.bots.card import TEAM_TINTS
-    from thyca.bots.registry import BotRegistry
-    from thyca.bots.runtime import BotRuntime
 
     registry = BotRegistry(tmp_path)
-    registry.ensure_thyca()  # thyca holds accent
+    registry.ensure_thyca()
     tool_registry = ToolRegistry()
     register_admin_tools(tool_registry,
                          AdminDeps(registry, BotRuntime(tmp_path, registry, Bus()),
@@ -394,13 +354,7 @@ def test_suggest_tint_picks_least_used_and_create_uses_it(tmp_path: Path) -> Non
 
 
 def test_bot_create_avatar_suggestion_and_explicit(tmp_path: Path) -> None:
-    import json
 
-    from thyca.bots.admin_tools import AdminDeps, register_admin_tools
-    from thyca.bots.bus import Bus
-    from thyca.bots.card import CHILD_AVATAR_VARIANTS
-    from thyca.bots.registry import BotRegistry
-    from thyca.bots.runtime import BotRuntime
 
     registry = BotRegistry(tmp_path)
     registry.ensure_thyca()
@@ -421,7 +375,6 @@ def test_bot_create_avatar_suggestion_and_explicit(tmp_path: Path) -> None:
     assert first in CHILD_AVATAR_VARIANTS and second in CHILD_AVATAR_VARIANTS
     assert first != second, "consecutive creations spread across note shapes"
     assert asyncio.run(make("twin-c", avatar="dotted")) == "dotted"
-    # The star belongs to Thyca alone.
     out = asyncio.run(create.handler(
         {"bot_id": "twin-d", "role": "R", "description": "D.", "avatar": "star"}))
     assert "reserved for Thyca" in out
@@ -438,13 +391,8 @@ def test_group_delete_hidden_from_child_and_denies_child() -> None:
 
 
 def test_group_delete_tool_via_chatapp(tmp_path: Path) -> None:
-    import json as _json
 
-    from test_serve_chat import FakeLLM, _chat
-    from thyca.bots.card import BotCard
-    from thyca.llms.llm_base import ChatReply
-    from thyca.conversations.store.admin import AdminStore
-    from thyca.memories.identity import bind_bot_id, reset_bot_id
+
 
     app = _chat(tmp_path, FakeLLM(ChatReply(content="pong")))
     try:
@@ -454,18 +402,15 @@ def test_group_delete_tool_via_chatapp(tmp_path: Path) -> None:
         app.turn(group["conversation_id"], "hi")
         spec = app._registry.get("group_delete")
         assert spec is not None
-        # DM ids are refused by stored kind.
         dm = app.bot_dm("coder")
         refused = asyncio.run(spec.handler({"group_id": dm["conversation_id"]}))
         assert "failed" in refused and "not a group" in refused, refused
-        # A child caller is denied.
         token = bind_bot_id("coder")
         try:
             denied = asyncio.run(spec.handler({"group_id": group["conversation_id"]}))
             assert denied.startswith("denied:")
         finally:
             reset_bot_id(token)
-        # A busy group is refused and survives.
         app._turns.claim(group["conversation_id"])
         try:
             busy = asyncio.run(spec.handler({"group_id": group["conversation_id"]}))
@@ -473,7 +418,6 @@ def test_group_delete_tool_via_chatapp(tmp_path: Path) -> None:
             assert group["conversation_id"] in {row.ref.id for row in AdminStore(tmp_path).list(limit=5000)[0]}
         finally:
             app._turns.release(group["conversation_id"])
-        # Success removes the door.
         ok = _json.loads(asyncio.run(spec.handler({"group_id": group["conversation_id"]})))
         assert ok["ok"] is True and ok["group_id"] == group["conversation_id"]
         assert group["conversation_id"] not in {row.ref.id for row in AdminStore(tmp_path).list(limit=5000)[0]}
@@ -482,13 +426,8 @@ def test_group_delete_tool_via_chatapp(tmp_path: Path) -> None:
 
 
 def test_bot_delete_prunes_and_dissolves_empty_group(tmp_path: Path) -> None:
-    import json as _json
 
-    from test_serve_chat import FakeLLM, _chat
 
-    from thyca.bots.card import BotCard
-    from thyca.conversations.store.admin import AdminStore
-    from thyca.llms.llm_base import ChatReply
 
     app = _chat(tmp_path, FakeLLM(ChatReply(content="pong")))
     try:
@@ -498,7 +437,6 @@ def test_bot_delete_prunes_and_dissolves_empty_group(tmp_path: Path) -> None:
         app.turn(group["conversation_id"], "hi")
         prune_spec = app._registry.get("bot_delete")
         assert prune_spec is not None
-        # A busy group blocks the delete and keeps bot and roster.
         app._turns.claim(group["conversation_id"])
         try:
             busy = asyncio.run(prune_spec.handler({"bot_id": "coder"}))
@@ -507,12 +445,10 @@ def test_bot_delete_prunes_and_dissolves_empty_group(tmp_path: Path) -> None:
             assert app.room_bots(group["conversation_id"]) == ["coder", "helper"]
         finally:
             app._turns.release(group["conversation_id"])
-        # Success prunes the roster and reports both counts.
         ok = _json.loads(asyncio.run(prune_spec.handler({"bot_id": "coder"})))
         assert ok["ok"] is True and ok["groups_pruned"] == 1 and ok["groups_dissolved"] == 0
         assert not app._bots.exists("coder")
         assert app.room_bots(group["conversation_id"]) == ["helper"]
-        # A busy group is not dissolved mid-turn either.
         app._turns.claim(group["conversation_id"])
         try:
             busy_dissolve = asyncio.run(prune_spec.handler({"bot_id": "helper"}))
@@ -521,7 +457,6 @@ def test_bot_delete_prunes_and_dissolves_empty_group(tmp_path: Path) -> None:
             assert app.room_bots(group["conversation_id"]) == ["helper"]
         finally:
             app._turns.release(group["conversation_id"])
-        # Deleting the last member dissolves the group.
         gone = _json.loads(asyncio.run(prune_spec.handler({"bot_id": "helper"})))
         assert gone["ok"] is True and gone["groups_pruned"] == 0 and gone["groups_dissolved"] == 1, gone
         assert not app._bots.exists("helper")

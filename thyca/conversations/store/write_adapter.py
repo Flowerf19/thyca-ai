@@ -45,6 +45,7 @@ from .contracts import (
     _require_actor,
     _require_ref,
     _view,
+    validate_message,
     validate_metadata,
 )
 from .database import (
@@ -55,35 +56,32 @@ from .database import (
     open_existing_conversation,
 )
 from .runtime import RuntimeWriteIntent
+from .runtime import is_runtime_ready as _is_runtime_ready
 
 __all__ = [
     'RetryReadiness',
-    'create_group',
     'append_message',
     'append_server_message',
     'append_server_row',
-    'set_conversation_metadata',
-    'prepare_retry',
     'append_turn_error',
+    'create_group',
+    'prepare_retry',
+    'set_conversation_metadata',
 ]
 
-#: Bound on resync restarts while inspecting history for a retry decision.
 _MAX_RETRY_RESYNCS = 5
 
 
-# Require an explicit runtime write intent before any store I/O.
 def _require_intent(intent: object):
     if isinstance(intent, RuntimeWriteIntent):
         return intent
     raise ValueError('explicit runtime write intent required')
 
 
-# Require an initialized runtime store root before any write.
 def _require_enabled_root(root: Path, intent=None) -> Path:
     """Runtime-ready gate: the root must hold an initialized store."""
     if not isinstance(root, Path):
         raise ValueError('root must be a Path')
-    from .runtime import is_runtime_ready as _is_runtime_ready
 
     if isinstance(intent, RuntimeWriteIntent):
         if not _is_runtime_ready(root):
@@ -98,7 +96,6 @@ def _check_page_limit(page_limit: object) -> int:
     return min(page_limit, MAX_PAGE_LIMIT)
 
 
-# Create one group door on a runtime store root.
 def create_group(
     root: Path,
     participants: list[str],
@@ -116,7 +113,6 @@ def create_group(
     return AdminStore(root).create_group(list(participants), title=title)
 
 
-# Append one bot-authored row with an explicit acting bot.
 def append_message(
     root: Path,
     ref: ConversationRef,
@@ -144,7 +140,6 @@ def append_message(
     return AgentStore(root).append(ref, actor, message, require_participant=require_participant)
 
 
-# Append one user row authorized by the server-side caller, not a bot.
 def append_server_message(
     root: Path,
     ref: ConversationRef,
@@ -165,7 +160,6 @@ def append_server_message(
     _require_ref(ref)
     if not isinstance(message, Message) or message.role != 'user':
         raise ValueError('server append carries user rows only')
-    from .contracts import validate_message
 
     validate_message(message)
     payload = _encode_canonical_message(message)
@@ -173,7 +167,6 @@ def append_server_message(
     try:
         with _transaction_context(conn, 'BEGIN IMMEDIATE'):
             _ensure_root_ready(conn, _root_instance_id_from_conn(conn))
-            # Door readiness without an actor: no bot membership is claimed.
             _metadata, _generation, high_event, high_logical = _ensure_door_ready(
                 conn, ref
             )
@@ -197,7 +190,6 @@ def append_server_message(
         conn.close()
 
 
-# Append one server-recorded A2A display row without claiming bot membership.
 def append_server_row(
     root: Path,
     ref: ConversationRef,
@@ -221,7 +213,6 @@ def append_server_row(
     meta = message.meta if isinstance(message.meta, dict) else {}
     if not (meta.get('bus_event') is True or meta.get('kind') == 'result'):
         raise ValueError('server row must be an A2A display row')
-    from .contracts import validate_message
 
     validate_message(message)
     payload = _encode_canonical_message(message)
@@ -252,7 +243,6 @@ def append_server_row(
         conn.close()
 
 
-# Replace one door's metadata in a single transaction.
 def set_conversation_metadata(
     root: Path,
     ref: ConversationRef,
@@ -277,9 +267,6 @@ def set_conversation_metadata(
     try:
         with _transaction_context(conn, 'BEGIN IMMEDIATE'):
             _ensure_root_ready(conn, _root_instance_id_from_conn(conn))
-            # Membership is part of the atomic write: a removed actor fails
-            # here, inside the same transaction as the update. Any stored
-            # group title survives a participants-only replacement.
             current, _gen, _ev, _log = _ensure_door_ready(conn, ref, actor)
             metadata = {'participants': list(participants)}
             if current.get('title') is not None:
@@ -315,7 +302,6 @@ class RetryReadiness:
     message_count: int
 
 
-# Inspect one door for retry readiness without mutating it.
 def prepare_retry(
     root: Path,
     ref: ConversationRef,
@@ -356,10 +342,6 @@ def prepare_retry(
         if not page.has_more:
             break
         cursor = page.cursor
-    # Exact logical positions come from the same ordering the pager used.
-    # A final shared read resolves role/logical_seq plus the authoritative
-    # generation; a mismatch against the paged generation means a
-    # purge/compaction landed between the two reads, so restart bounded.
     for _attempt in range(_MAX_RETRY_RESYNCS + 1):
         conn = open_existing_conversation(root, lock_mode='shared')
         try:
@@ -377,7 +359,6 @@ def prepare_retry(
             conn.close()
         if final_generation == generation and len(rows) == len(collected):
             break
-        # Concurrent writer moved the door: re-assemble from the reset cursor.
         collected = []
         cursor = None
         restarts = 0
@@ -410,7 +391,6 @@ def prepare_retry(
     )
 
 
-# Append one trailing turn-failure marker without mutating rows.
 def append_turn_error(
     root: Path,
     ref: ConversationRef,

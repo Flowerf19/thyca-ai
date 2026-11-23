@@ -6,11 +6,29 @@ from pathlib import Path
 
 from thyca.core.conversation import ConversationRef
 from thyca.core.protocol import Message, utc_now_ts
-from .contracts import (DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT, ConversationPage, ConversationStoreError,
-                        PageCursor, _decode_message, _encode_canonical_message, _local_error,
-                        _require_actor, _require_ref, _validate_cursor, _view, validate_message)
-from .database import (_ensure_door_ready, _ensure_root_ready, _root_instance_id_from_conn,
-                       _transaction_context, open_existing_conversation)
+
+from .contracts import (
+    DEFAULT_PAGE_LIMIT,
+    MAX_PAGE_LIMIT,
+    ConversationPage,
+    PageCursor,
+    _decode_message,
+    _encode_canonical_message,
+    _local_error,
+    _require_actor,
+    _require_ref,
+    _validate_cursor,
+    _view,
+    validate_message,
+)
+from .database import (
+    _ensure_door_ready,
+    _ensure_root_ready,
+    _root_instance_id_from_conn,
+    _transaction_context,
+    open_existing_conversation,
+)
+
 
 class AgentStore:
     """Agent-facing facade: membership-checked reads and append only."""
@@ -32,7 +50,7 @@ class AgentStore:
         try:
             with _transaction_context(conn, 'BEGIN'):
                 _ensure_root_ready(conn, _root_instance_id_from_conn(conn))
-                metadata, generation, event_high, logical_high = _ensure_door_ready(conn, ref, actor)
+                metadata, generation, _event_high, logical_high = _ensure_door_ready(conn, ref, actor)
                 start = cursor.after_logical_seq if cursor is not None else 0
                 current_cursor = cursor or PageCursor(ref, generation, 0)
                 if (cursor is not None and cursor.generation != generation):
@@ -69,10 +87,6 @@ class AgentStore:
             conn.close()
 
     def append(self, ref: ConversationRef, actor: str, message: Message, *, require_participant: str | None = None) -> int:
-        # Append one row with the acting bot plus an optional same-transaction
-        # recipient check: group request rows authorize the actual sender and
-        # require the recipient's current membership atomically, so a removal
-        # racing the insert fails closed. Result rows keep actor-only checks.
         _require_ref(ref)
         _require_actor(actor)
         if require_participant is not None:
@@ -81,18 +95,12 @@ class AgentStore:
             raise ValueError('expected message')
         validate_message(message)
         payload = _encode_canonical_message(message)
-        # Multiprocess WAL readers mmap -shm while another process
-        # checkpoints/truncates it, which SIGBUSes the reader. Take the
-        # store-root exclusive lock for the whole append so concurrent
-        # processes never enter SQLite together.
         conn = open_existing_conversation(self._root, lock_mode='exclusive')
         try:
             with _transaction_context(conn, 'BEGIN IMMEDIATE'):
                 _ensure_root_ready(conn, _root_instance_id_from_conn(conn))
                 _metadata, _generation, high_event, high_logical = _ensure_door_ready(conn, ref, actor)
                 if require_participant is not None:
-                    # Same transaction: recipient eligibility is part of the
-                    # atomic insert, never a separate roster read.
                     _ensure_door_ready(conn, ref, require_participant)
                 seq, logical = high_event + 1, high_logical + 1
                 try:
@@ -115,4 +123,3 @@ class AgentStore:
 
 def _resync_page(ref: ConversationRef, metadata: dict, generation: int) -> ConversationPage:
     return ConversationPage(_view(ref, metadata, ()), PageCursor(ref, generation, 0), False, True)
-

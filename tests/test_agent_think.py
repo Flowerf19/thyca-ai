@@ -39,9 +39,6 @@ def test_think_writes_reply_on_stage() -> None:
 
 
 def test_narrow_port_still_gets_text_deltas() -> None:
-    # NB: test/class names avoid the "on_content"/"on_reasoning" substrings:
-    # Think degrades by matching those in the TypeError text (which embeds
-    # the qualname), so a collision would mask the real kwarg.
     seen: list[str] = []
 
     class NarrowPort:
@@ -80,8 +77,6 @@ def test_wide_port_still_gets_thinking_deltas() -> None:
 
 
 def test_reasoning_only_port_ignores_qualname_noise() -> None:
-    # Qualname embeds "on_reasoning" noise (class name); CPython quotes the
-    # truly rejected 'on_content'. Must retry reasoning-only.
     seen: list[str] = []
 
     class Port_on_reasoning:
@@ -101,9 +96,6 @@ def test_reasoning_only_port_ignores_qualname_noise() -> None:
 
 
 def test_content_only_port_ignores_qualname_noise() -> None:
-    # True F12 collision: qualname embeds "on_content" noise (class name)
-    # while CPython quotes the truly rejected 'on_reasoning'. Old
-    # substring code retried reasoning-only here and lost the deltas.
     seen: list[str] = []
 
     class Port_on_content:

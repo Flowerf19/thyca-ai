@@ -12,8 +12,11 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from thyca.configs import atomic_write_text
+from thyca.memories.archive_store import decode_bots
 from thyca.memories.chunk import Chunker
-from thyca.memories.heading import format_ts, is_visible, utc_now
+from thyca.memories.heading import format_ts, is_visible, read_text_file, utc_now
+from thyca.memories.identity import current_bot_id
 
 AUTO_START = "<!-- habits:auto:start -->"
 AUTO_END = "<!-- habits:auto:end -->"
@@ -44,9 +47,6 @@ def habit_observations(facade, bot_id: str | None = None, now=None) -> list[dict
     observations). Merges store rows with today's not-yet-indexed file,
     skips expired entries and store duplicates. One record per session.
     """
-    from thyca.memories.archive_store import decode_bots
-    from thyca.memories.heading import read_text_file
-    from thyca.memories.identity import current_bot_id
 
     if hasattr(facade, "_ensure_rollover_indexed"):
         facade._ensure_rollover_indexed(now)
@@ -55,9 +55,9 @@ def habit_observations(facade, bot_id: str | None = None, now=None) -> list[dict
     by_session: dict[str, dict] = {}
     for row in facade.archive.store.habit_rows(now_ts, reader=reader):
         if not row["day"]:
-            continue  # sweep counts distinct daily days; dateless rows skip.
+            continue
         day_str = str(row["day"])
-        body_text = str(row["text_raw"] or "") if "text_raw" in row.keys() else ""
+        body_text = str(row["text_raw"] or "") if "text_raw" in tuple(row.keys()) else ""
         days = sorted({day_str, *OBS_DAY_RE.findall(body_text)})
         by_session[str(row["memory_id"])] = {
             "memory_id": str(row["memory_id"]),
@@ -91,12 +91,16 @@ def habit_observations(facade, bot_id: str | None = None, now=None) -> list[dict
             if not is_visible(first.expires_at, now):
                 continue
             owners = first.bots
-            if reader is not None and reader != "thyca":
-                if owners is not None and "team" not in owners and reader not in owners:
-                    continue
+            if (
+                reader is not None
+                and reader != "thyca"
+                and owners is not None
+                and "team" not in owners
+                and reader not in owners
+            ):
+                continue
             if not first.habit:
                 continue
-            # Explicit-owner filtering happens once below for both paths.
             body_text = "\n".join(leaf.text_raw for leaf in leaves)
             days = sorted({today, *OBS_DAY_RE.findall(body_text)})
             by_session[memory_id] = {
@@ -127,14 +131,13 @@ def sweep_bot_habits(facade, bot_id: str, bot_user_path, now=None) -> list[str]:
     observations) stay, only missing keys are added. Idempotent.
     Returns the added labels.
     """
-    from thyca.configs import atomic_write_text
 
     observations = habit_observations(facade, bot_id, now=now)
     groups: dict[str, list[dict]] = {}
     for obs in observations:
         collapsed = " ".join(obs["habit"].split())
         if not collapsed or "<!--" in collapsed:
-            continue  # cannot render safely as a "- label" line.
+            continue
         obs = {**obs, "habit": collapsed}
         groups.setdefault(Chunker.normalize(collapsed), []).append(obs)
     wanted: dict[str, str] = {}
@@ -151,8 +154,6 @@ def sweep_bot_habits(facade, bot_id: str, bot_user_path, now=None) -> list[str]:
     if not wanted:
         return []
     path = Path(bot_user_path)
-    # Serialize the read-modify-write against memory mutations on the
-    # same file (same per-path lock the writer uses).
     with facade.writer.lock_for(path):
         try:
             text = path.read_text(encoding="utf-8") if path.is_file() else ""
@@ -170,7 +171,7 @@ def sweep_bot_habits(facade, bot_id: str, bot_user_path, now=None) -> list[str]:
         if not fresh:
             return []
         lines = [f"- {label}" for _, label in sorted(fresh)]
-        head, sep, tail = text.partition(AUTO_START)
+        head, _sep, tail = text.partition(AUTO_START)
         block, _, rest = tail.partition(AUTO_END)
         if not block.endswith("\n"):
             block += "\n"
@@ -206,7 +207,7 @@ def parse_bot_habits(text: str) -> list[str]:
     for line in block.splitlines():
         stripped = line.strip()
         if AUTO_START in stripped or AUTO_END in stripped:
-            continue  # never adopt a marker line as a habit label.
+            continue
         if stripped.startswith("- "):
             label = stripped[2:].strip()
             if label and not label.startswith("<!--"):

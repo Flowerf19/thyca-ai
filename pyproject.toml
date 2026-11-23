@@ -50,7 +50,7 @@ target-version = "py314"
 # enabling them surfaces 1700+ pre-existing style nits (S101 asserts in
 # tests, TRY003 long messages, PLR2004 magic values...) that predate any
 # lint gate. Add families only with a plan to fix that backlog.
-select = ["E4", "E7", "E9", "F", "I", "UP", "B", "SIM", "C4", "DTZ", "PERF", "RUF", "FURB"]
+select = ["E4", "E7", "E9", "F", "I", "UP", "B", "SIM", "C4", "DTZ", "PERF", "RUF", "FURB", "PLC0415"]
 ignore = [
     # Boundary-wide intentional patterns (documented per-site):
     # - BLE001 blind-except: loopback server must never leak tracebacks/

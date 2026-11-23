@@ -2,23 +2,33 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from thyca.agents.act import Act
 from thyca.agents.assemble import Assemble
 from thyca.agents.events import TurnEvent
-from thyca.agents.loop import AgentLoop
+from thyca.agents.loop import AgentLoop, _delta_callback
 from thyca.agents.observe import Observe
+from thyca.agents.reply import ContentDelta
 from thyca.agents.think import ChatReply, Think
-from thyca.configs import PricingCfg
+from thyca.agents.thinking import ThinkingDelta
+from thyca.bots.runtime import _aggregate_turn_meta, _aggregate_turn_rounds
+from thyca.bots.timeline import CanonicalConversationStore, WorkspaceTimeline
+from thyca.configs import LimitsCfg, PricingCfg
+from thyca.conversations.runtime import ConversationManager, calibration_factor
+from thyca.core.channel import WindowRef
 from thyca.core.protocol import Message, ToolCall, ToolResult
-from thyca.conversations.runtime import ConversationManager
+from thyca.memories.active import ActiveSnapshot
+from thyca.memories.facade import MemoryFacade
+from thyca.tools.gateway import ToolGateway
+from thyca.tools.memory_tools import register_memory_tools
+from thyca.tools.registry import ToolRegistry
+from thyca.tools.task_store import TaskStore
 
-# Build a canonical-timeline manager holding one execution conversation.
+
 def _canonical_manager(root: Path, limits=None) -> ConversationManager:
-    from thyca.bots.timeline import CanonicalConversationStore, WorkspaceTimeline
-    from thyca.core.channel import WindowRef
 
     timeline = WorkspaceTimeline(root, "thyca")
     window = WindowRef(
@@ -30,7 +40,6 @@ def _canonical_manager(root: Path, limits=None) -> ConversationManager:
     manager = ConversationManager(store=store, limits=limits)
     manager.load(conversation_id)
     return manager
-
 
 
 @dataclass
@@ -68,7 +77,7 @@ def _wrap_compaction(manager: ConversationManager, events: list[str]) -> None:
         events.append("compact")
         return original(**kwargs)
 
-    manager.compact_if_needed = compact  # type: ignore[method-assign]
+    manager.compact_if_needed = compact  # type: ignore[method-assign] -- reason: test spy method replacement
 
 
 def _load_messages(tmp_path: Path, conversation_id: str) -> list[Message]:
@@ -194,7 +203,6 @@ def test_loop_limit_marker_is_not_a_second_model_call(tmp_path: Path) -> None:
     )
     assert asyncio.run(loop.run("stop after one")) == "loop limit reached"
 
-    from thyca.bots.runtime import _aggregate_turn_meta, _aggregate_turn_rounds
 
     rows = manager.current.messages
     actual, marker = rows[1], rows[-1]
@@ -293,7 +301,6 @@ def test_one_tool_round_then_text_persists_complete_round(tmp_path: Path) -> Non
 
     messages = _load_messages(tmp_path, conversation.conversation_id)
     assert [message.role for message in messages] == ["user", "assistant", "tool", "assistant"]
-    # Tool-path assistant rows normalize None to "" like terminal rows.
     assert messages[1].content == ""
     assert messages[1].tool_calls == [call]
     assert messages[2].tool_call_id == "call-1"
@@ -470,7 +477,6 @@ def test_reasoning_persists_without_thinking_events(tmp_path: Path) -> None:
 
 
 def test_on_reasoning_emits_thinking_deltas(tmp_path: Path) -> None:
-    from thyca.agents.thinking import ThinkingDelta
 
     @dataclass
     class StreamingLLM:
@@ -531,7 +537,6 @@ def test_persist_user_false_does_not_append_user(tmp_path: Path) -> None:
 
 
 def test_over_cap_turn_sends_compacted_history(tmp_path: Path) -> None:
-    from thyca.configs import LimitsCfg
 
     manager = _canonical_manager(tmp_path, LimitsCfg(contextTokens=1000))
     conversation = manager.current
@@ -550,11 +555,7 @@ def test_over_cap_turn_sends_compacted_history(tmp_path: Path) -> None:
     assert stored[0].role == "system" and "compaction" in (stored[0].content or "")
 
 
-# Moved from test_b4_unification.py / test_b4_p2.py (B4 batch).
 def test_x23_single_delta_callback_routes_by_class() -> None:
-    from thyca.agents.loop import _delta_callback
-    from thyca.agents.reply import ContentDelta
-    from thyca.agents.thinking import ThinkingDelta
 
     assert _delta_callback(None, 1, ContentDelta) is None
     seen: list = []
@@ -591,15 +592,12 @@ def test_loop_records_raw_estimate_beside_usage(tmp_path: Path) -> None:
     assert assistant.meta["usage"]["prompt_tokens"] == 12
     estimate = assistant.meta["estimate_tokens"]
     assert isinstance(estimate, int) and estimate > 0
-    # The recorded pair is usable for the next turn's calibration.
-    from thyca.conversations.runtime import calibration_factor
 
     factor = calibration_factor([assistant], model="m")
     assert factor == 12 / estimate
 
 
 def test_loop_injects_context_budget_signal(tmp_path: Path) -> None:
-    from thyca.memories.active import ActiveSnapshot
 
     manager = _canonical_manager(tmp_path)
     manager.append(
@@ -652,7 +650,6 @@ def test_loop_injects_context_budget_signal(tmp_path: Path) -> None:
 
 
 def test_loop_context_budget_warns_before_backstop(tmp_path: Path) -> None:
-    from thyca.memories.active import ActiveSnapshot
 
     manager = _canonical_manager(tmp_path)
     manager.append(Message(role="user", content="x" * 6500))
@@ -681,14 +678,7 @@ def test_loop_context_budget_warns_before_backstop(tmp_path: Path) -> None:
 
 
 def test_loop_checkpoint_tool_call_is_seen_next_turn(tmp_path: Path) -> None:
-    import json
 
-    from thyca.memories.active import ActiveSnapshot
-    from thyca.memories.facade import MemoryFacade
-    from thyca.tools.gateway import ToolGateway
-    from thyca.tools.memory_tools import register_memory_tools
-    from thyca.tools.registry import ToolRegistry
-    from thyca.tools.task_store import TaskStore
 
     manager = _canonical_manager(tmp_path)
     conversation = manager.current
@@ -744,7 +734,6 @@ def test_loop_checkpoint_tool_call_is_seen_next_turn(tmp_path: Path) -> None:
 
 
 def test_loop_context_budget_marks_old_checkpoint_stale(tmp_path: Path) -> None:
-    from thyca.memories.active import ActiveSnapshot
 
     manager = _canonical_manager(tmp_path)
     manager.append(
@@ -797,7 +786,6 @@ def test_loop_context_budget_marks_old_checkpoint_stale(tmp_path: Path) -> None:
 
 
 def test_loop_context_budget_respects_unavailable_memory_tools(tmp_path: Path) -> None:
-    from thyca.memories.active import ActiveSnapshot
 
     manager = _canonical_manager(tmp_path)
     llm = FakeLLM([ChatReply(content="ok")])

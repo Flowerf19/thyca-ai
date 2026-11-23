@@ -38,8 +38,6 @@ class ServerEntry:
 
 
 def freeze_cfg(cfg: McpServerCfg) -> McpServerCfg:
-    # Frozen copy: args/env are mutable containers, so fingerprints must not
-    # alias the caller's object.
     return McpServerCfg(cfg.command, list(cfg.args), dict(cfg.env))
 
 
@@ -211,7 +209,6 @@ class MCPManager:
                     continue
                 if entry.status == "connecting" and entry.task is not None:
                     continue
-                # failed (or connecting without a task): retry same config
                 await self._cancel_task(entry.task)
                 await self._aclose_proc(entry.proc)
                 entry.proc = None
@@ -220,7 +217,6 @@ class MCPManager:
                 continue
 
             if entry is not None:
-                # Config changed: stop process, keep last_tools for stubs/wait.
                 await self._cancel_task(entry.task)
                 await self._aclose_proc(entry.proc)
                 entry.cfg = cfg
@@ -280,7 +276,6 @@ class MCPManager:
         }
         removed = await self.schedule(servers)
         diags = await self.settle()
-        # Drop catalog names that a successful reconnect no longer exposes.
         for name, entry in self._entries.items():
             if entry.status != "live" or name not in before:
                 continue

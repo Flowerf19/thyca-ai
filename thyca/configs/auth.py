@@ -79,8 +79,6 @@ def merge_saved_keys(payload: dict, config: Config) -> dict:
     for pid, entry in providers.items():
         if not isinstance(entry, dict):
             continue
-        # Omitted and explicit-null merge like "": the UI masks the secret
-        # as "", and a payload that never saw it must not wipe it.
         if entry.get("apiKey") not in ("", None):
             continue
         stored = config.providers.get(pid)

@@ -19,10 +19,11 @@ from pathlib import Path
 
 from thyca.bots.card import _NAME_RE, NAME_MAX
 from thyca.configs import atomic_write_text
+from thyca.configs.store import FileLock
+from thyca.conversations.runtime.store import CONVERSATION_ID_PATTERN
 from thyca.core.channel import WORK_REF_RE
 from thyca.core.protocol import parse_ts
 from thyca.memories.heading import format_ts, utc_now
-from thyca.conversations.runtime.store import CONVERSATION_ID_PATTERN
 
 NONTERMINAL = ("open", "waiting_private", "received")
 TERMINAL = ("resumed", "done", "cancelled", "expired")
@@ -108,7 +109,7 @@ class Pending:
         return value
 
     @staticmethod
-    def from_dict(data: dict) -> "Pending":
+    def from_dict(data: dict) -> Pending:
         if not isinstance(data, dict):
             raise PrivateFollowupError("pending entry must be an object")
         status = data.get("status")
@@ -243,7 +244,6 @@ class PrivateFollowupStore:
         path.chmod(0o600)
 
     def _txn(self, bot_id: str):
-        from thyca.configs.store import FileLock
 
         return FileLock(self._lock_path(bot_id))
 

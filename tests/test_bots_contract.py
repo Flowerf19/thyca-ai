@@ -6,12 +6,17 @@ file pins the new surface with the same strength as the old one.
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
 from urllib.request import Request, urlopen
 
-from thyca.app.chat_app import ChatApp
-from thyca.configs import load, save
 from seeded_config import seeded_config
+
+from thyca.app.chat_app import ChatApp
+from thyca.bots.card import BotCard
+from thyca.configs import load, save
+from thyca.core.protocol import Message
+from thyca.memories.facade import MemoryFacade
 from thyca.serve import default_webui, make_server
 
 WEBUI = default_webui()
@@ -23,9 +28,7 @@ def _chat(tmp_path: Path) -> ChatApp:
 
 
 def _serve(app: ChatApp, tmp_path: Path):
-    import threading
 
-    from thyca.memories.facade import MemoryFacade
 
     httpd = make_server(host="127.0.0.1", port=0, webui=WEBUI,
                         facade=MemoryFacade(tmp_path), chat=app)
@@ -51,7 +54,6 @@ def _post(httpd, path: str, payload: dict) -> dict:
 
 
 def test_contract_bots_endpoints(tmp_path: Path) -> None:
-    from thyca.bots.card import BotCard
 
     app = _chat(tmp_path)
     httpd = _serve(app, tmp_path)
@@ -59,12 +61,10 @@ def test_contract_bots_endpoints(tmp_path: Path) -> None:
         bots = _get(httpd, "/api/bots")
         assert isinstance(bots["bots"], list)
         assert bots["bots"][0]["id"] == "thyca"
-        # The fixed DM door: GET /api/bots/<bot>/dm, typed identity out.
         dm = _get(httpd, "/api/bots/thyca/dm")
         assert dm["kind"] == "dm" and dm["bot_id"] == "thyca"
         assert dm["bots"] == ["thyca"]
         assert "id" not in dm and "conversation_id" not in dm
-        # Conversation list payloads carry kind + typed identity + bots.
         app._bots.create(BotCard(bot_id="coder", name="coder", role="C",
                                  description="D", persona="P"))
         _post(httpd, "/api/groups", {"bots": ["thyca", "coder"]})
@@ -79,7 +79,6 @@ def test_contract_bots_endpoints(tmp_path: Path) -> None:
 
 
 def test_contract_group_bots_add_remove(tmp_path: Path) -> None:
-    from thyca.bots.card import BotCard
 
     app = _chat(tmp_path)
     httpd = _serve(app, tmp_path)
@@ -101,7 +100,6 @@ def test_contract_group_bots_add_remove(tmp_path: Path) -> None:
 
 
 def test_contract_message_meta_keys(tmp_path: Path) -> None:
-    from thyca.core.protocol import Message
 
     row = Message(role="assistant", content="hi",
                   meta={"bot_id": "coder", "kind": "message",

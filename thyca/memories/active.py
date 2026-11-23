@@ -7,10 +7,10 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from thyca.configs import DEFAULT_LIMITS_HOT_TAIL_KB, DEFAULT_TIMELINE_TIMEZONE
+from thyca.llms.prompt_manager import PromptManager
 from thyca.memories.heading import (
     HeadingMeta,
     day,
@@ -21,23 +21,17 @@ from thyca.memories.heading import (
     strip_comment,
     strip_heading_comments,
 )
-
-if TYPE_CHECKING:
-    from thyca.skills import SkillStore
+from thyca.memories.visibility import current_memory_view
+from thyca.skills import SkillStore
 
 _FENCE_RE = re.compile(r"^```", re.MULTILINE)
 
 
 def _packaged(name: str, fallback: str) -> str:
-    # PromptManager.template is the sole prompt loader; Active keeps only
-    # the missing-file fallback. Local import: llm.prompt_manager imports
-    # this module for ActiveSnapshot, so a top-level import would cycle.
-    from thyca.llms.prompt_manager import PromptManager
 
     try:
         return PromptManager().template(name)
     except FileNotFoundError:
-        # Missing file only: corruption/permission bugs must stay loud.
         return fallback
 
 
@@ -65,36 +59,17 @@ class ActiveSnapshot:
     user: str
     today: str
     identity: str = ""
-    # Phase 1E: this bot's own USER.md (bot-inferred profile, lower
-    # confidence than the shared USER.md). Empty unless wired per turn.
     bot_user: str = ""
     skills: str = ""
     today_elsewhere: str = ""
-    # Team roster (BE-1/BE-2, slimmed by CBE-2): "name — role" lines of
-    # every bot, injected for bot turns so bots know whom to call. Empty
-    # for the default single-user prompt (zero behavior change).
     team: str = ""
-    # Open-task index (CBE-4): compact "task · status · room" lines the
-    # bot runtime derives per turn. Empty outside bot turns.
     tasks: str = ""
-    # Open memory-task catalog (phase 1C): "task_id: title · last active
-    # day · bots" lines from facade.tasks(status="open"). A different
-    # concept from runtime open tasks above — never merged.
     memory_tasks: str = ""
-    # Post-compaction memory hits (CBE-4): bounded lines re-injected on
-    # the first turn after a compaction. Empty otherwise.
     recalled: str = ""
-    # Unread public room history for this turn (canonical-only bot
-    # turns): ephemeral wire input, never persisted. Empty unless wired
-    # per turn — the registry cursor tracks what was delivered.
     room_history: str = ""
-    # Ephemeral per-turn context budget signal computed by AgentLoop
-    # (used/context state/checkpoint freshness). Empty unless wired.
     context_budget: str = ""
     channel_brief: str = ""
-    # WS-4: private-followup index line (DM full ref; group waiting only).
     private_followup: str = ""
-    # Failed MCP startup diagnostics formatted for prompt visibility (empty when healthy).
     mcp_status: str = ""
 
 
@@ -116,7 +91,6 @@ class ActiveMemory:
         if skills_store is not None:
             self._skills = skills_store
         else:
-            from thyca.skills import SkillStore
 
             self._skills = SkillStore(self.thyca_dir)
 
@@ -161,8 +135,6 @@ class ActiveMemory:
             if self.on_day_close is not None:
                 self.on_day_close(closed)
         elif not state.today_path.exists():
-            # A today file deleted mid-day comes back instead of silently
-            # reading as "" until rollover.
             self._secure_dir(self.memory_dir)
             self._create_if_missing(state.today_path, f"# {today}\n")
         return self._snapshot(
@@ -197,9 +169,6 @@ class ActiveMemory:
                 self._read(today_path), tail_kb=tail_kb
             ), ""
         else:
-            # Grouping needs the raw metadata comments; strip them from the
-            # injected same-session text afterwards, like the legacy path.
-            from thyca.memories.visibility import current_memory_view
 
             view = current_memory_view()
             here_raw, elsewhere_text = split_today_by_session(
@@ -218,10 +187,6 @@ class ActiveMemory:
             )
         return ActiveSnapshot(
             soul=self._read(self.thyca_dir / "SOUL.md"),
-            # Twin identity at the source (phase 1D): only privileged
-            # readers (None = user, "thyca") receive Thyca's IDENTITY.md.
-            # A child bot's snapshot carries no identity here; the bot
-            # runtime sets its own <identity> from its TWIN.md instead.
             identity=(
                 self._read(self.thyca_dir / "IDENTITY.md")
                 if reader is None or reader == "thyca"
@@ -345,12 +310,8 @@ def split_today_by_session(
         if first_start is None:
             first_start = start
         if not visible_to(meta.bots, reader):
-            # Another bot's private entry: hidden entirely, not even as an
-            # index line (master §4 hot-prompt rule).
             continue
         if origin_ok is not None and not origin_ok(meta.chat):
-            # Origin window not readable in this turn's view (WS-3):
-            # hidden entirely, like the owner rule above.
             continue
         if meta.chat == chat_id:
             here.append(_here_block(lines, start, end, day_str, entry_id, meta))
@@ -414,7 +375,6 @@ def tail_text(text: str, budget_bytes: int) -> str:
     if cut == 0:
         return text
     result = text[cut:]
-    # One small encode: result is ~budget-sized, hidden may be huge.
     hidden = len(raw) - len(result.encode("utf-8"))
     if hidden <= 0:
         return result

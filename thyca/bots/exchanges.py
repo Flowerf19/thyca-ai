@@ -149,8 +149,9 @@ def pair_thread(bot_a: str, bot_b: str, rooms: list[list[Any]]) -> list[dict[str
     wanted = {bot_a, bot_b}
     out: list[dict[str, Any]] = []
     for messages in rooms:
-        for row in exchange_rows(messages):
-            if {row["sender"], row["partner"]} == wanted:
-                out.append(row)
+        out.extend(
+            row for row in exchange_rows(messages)
+            if {row["sender"], row["partner"]} == wanted
+        )
     out.sort(key=lambda r: (r["ts"], r["span_id"]))
     return out

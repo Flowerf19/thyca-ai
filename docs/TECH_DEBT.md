@@ -258,10 +258,7 @@ Mỗi mục có đủ bốn phần: **mô tả**, **tác động**, **quyết đ
 
 ## 11. Thiếu ảnh chụp các màn ngoài Trò chuyện
 
-- **Mô tả:** `docs/images` hiện chỉ giữ `webui-chat.png`. Các ảnh chụp màn
-  Nhật ký/Hồ sơ/Provider/Sử dụng/Cài đặt đã bị gỡ vì chúng còn hiện UI giọt
-  mực cũ, trong khi mã hiện tại đã dùng avatar huy chương (medallion).
-- **Tác động:** Tài liệu thiếu hình minh họa cho các màn ngoài Trò chuyện.
-- **Quyết định/hướng xử lý:** Chụp lại khi UI được kiểm chứng bằng mắt lần
-  tới. Tới lúc đó, mục ảnh chụp trong README chỉ giữ màn Trò chuyện.
-- **Trạng thái:** Mở.
+- **Mô tả:** `docs/images` trước đây chỉ giữ ảnh màn Trò chuyện và Cài đặt; các màn Nhật ký, Hồ sơ, Provider, Sử dụng chưa có ảnh chụp khớp UI huy chương và typography mới.
+- **Tác động:** Tài liệu thiếu hình minh họa cho đủ 6 màn WebUI.
+- **Quyết định/hướng xử lý:** Chụp lại đủ 6 màn hình bằng headless Chrome trên bản snapshot dữ liệu thật (1440×900), kiểm tra bằng mắt không lộ API key/bí mật, và cập nhật vào `README.md`.
+- **Trạng thái:** Đã đóng (2026-11-23): đã chụp và kiểm tra đủ 6 ảnh (`webui-chat-readme.png`, `webui-memories-readme.png`, `webui-profile-readme.png`, `webui-provider-readme.png`, `webui-usage-readme.png`, `webui-settings-readme.png`) dưới `docs/images/` và nhúng vào `README.md`.

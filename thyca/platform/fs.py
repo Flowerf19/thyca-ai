@@ -124,9 +124,6 @@ def _read_trusted_symlink(
     *,
     allowed_uids: tuple[int, ...],
 ) -> str:
-    # Allow traversing system/user ancestor symlinks (e.g. /home -> var/home on
-    # Fedora Atomic/Bazzite or /tmp -> private/tmp on macOS) only when owned by
-    # root, the current user, or the unmapped overflow UID 65534.
     if path_info.st_uid not in allowed_uids:
         raise TrustedParentError(f"untrusted ancestor symlink owner: {part}")
     try:

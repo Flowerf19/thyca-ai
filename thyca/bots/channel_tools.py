@@ -15,7 +15,7 @@ from thyca.bots.private_followups import (
     PrivateFollowupError,
     PrivateFollowupStore,
 )
-from thyca.core.channel import WORK_REF_RE
+from thyca.core.channel import WORK_REF_RE, ChannelAction
 from thyca.tools.registry import ToolRegistry, ToolSpec
 
 GROUP_WAITING_STATUS = "Đang chờ thông tin riêng."
@@ -140,7 +140,6 @@ def _ask_private_spec(deps) -> ToolSpec:
                    "pfq_marker": idem or pending.pending_id}
         try:
             if deps.channel_actions is not None:
-                from thyca.core.channel import ChannelAction
                 posted = deps.channel_actions.dispatch(
                     ChannelAction(
                         kind="ask_private", target_window=dm_id,

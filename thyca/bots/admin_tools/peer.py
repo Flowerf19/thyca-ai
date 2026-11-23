@@ -5,13 +5,12 @@ import json
 
 from thyca.bots.context import current_bot_turn_context
 from thyca.memories.identity import current_bot_id
+from thyca.memories.visibility import current_memory_view as _peer_view
 from thyca.tools.registry import ToolSpec
 
 from .deps import AdminDeps, _deny_child
 
 
-# A send issued inside a private turn carries the chain mark before
-# enqueue/lease so every later drain honors it, even under races.
 async def _send_and_deliver(
     deps: AdminDeps,
     *,
@@ -34,7 +33,6 @@ async def _send_and_deliver(
     ctx = current_bot_turn_context()
     conversation_id = room or (ctx.room_id if ctx is not None else "")
     try:
-        from thyca.memories.visibility import current_memory_view as _peer_view
         _peer_view0 = _peer_view()
     except Exception:
         _peer_view0 = None
@@ -43,14 +41,6 @@ async def _send_and_deliver(
         and isinstance(getattr(_peer_view0, "denied_origins", None), frozenset)
         and len(_peer_view0.denied_origins) > 0
     )
-    # Classify an initial outsider request at send time, before enqueue:
-    # a group send to a non-participant is private even when the caller
-    # itself is not private. DM delivery keeps owner-pair behavior, and
-    # an unreadable roster fails closed to private.
-    # Fail closed before enqueue: when the room kind or the roster
-    # cannot be established, never treat the unknown as a DM or a member.
-    # The envelope is marked private instead of rejected so the asking
-    # turn still receives the recipient's reply.
     if not _chain:
         try:
             _send_room = room or (ctx.room_id if ctx is not None else "")
@@ -68,8 +58,6 @@ async def _send_and_deliver(
                 if _dm_known and _send_dm is not None:
                     pass
                 elif not _dm_known:
-                    # Kind unprovable (missing or raising resolver): never
-                    # treat the unknown as a DM or classify by roster.
                     _chain = True
                 elif getattr(deps, "room_bots", None) is not None:
                     try:
@@ -78,8 +66,6 @@ async def _send_and_deliver(
                         _send_members = None
                     _chain = _send_members is None or recipient not in _send_members
                 else:
-                    # Verified group but no roster resolver: membership
-                    # is unprovable, so fail closed to private.
                     _chain = True
         except Exception:
             _chain = True
@@ -111,8 +97,6 @@ async def _send_and_deliver(
 
 def _send_spec(deps: AdminDeps) -> ToolSpec:
     async def handler(args: dict) -> str:
-        # Sender identity comes only from the in-flight turn context /
-        # bot ContextVar — never from arguments (there is no sender arg).
         ctx = current_bot_turn_context()
         sender = ctx.sender_id if ctx is not None else current_bot_id()
         if sender is None:
@@ -141,7 +125,6 @@ def _send_spec(deps: AdminDeps) -> ToolSpec:
         except Exception as exc:
             return f"bot_send failed: {exc}"
 
-    # Describe the send tool: member replies group in the room, outsiders run privately.
     return ToolSpec(
         name="bot_send",
         description=(
@@ -170,20 +153,12 @@ def _send_spec(deps: AdminDeps) -> ToolSpec:
             "additionalProperties": False,
         },
         handler=handler,
-        # parallel_safe: no gateway resource lock is held across the
-        # nested recipient turn, so multi-hop bot->bot cannot deadlock
-        # on the send tool's own lock.
         parallel_safe=True,
     )
 
 
 def _fetch_spec(deps: AdminDeps) -> ToolSpec:
     async def handler(args: dict) -> str:
-        # Authorization (context review): the caller — from the in-flight
-        # turn context / bot ContextVar, never from arguments — must be
-        # the envelope's sender or recipient (recorded at Bus.send).
-        # Anyone else gets an honest denial with no content, exactly as
-        # if they had guessed a span id belonging to another pair.
         ctx = current_bot_turn_context()
         caller = ctx.sender_id if ctx is not None else current_bot_id()
         if caller is None:
@@ -206,7 +181,7 @@ def _fetch_spec(deps: AdminDeps) -> ToolSpec:
                 ensure_ascii=False,
             )
         body = deps.runtime.fetch_artifact(span_id, caller=caller)
-        if body is None:  # evicted between the two lookups
+        if body is None:
             return json.dumps(
                 {"ok": False, "span_id": span_id,
                  "error": "artifact not found (unknown or evicted)"},
@@ -238,14 +213,6 @@ def _fetch_spec(deps: AdminDeps) -> ToolSpec:
 
 
 def _explicit_group_target_ok(deps: AdminDeps, sender: str | None, room: str) -> str | None:
-    # Validate an explicit group destination before enqueue: exact stored
-    # destination, readiness, and trusted sender membership. Fail closed
-    # without guessing kind from the identifier or from a None DM lookup
-    # (the resolver returns None for unknown destinations too). DM
-    # destinations keep the existing private/nonpublication behavior and
-    # return None here; unknown or nonmember group destinations return a
-    # denial string. Ordinary sends without an explicit room keep their
-    # current private fallback and never reach this gate.
     if not room:
         return None
     try:
@@ -284,7 +251,6 @@ def _delegate_spec(deps: AdminDeps) -> ToolSpec:
             return f"bot_delegate failed: {exc}"
         room = args.get("room") if isinstance(args.get("room"), str) else ""
         ctx = current_bot_turn_context()
-        # Trusted sender identity only; never fabricate Thyca when missing.
         if ctx is not None and getattr(ctx, "sender_id", None):
             sender = ctx.sender_id
         else:
@@ -304,7 +270,6 @@ def _delegate_spec(deps: AdminDeps) -> ToolSpec:
         except Exception as exc:
             return f"bot_delegate failed: {exc}"
 
-    # Describe delegation: member results group in the room, private chains stay private.
     return ToolSpec(
         name="bot_delegate",
         description=(
@@ -326,6 +291,5 @@ def _delegate_spec(deps: AdminDeps) -> ToolSpec:
             "additionalProperties": False,
         },
         handler=handler,
-        # No gateway lock held across the nested recipient turn.
         parallel_safe=True,
     )

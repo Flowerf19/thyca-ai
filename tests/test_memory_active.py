@@ -8,8 +8,12 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+from thyca.llms import prompt_manager as pm
 from thyca.llms.prompt_manager import PromptManager
-from thyca.memories import ActiveMemory, tail_text
+from thyca.memories import ELSEWHERE_MAX_LINES, ActiveMemory, tail_text
+from thyca.memories.active import _packaged
+from thyca.memories.facade import MemoryFacade
+from thyca.memories.heading import is_session_heading, parse_heading
 
 TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 
@@ -213,14 +217,7 @@ def test_refresh_strips_heading_comment(tmp_path: Path) -> None:
     assert snap.today.startswith("## 10:00 — cafe")
 
 
-# Moved from test_b4_unification.py / test_b4_p2.py (B4 batch).
-import pytest
-from pathlib import Path
-
 def test_x16_active_loads_prompts_via_template(tmp_path: Path) -> None:
-    from thyca.llms.prompt_manager import PromptManager
-    from thyca.memories.active import ActiveMemory, _packaged
-
     ActiveMemory(tmp_path).ensure_files()
     assert (tmp_path / "SOUL.md").read_text(encoding="utf-8") == PromptManager().template(
         "soul"
@@ -229,8 +226,6 @@ def test_x16_active_loads_prompts_via_template(tmp_path: Path) -> None:
 
 
 def test_x16_active_keeps_missing_file_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
-    from thyca.llms import prompt_manager as pm
-    from thyca.memories.active import _packaged
 
     def boom(self, name: str) -> str:
         raise FileNotFoundError(name)
@@ -240,10 +235,6 @@ def test_x16_active_keeps_missing_file_fallback(monkeypatch: pytest.MonkeyPatch)
 
 
 def test_m5_refresh_recreates_deleted_today(tmp_path: Path) -> None:
-    from datetime import datetime
-
-    from thyca.memories.active import ActiveMemory
-
     memory = ActiveMemory(tmp_path)
     now = datetime(2026, 8, 17, 12, 0)
     state = memory.open_session(now)
@@ -275,12 +266,11 @@ def test_split_today_groups_by_session(tmp_path: Path) -> None:
     snap = memory.refresh(state, at("2026-09-28"), conversation_id="SID-HERE")
     assert "body OWN detail" in snap.today
     assert "body FOREIGN detail" not in snap.today
-    assert "thyca {" not in snap.today  # metadata comments stripped, like legacy
+    assert "thyca {" not in snap.today
     assert snap.today_elsewhere == "- 15:04 — foreign-note [2026-09-28#bbbb2222]"
 
 
 def test_split_today_own_headings_carry_pullable_ids(tmp_path: Path) -> None:
-    from thyca.memories.facade import MemoryFacade
 
     memory = _seed_today(
         tmp_path,
@@ -292,13 +282,11 @@ def test_split_today_own_headings_carry_pullable_ids(tmp_path: Path) -> None:
     snap = memory.refresh(state, at("2026-09-28"), conversation_id="SID-HERE")
     assert "## 13:54 — own-note [2026-09-28#aaaa1111]" in snap.today
     assert "thyca {" not in snap.today
-    # The visible id resolves through the write-back tools.
     facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
     assert "OWN detail" in facade.get(memory_id="2026-09-28#aaaa1111")
 
 
 def test_split_today_index_ids_are_pullable(tmp_path: Path) -> None:
-    from thyca.memories.facade import MemoryFacade
 
     memory = _seed_today(
         tmp_path,
@@ -310,7 +298,7 @@ def test_split_today_index_ids_are_pullable(tmp_path: Path) -> None:
     )
     state = memory.open_session(at("2026-09-28"))
     snap = memory.refresh(state, at("2026-09-28"), conversation_id="SID-HERE")
-    assert snap.today == "# 2026-09-28\n"  # day title has no owner, stays in here
+    assert snap.today == "# 2026-09-28\n"
     facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
     lines = snap.today_elsewhere.splitlines()
     assert len(lines) == 2
@@ -337,7 +325,6 @@ def test_refresh_without_session_keeps_legacy_full_tail(tmp_path: Path) -> None:
 
 
 def test_split_today_index_caps_at_25_lines(tmp_path: Path) -> None:
-    from thyca.memories import ELSEWHERE_MAX_LINES
 
     assert ELSEWHERE_MAX_LINES == 25
     blocks = "".join(
@@ -348,15 +335,14 @@ def test_split_today_index_caps_at_25_lines(tmp_path: Path) -> None:
     state = memory.open_session(at("2026-09-28"))
     snap = memory.refresh(state, at("2026-09-28"), conversation_id="SID-HERE")
     lines = snap.today_elsewhere.splitlines()
-    assert len(lines) == 26  # 25 index lines + honesty marker
-    assert "note-29" in lines[-2]  # newest kept
+    assert len(lines) == 26
+    assert "note-29" in lines[-2]
     assert lines[-1] == "[... 5 older lines omitted ...]"
-    assert "note-00" not in snap.today_elsewhere  # oldest dropped
+    assert "note-00" not in snap.today_elsewhere
 
 
 def test_split_duplicate_legacy_titles_resolve_to_own_bodies(tmp_path: Path) -> None:
     """Occurrence counting stays global across the here/index partition."""
-    from thyca.memories.facade import MemoryFacade
 
     memory = _seed_today(
         tmp_path,
@@ -382,10 +368,9 @@ def test_split_duplicate_legacy_titles_resolve_to_own_bodies(tmp_path: Path) -> 
 
 
 def test_t7_tail_marker_reports_hidden_bytes_and_skips_when_whole() -> None:
-    from thyca.memories.heading import is_session_heading, parse_heading
 
     whole = "## 10:00 — a\n- short\n"
-    assert tail_text(whole, 1024) == whole  # no cut, no marker
+    assert tail_text(whole, 1024) == whole
     big = "## 10:00 — old\n- old body\n## 11:00 — new\n" + ("x" * 2000) + "\n- keep\n"
     out = tail_text(big, 64)
     marker, _, body = out.partition("\n")
@@ -397,7 +382,6 @@ def test_t7_tail_marker_reports_hidden_bytes_and_skips_when_whole() -> None:
 
 
 def test_t7_elsewhere_marker_only_when_capped(tmp_path: Path) -> None:
-    from thyca.memories.heading import is_session_heading
 
     def seed(n: int) -> str:
         blocks = "".join(
@@ -458,8 +442,6 @@ def test_t7_session_path_without_headings_keeps_whole_file(tmp_path: Path) -> No
     assert snap.today_elsewhere == ""
 
 
-# --- Phase 1D: twin identity hardened at the source --------------------------
-
 IDENTITY_MARKER = "THYCA-IDENTITY-MARKER-1D"
 
 
@@ -477,7 +459,6 @@ def test_snapshot_child_reader_carries_no_thyca_identity(tmp_path: Path) -> None
     hot = memory.refresh(state, at("2026-09-01"), reader="coder")
     assert hot.identity == ""
     assert IDENTITY_MARKER not in PromptManager().build(hot)
-    # Peek follows the same rule (same _snapshot path).
     assert memory.peek(state, at("2026-09-01"), reader="coder").identity == ""
 
 

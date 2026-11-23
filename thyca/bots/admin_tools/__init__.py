@@ -39,7 +39,6 @@ from .messaging import (
 )
 from .peer import _delegate_spec, _fetch_spec, _send_spec
 
-
 ADMIN_TOOL_NAMES = (
     "bot_create",
     "bot_pause",
@@ -50,7 +49,6 @@ ADMIN_TOOL_NAMES = (
     "bot_stop",
     "group_delete",
 )
-
 
 
 def register_admin_tools(registry: ToolRegistry, deps: AdminDeps) -> None:
@@ -74,8 +72,6 @@ def register_admin_tools(registry: ToolRegistry, deps: AdminDeps) -> None:
             registry.register(spec)
 
 
-#: ``bot_*`` names a child bot may hold: peer send/fetch (CBE-3).
-# ``task_open`` has no ``bot_`` prefix and passes the check naturally.
 CHILD_BOT_TOOLS = frozenset({"bot_send", "bot_fetch"})
 
 
@@ -100,8 +96,8 @@ def visible_for_bot(schemas: list[dict] | None, bot_id: str | None) -> list[dict
 
 __all__ = [
     "ADMIN_TOOL_NAMES",
-    "AdminDeps",
     "CHILD_BOT_TOOLS",
+    "AdminDeps",
     "apply_card_edit",
     "register_admin_tools",
     "visible_for_bot",

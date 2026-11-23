@@ -7,8 +7,15 @@ cannot drift.
 """
 from __future__ import annotations
 
+from thyca.conversations.runtime import (
+    ConversationBusy,
+    ConversationCorrupt,
+    ConversationError,
+    ConversationNotFound,
+    NoLiveResponder,
+)
+from thyca.conversations.store.contracts import ConversationStoreError
 from thyca.llms.llm_base import LLMError
-from thyca.conversations.runtime import NoLiveResponder, ConversationBusy, ConversationCorrupt, ConversationError, ConversationNotFound
 
 
 def _with_json(handler, fn, *, error: str = "invalid body"):
@@ -26,16 +33,12 @@ def _with_json(handler, fn, *, error: str = "invalid body"):
 
 def parse_turn_body(payload: dict) -> tuple[str, str | None, str | None, bool]:
     """Shared by /turn and /turn/stream. Extra keys ignored."""
-    # Local import: thyca.app.chat_app imports thyca.serve.turn_state, so a
-    # top-level import here would cycle (M7-TASK-013).
-    from thyca.app.turn_options import _clean_turn_text, validate_turn_options
+    from thyca.app.turn_options import _clean_turn_text, validate_turn_options  # noqa: PLC0415 -- reason: serve/ lazy app import boundary
 
     model, effort, retry = validate_turn_options(payload)
     if retry:
         text = payload.get("text")
         return text if isinstance(text, str) else "", model, effort, True
-    # Empty/over-long text 400s here now instead of in ChatApp.turn; the HTTP
-    # shape is identical (400 invalid text + reason either way).
     return _clean_turn_text(payload.get("text"), retry=False), model, effort, False
 
 
@@ -47,8 +50,7 @@ def public_turn_error(exc: Exception) -> tuple[int, str, str]:
     map to the constant ``chat unavailable``; :class:`LLMError` keeps its
     provider-redacted/capped text.
     """
-    # Local import: same cycle as parse_turn_body (M7-TASK-013).
-    from thyca.app.chat_app import InvalidTurnOption, InvalidTurnText, TurnCancelled
+    from thyca.app.chat_app import InvalidTurnOption, InvalidTurnText, TurnCancelled  # noqa: PLC0415 -- reason: serve/ lazy app import boundary
 
     if isinstance(exc, InvalidTurnOption):
         message = str(exc)
@@ -56,11 +58,8 @@ def public_turn_error(exc: Exception) -> tuple[int, str, str]:
     if isinstance(exc, TurnCancelled):
         return 200, "cancelled", "cancelled"
     if isinstance(exc, InvalidTurnText):
-        # Known client error: 400 with the reason (empty/too long/invalid).
         return 400, "invalid_text", f"invalid text: {exc}"
     if isinstance(exc, ValueError):
-        # Unexpected ValueError is a bug, never a client error: 500. The
-        # caller logs the public line; the message stays constant.
         return 500, "internal_error", "chat unavailable"
     if isinstance(exc, NoLiveResponder):
         return 409, "no_live_participant", "conversation has no live participant"
@@ -72,16 +71,8 @@ def public_turn_error(exc: Exception) -> tuple[int, str, str]:
         return 503, "session_unreadable", "conversation unreadable"
     if isinstance(exc, ConversationError):
         return 503, "conversation_unavailable", "conversation unavailable"
-    # Local import: keeps serve free of a hard store dependency at module
-    # load (store.read_adapter imports serve.trace, so a top-level import
-    # here would harden that edge). Mapping stays additive: existing
-    # 400/404/409/503 triples are untouched.
-    from thyca.conversations.store.contracts import ConversationStoreError
 
     if isinstance(exc, ConversationStoreError):
-        # Conversation store failures stay on the same HTTP contract:
-        # a missing door reads as 404, any other store failure as 503.
-        # Messages stay constant (no ref/id leak).
         if getattr(exc, "scope", "global") == "local":
             return 404, "conversation_not_found", "conversation not found"
         return 503, "conversation_unavailable", "conversation unavailable"

@@ -114,11 +114,6 @@ def test_ui_classic_scripts_parse() -> None:
     assert result.stdout == "markdown-module-ok"
 
 
-# ---------------------------------------------------------------------------
-# Minimal DOM harness for the page scripts: elements auto-vivify per selector
-# and innerHTML stays a plain string the tests can read back.
-# ---------------------------------------------------------------------------
-
 _HARNESS = r"""
 import fs from 'node:fs';
 function makeEl(tag = 'div') {
@@ -237,10 +232,6 @@ def _run_page(page_js: Path, ret: str, scenario: str, setup: str = "") -> dict:
     return json.loads(result.stdout)
 
 
-# ---------------------------------------------------------------------------
-# Dashboard page
-# ---------------------------------------------------------------------------
-
 _DASH_SETUP = r"""
 const STATS = {
   totals: { requests: 12, tool_calls: 3, prompt_tokens: 1000, cached_tokens: 100,
@@ -318,15 +309,13 @@ def test_dashboard_renders_stats_models_and_paged_rows() -> None:
     out = _run_page(DASH_JS, _DASH_RET, _DASH_SCENARIO, _DASH_SETUP)
 
     assert "stat-value" in out["statGrid"]
-    assert "$1.23" in out["statGrid"]          # fmtCost(1.2345)
+    assert "$1.23" in out["statGrid"]
 
-    # by_model ranks by total_tokens desc; unpriced model keeps '—'.
     assert out["rowsModel"].index("big-model") < out["rowsModel"].index("mid-model")
     assert out["rowsModel"].index("mid-model") < out["rowsModel"].index("cheap-model")
     assert "—" in out["rowsModel"]
     assert "$1.50" in out["rowsModel"]
 
-    # by_bot resolves roster names; missing bots keep the raw id in a chip.
     assert "Coder" in out["rowsBot"]
     assert "ghost" in out["rowsBot"]
     assert "id-chip" in out["rowsBot"]
@@ -338,12 +327,10 @@ def test_dashboard_renders_stats_models_and_paged_rows() -> None:
     assert "Tất cả model" in out["filterModel"]
     assert "big-model" in out["filterModel"]
 
-    # Usage owns flat turn rows; detail is fetched only after selection.
     assert 'class="tl-turn"' in out["traceRows"]
     assert 'data-conv="dm:coder" data-turn="2"' in out["traceRows"]
     assert 'class="tl-conversation"' not in out["traceRows"]
 
-    # Paged loading: stats + first trace page requested on boot.
     stats_url = next(u for u in out["gets"] if u.startswith("/api/traces/stats"))
     assert "from=" in stats_url and "to=" in stats_url
     traces_url = next(u for u in out["gets"] if u.startswith("/api/traces?"))
@@ -360,12 +347,10 @@ def test_dashboard_page_structure() -> None:
 
     assert 'src="../dashboard/js/dashboard.js"' in entry
 
-    # Range controls: manual dates + Hôm nay/7 ngày/30 ngày presets.
     for marker in ('id="range-from"', 'id="range-to"', 'id="range-apply"',
                    'data-preset="1"', 'data-preset="7"', 'data-preset="30"'):
         assert marker in js, marker
 
-    # Usage toggles token/request measures; Cost has its own chart and view.
     assert "let dayMetric = 'tokens'" in js
     assert 'data-day-metric="requests"' in js
     assert 'data-day-metric="tokens"' in js
@@ -374,13 +359,11 @@ def test_dashboard_page_structure() -> None:
     assert "dc-col" in js and "dc-bar" in js
     assert ".day-chart" in css and ".dc-bar" in css
 
-    # Ranked row surfaces: share meter for bots, cost column for models.
     for marker in ('id="rows-bot"', 'id="rows-model"', "share-bar", "model-cost"):
         assert marker in js, marker
     assert re_block(css, ".bot-row", "display:grid", "align-items:center")
     assert ".share-bar" in css and ".model-cost" in css
 
-    # Flat turn list keeps model/status filters and bounded paging.
     assert 'id="filter-model"' in js and 'id="filter-status"' in js
     assert "q.set('offset', offset)" in js
     assert "const offset = reset ? 0 : (offsetOverride ?? traceState.rows.length)" in js
@@ -392,10 +375,6 @@ def re_block(css: str, selector: str, *needles: str) -> bool:
     match = re.search(re.escape(selector) + r"\s*\{([^}]*)\}", css)
     return bool(match) and all(n in match.group(1) for n in needles)
 
-
-# ---------------------------------------------------------------------------
-# Trace page
-# ---------------------------------------------------------------------------
 
 _TRACE_SETUP = r"""
 const TRACES = { traces: [
@@ -464,8 +443,6 @@ def test_trace_page_structure() -> None:
     assert 'src="../trace/js/trace.js"' in entry
     assert '<script type="module" src="../share/markdown.js">' in entry
 
-    # No standalone Trace document anymore; this source is only the
-    # load-once renderer used by the Dashboard controller.
     assert "window.ThycaTraceDetail" in js and "render(detail)" in js
     assert "ThycaRouter.register" not in js and "getJson(" not in js
     assert "window.formatMarkdown(text)" in js
@@ -474,7 +451,6 @@ def test_trace_page_structure() -> None:
     dashboard_css = DASH_CSS.read_text(encoding="utf-8")
     assert ".dashboard-shell .tl-detail-head" in dashboard_css
 
-    # Bubbles and bylines mirror chat's message furniture.
     for sel, needles in (
         (".dashboard-shell .tl-user", ("border-radius:14px 14px 3px 14px", "background:#eee6d56b")),
         (".message-user", ("border-radius:14px 14px 3px 14px", "background:#eee6d56b")),
@@ -488,10 +464,6 @@ def test_trace_page_structure() -> None:
     assert "ui-monospace" in re.search(
         r"\.dashboard-shell \.tl-code\s*\{([^}]*)\}", dashboard_css).group(1)
 
-
-# ---------------------------------------------------------------------------
-# Memories page (leaf grouping lives where the old selectMemories stood)
-# ---------------------------------------------------------------------------
 
 _MEM_SETUP = r"""
 const STATS = {
@@ -543,22 +515,16 @@ def test_memories_groups_leaves_by_day_and_filters() -> None:
 
     html = out["leavesHtml"]
     assert html.count('class="mem-day"') == 2
-    # 21/9 group before 19/9; inside a day the API order is kept.
     day21, day19 = html.index("21/9/2026"), html.index("19/9/2026")
     assert day21 < day19
     assert html.index("Trang hai") < html.index("Trang ba") < day19
     for title in ("Trang một", "Trang hai", "Trang ba"):
         assert title in html
 
-    # Search narrows to the matching leaf, and the counter follows it.
     assert "Trang hai" in out["filteredHtml"]
     assert "Trang một" not in out["filteredHtml"]
     assert out["countAfter"] == "1/3 lá"
 
-
-# ---------------------------------------------------------------------------
-# Shared sidebar + navigation (replaces the chat conversation pager)
-# ---------------------------------------------------------------------------
 
 def test_shared_sidebar_renders_team_and_groups() -> None:
     """The shared sidebar lists the roster as bot cards on every page; the
@@ -572,16 +538,10 @@ def test_shared_sidebar_renders_team_and_groups() -> None:
 
     chat = (UI / "chat" / "index.html").read_text(encoding="utf-8")
 
-    # Roster cards render into the shell's sidebar markup, pinned-first
-    # via teamDisplayOrder (TASK B: star = pin to top, bots array untouched).
     assert 'id="team-bot-list"' in shell
     assert "sidebarEntries()" in sidebar
     assert "bot-card" in sidebar
 
-    # Group rows still render — shared shell now emits a chat-only group list
-    # so SPA chat↔other-page navigation can toggle it via CSS at any width
-    # (including the small-window drawer). Sidebar.js guards lookups and
-    # visibility is controlled by body[data-active-page] chat-only rule.
     assert 'id="group-list"' not in shell
     assert "groups.map(group=>" in sidebar
     assert "group-card" in sidebar
@@ -589,8 +549,6 @@ def test_shared_sidebar_renders_team_and_groups() -> None:
     assert 'id="team-shared-create"' not in chat
     assert "if(teamSharedCreate)" in sidebar
 
-    # Click delegation: bot select / group open go through the page's
-    # selectBot/loadConversation; defaults navigate into the chat page.
     assert "$('#team-bot-list').addEventListener('click'" in sidebar
     assert "[data-group]" in sidebar
     assert "selectBot(b.id)" in sidebar

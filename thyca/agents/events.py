@@ -36,8 +36,6 @@ _ALLOWED_FIELDS: dict[str, frozenset[str]] = {
 
 
 def _public_identifier(value: object, fallback: str) -> str:
-    # Sanitize, don't collapse: distinct provider ids must stay correlatable
-    # across started/finished pairs instead of all becoming "call"/"tool".
     if isinstance(value, str) and value:
         cleaned = re.sub(r"[^A-Za-z0-9_-]", "_", value)[:_IDENTIFIER_MAX]
         if cleaned:
@@ -67,7 +65,6 @@ class TurnEvent:
         for field_name in _FIELDS:
             value = getattr(self, field_name)
             if field_name == "bot_id":
-                # Attribution stamp, allowed on every event type.
                 object.__setattr__(self, "bot_id", _clean_bot_id(value))
                 continue
             if field_name not in allowed:
@@ -99,7 +96,6 @@ class TurnEvent:
                 if value is not None and (not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{32}", value) is None):
                     raise ValueError("invocation_id must be a 32-character lowercase hex token")
             elif field_name == "name":
-                # Provider text is untrusted; never forward raw identifiers.
                 object.__setattr__(self, "name", _public_identifier(value, _PUBLIC_NAME))
             elif field_name == "call_id":
                 object.__setattr__(self, "call_id", _public_identifier(value, _PUBLIC_CALL_ID))
@@ -127,7 +123,6 @@ def emit_event(sink: EventSink | None, event: TurnEvent) -> None:
     try:
         sink(event)
     except Exception:
-        # Telemetry must never break a turn; do not log (could leak).
         pass
 
 

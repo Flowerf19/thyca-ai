@@ -20,6 +20,9 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from test_serve_chat import FakeLLM, _chat
+
+from thyca.llms.llm_base import ChatReply
 
 ROOT = Path(__file__).resolve().parents[1]
 UI = ROOT / "thyca" / "webui" / "ui"
@@ -95,15 +98,12 @@ def test_drawer_context_meter_bands_and_width(meter: dict) -> None:
     assert meter["bands"]["0.83"]["width"] == "83%"
     assert meter["bands"]["0.96"]["cls"] == "ctx-bar ctx-danger"
     assert meter["bands"]["0.96"]["width"] == "96%"
-    # Ratio past 100% still caps the bar at full width.
     assert meter["bands"]["1.2"]["cls"] == "ctx-bar ctx-danger"
     assert meter["bands"]["1.2"]["width"] == "100%"
 
 
 def test_conversation_detail_carries_meta_for_meter(tmp_path: Path) -> None:
-    from test_serve_chat import FakeLLM, _chat
 
-    from thyca.llms.llm_base import ChatReply
 
     llm = FakeLLM(
         ChatReply(

@@ -11,8 +11,8 @@ from time import perf_counter
 
 from thyca.agents.compacting import SummaryOutcome
 from thyca.agents.think import LLMPort
-from thyca.core.protocol import Message
 from thyca.conversations.runtime.summary import propose_summary
+from thyca.core.protocol import Message
 
 
 class LlmSummarizer:

@@ -1,12 +1,17 @@
 """BE-4: Thyca memory sidecar job (extract → apply, idle decision)."""
 from __future__ import annotations
 
+import asyncio
+import json
+import json as _json
 from datetime import UTC, datetime
 from pathlib import Path
 
 from thyca.core.protocol import Message
 from thyca.memories import jobs
 from thyca.memories.facade import MemoryFacade
+from thyca.memories.heading import parse_heading
+from thyca.memories.heading import parse_heading as _parse
 
 
 def test_should_idle_sweep() -> None:
@@ -38,12 +43,10 @@ def test_apply_extracted_writes_private(tmp_path: Path) -> None:
     )
     assert len(out["written"]) == 1
     assert "proposed" not in out
-    # Written private, never team-direct (read the heading: today is unindexed).
     sid = out["written"][0]
     day = sid.split("#")[0]
     owners = None
     for line in (tmp_path / "memory" / f"{day}.md").read_text(encoding="utf-8").splitlines():
-        from thyca.memories.heading import parse_heading as _parse
 
         meta = _parse(line)
         if meta is not None and meta.entry_id == sid.split("#")[1]:
@@ -52,7 +55,6 @@ def test_apply_extracted_writes_private(tmp_path: Path) -> None:
 
 
 def test_apply_extracted_stamps_origin_chat(tmp_path: Path) -> None:
-    from thyca.memories.heading import parse_heading
 
     facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
     out = jobs.apply_extracted(
@@ -74,8 +76,6 @@ def test_apply_extracted_stamps_origin_chat(tmp_path: Path) -> None:
 
 
 def test_extract_from_transcript_uses_model_json(tmp_path: Path) -> None:
-    import asyncio
-    import json
 
     class Reply:
         def __init__(self, content: str) -> None:
@@ -96,7 +96,6 @@ def test_extract_from_transcript_uses_model_json(tmp_path: Path) -> None:
 
 
 def test_extract_failure_is_empty_not_loud() -> None:
-    import asyncio
 
     class BadConnect:
         async def chat(self, messages, tools=None):
@@ -127,15 +126,12 @@ def test_transcript_tail_treats_naming_as_ordinary_text() -> None:
     assert tail.count("[assistant") == 1
 
 
-# --- Phase 1C: task/habit linkage -------------------------------------------
-
 def _open_catalog():
     return [{"task_id": "task-aaaaaaaa", "title": "Fix sink",
              "latest_memory_id": "2026-09-01#deadbeef", "last_day": "2026-09-01"}]
 
 
 def test_parse_extraction_keeps_all_six_side_fields() -> None:
-    import json as _json
 
     items = jobs.parse_extraction(_json.dumps([{
         "topic": "t", "summary": "s", "task": "task-aaaaaaaa",
@@ -150,7 +146,6 @@ def test_parse_extraction_keeps_all_six_side_fields() -> None:
 
 
 def test_parse_extraction_sanitizes_side_fields_but_keeps_memory() -> None:
-    import json as _json
 
     items = jobs.parse_extraction(_json.dumps([
         {"topic": "t", "summary": "s", "task": "bogus",
@@ -171,8 +166,6 @@ def test_parse_extraction_sanitizes_side_fields_but_keeps_memory() -> None:
 
 
 def test_extract_prompt_lists_open_tasks() -> None:
-    import asyncio
-    import json as _json
 
     seen: list = []
 
@@ -190,7 +183,6 @@ def test_extract_prompt_lists_open_tasks() -> None:
 
 
 def test_extract_prompt_empty_catalog_block() -> None:
-    import asyncio
 
     seen: list = []
 
@@ -218,7 +210,6 @@ def test_apply_continues_open_task_with_latest_cont(tmp_path: Path) -> None:
                               task="task-aaaaaaaa")],
         open_tasks=catalog,
     )
-    from thyca.memories.heading import parse_heading as _parse
 
     assert out["written"] == [first]
     day = first.split("#")[0]
@@ -240,7 +231,6 @@ def test_apply_groups_new_task_titles_and_chains_cont(tmp_path: Path) -> None:
                               status="done")],
     )
     assert len(out["written"]) == 1
-    from thyca.memories.heading import parse_heading as _parse
 
     day = out["written"][0].split("#")[0]
     text = (tmp_path / "memory" / f"{day}.md").read_text(encoding="utf-8")
@@ -261,11 +251,10 @@ def test_apply_drops_task_outside_catalog_but_keeps_habit(tmp_path: Path) -> Non
                               kind="habit", habit="uong tra")],
         open_tasks=_open_catalog(),
     )
-    from thyca.memories.heading import parse_heading as _parse
 
     day = out["written"][0].split("#")[0]
-    meta = _parse(open(tmp_path / "memory" / f"{day}.md",
-                       encoding="utf-8").read().splitlines()[-2])
+    meta = _parse((tmp_path / "memory" / f"{day}.md").read_text(
+        encoding="utf-8").splitlines()[-2])
     assert meta is not None
     assert meta.task is None and meta.status is None and meta.cont is None
     assert (meta.kind, meta.habit) == ("habit", "uong tra")
@@ -283,13 +272,10 @@ def test_apply_done_status_and_habit_land_in_store(tmp_path: Path) -> None:
                               kind="habit", habit="review hang ngay")],
         open_tasks=catalog,
     )
-    # Today is unindexed by design: assert the heading on disk plus the
-    # live catalog (which merges today's file).
-    from thyca.memories.heading import parse_heading as _parse
 
     day = out["written"][0].split("#")[0]
-    meta = _parse(open(tmp_path / "memory" / f"{day}.md",
-                       encoding="utf-8").read().splitlines()[-2])
+    meta = _parse((tmp_path / "memory" / f"{day}.md").read_text(
+        encoding="utf-8").splitlines()[-2])
     assert meta is not None
     assert (meta.task, meta.status, meta.kind, meta.habit) == (
         "task-aaaaaaaa", "done", "habit", "review hang ngay")
@@ -298,8 +284,6 @@ def test_apply_done_status_and_habit_land_in_store(tmp_path: Path) -> None:
 
 
 def test_transcript_tail_treats_room_context_rows_as_ordinary_text() -> None:
-    # Canonical-only turns do not persist synthetic room_context rows; the
-    # transcript extractor no longer carries the old kind-based skip.
     tail = jobs.transcript_tail([
         Message(role="user", content="hi", ts="2026-10-16T10:00:00Z"),
         Message(role="user", content="Tin CÔNG KHAI", ts="2026-10-16T10:01:00Z",
@@ -311,7 +295,6 @@ def test_transcript_tail_treats_room_context_rows_as_ordinary_text() -> None:
 
 
 def test_extract_prompt_carries_today_notes_and_delta_rules() -> None:
-    import asyncio
 
     seen: list = []
 
@@ -348,7 +331,6 @@ def test_extract_prompt_carries_today_notes_and_delta_rules() -> None:
 
 
 def test_apply_extracted_dedupes_habits_and_groups_other_journal(tmp_path: Path) -> None:
-    from thyca.memories.heading import parse_heading as _parse
 
     facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
     out1 = jobs.apply_extracted(

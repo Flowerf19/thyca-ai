@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from thyca.core.protocol import ToolCall
 from thyca.skills.skill_event import (
     classify_skill_read,
     public_skill_name,
     skill_name_for_call,
 )
-from thyca.core.protocol import ToolCall
 
 
 def _root(tmp_path: Path) -> Path:
@@ -36,7 +36,6 @@ def test_read_outside_skills_root_returns_none(tmp_path: Path) -> None:
 
 
 def test_symlinked_thyca_dir_still_classifies(tmp_path: Path) -> None:
-    # A symlinked ~/.thyca must not silently downgrade skill reads to tool.*.
     real = _root(tmp_path / "real")
     link = tmp_path / "link"
     link.symlink_to(real.parent, target_is_directory=True)

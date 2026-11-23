@@ -12,17 +12,34 @@ from io import StringIO
 from pathlib import Path
 
 import pytest
+from seeded_config import seeded_config
 
+from thyca.agents.observe import Observe
+from thyca.app.a2a_delivery import A2ADeliveryDeps, A2ADeliveryService
+from thyca.app.bot_posting import BotPostingDeps, BotPostingService
+from thyca.app.cli import Cli
+from thyca.app.webui_channel import WebUIChannelAdapter, WebUIOutboundAdapter
+from thyca.bots.bus import Bus
+from thyca.bots.card import BotCard
+from thyca.bots.private_followups import PrivateFollowupStore
+from thyca.bots.registry import BotRegistry
+from thyca.bots.runtime import BotRuntime
+from thyca.configs import save
+from thyca.conversations.runtime import ConversationManager
 from thyca.conversations.store import (
     AdminStore,
     AgentStore,
     DMBootstrapIntent,
     RootInitializationIntent,
     RuntimeReadIntent,
+    assemble_history,
 )
+from thyca.conversations.store.runtime import ensure_runtime_store
+from thyca.core.channel import ChannelAction, WindowRef
 from thyca.core.conversation import ConversationRef
 from thyca.core.protocol import Message
-from thyca.conversations.runtime import ConversationManager
+from thyca.llms.llm_base import ChatReply
+from thyca.memories.visibility import MemoryView
 
 
 def _root_id(root: Path) -> str:
@@ -53,15 +70,12 @@ def switched(tmp_path: Path):
     yield tmp_path
 
 
-# Build a conversation manager over an initialized runtime root.
 def _manager(root: Path) -> ConversationManager:
-    from thyca.conversations.store.runtime import ensure_runtime_store
 
     ensure_runtime_store(root)
     return ConversationManager(root / 'sessions')
 
 
-# Create one group conversation with the given participants.
 def _group(manager: ConversationManager, bots: list[str]):
     conversation = manager.create()
     manager.store.append_bots(conversation.path, bots)
@@ -69,10 +83,7 @@ def _group(manager: ConversationManager, bots: list[str]):
 
 
 def _posting_service(root: Path, conversations, dm_id: str):
-    from thyca.app.bot_posting import BotPostingDeps, BotPostingService
-    from thyca.bots.card import BotCard
-    from thyca.bots.registry import BotRegistry
-    from seeded_config import seeded_config
+
 
     bots = BotRegistry(root)
     bots.create(BotCard(bot_id='coder', name='coder', role='Coder',
@@ -92,17 +103,12 @@ def _posting_service(root: Path, conversations, dm_id: str):
     ))
 
 
-
 def test_runtime_window_for_room_on_runtime_root(tmp_path: Path) -> None:
     """The real ``BotRuntime._window_for_room`` over runtime store conversations.
 
     Switch stays off: these are legacy reads, proving the consumer this
     phase inventories without changing it.
     """
-    from thyca.bots.bus import Bus
-    from thyca.bots.registry import BotRegistry
-    from thyca.bots.runtime import BotRuntime
-    from thyca.conversations.runtime import ConversationManager
 
     manager = _manager(tmp_path)
     runtime = BotRuntime(tmp_path, BotRegistry(tmp_path), Bus())
@@ -121,12 +127,8 @@ def test_runtime_window_for_room_on_runtime_root(tmp_path: Path) -> None:
     assert set(window.participants) == {'coder', 'thyca'}
 
 
-
 def test_memory_view_origin_rules_on_runtime_root(tmp_path: Path) -> None:
     """The real ``MemoryView`` privacy gates over runtime store conversations."""
-    from thyca.core.channel import WindowRef
-    from thyca.memories.visibility import MemoryView
-    from thyca.conversations.runtime import ConversationManager
 
     manager = _manager(tmp_path)
     dm_conversation = manager.ensure_dm('coder')
@@ -141,11 +143,8 @@ def test_memory_view_origin_rules_on_runtime_root(tmp_path: Path) -> None:
     )
     assert view._origin_info('2026-10-31T00-00-00_ab12') is None
     assert view._origin_info(dm_conversation.conversation_id)[0] is True
-    # Group window: another group covering our participants reads fine.
     assert view.can_read_origin(team.conversation_id) is True
-    # Group window: every DM origin is denied, own DM included.
     assert view.can_read_origin(dm_conversation.conversation_id) is False
-    # Group window: a group missing a current participant is denied.
     assert view.can_read_origin(narrow.conversation_id) is False
 
     own_dm_window = WindowRef(
@@ -153,14 +152,11 @@ def test_memory_view_origin_rules_on_runtime_root(tmp_path: Path) -> None:
         participants=('coder',))
     private = MemoryView(window=own_dm_window, bot_id='coder', thyca_dir=tmp_path)
     assert private.can_read_origin(dm_conversation.conversation_id) is True
-    # Private view: a group origin is readable when this bot participates.
     assert private.can_read_origin(team.conversation_id) is True
-
 
 
 def test_bot_posting_service_writers_on_runtime_root(tmp_path: Path) -> None:
     """The real ``BotPostingService`` gates over runtime store conversations."""
-    from thyca.conversations.runtime import ConversationManager
 
     manager = _manager(tmp_path)
     dm_conversation = manager.ensure_dm('coder')
@@ -192,12 +188,8 @@ def test_bot_posting_service_writers_on_runtime_root(tmp_path: Path) -> None:
         current_room_id=dm_conversation.conversation_id)['ok'] is False
 
 
-
 def test_webui_channel_adapter_land_on_runtime_root(tmp_path: Path) -> None:
     """The real WebUI channel adapter gates over runtime store conversations."""
-    from thyca.app.webui_channel import WebUIChannelAdapter
-    from thyca.core.channel import ChannelAction
-    from thyca.conversations.runtime import ConversationManager
 
     adapter = WebUIChannelAdapter()
     manager = _manager(tmp_path)
@@ -225,7 +217,6 @@ def test_webui_channel_adapter_land_on_runtime_root(tmp_path: Path) -> None:
 
     outbound_holder: dict = {}
 
-    from thyca.app.webui_channel import WebUIOutboundAdapter
     outbound = WebUIOutboundAdapter(
         dm_post=lambda *a, **k: calls.append(('dm_post', a, k)) or {'ok': True},
         dm_card_post=lambda *a, **k: calls.append(('dm_card', a, k)) or {'ok': True},
@@ -238,8 +229,7 @@ def test_webui_channel_adapter_land_on_runtime_root(tmp_path: Path) -> None:
     unknown = outbound.land(
         ChannelAction(kind='post', target_window='2026-10-31T00-00-00_ab12',
                       text='x'), ctx=_Ctx())
-    assert unknown == {'ok': False, 'error': f'unknown room: 2026-10-31T00-00-00_ab12'}
-    # Another bot's DM refuses; non-participant refuses on groups.
+    assert unknown == {'ok': False, 'error': 'unknown room: 2026-10-31T00-00-00_ab12'}
     other_dm = manager.ensure_dm('thyca')
 
     class _ThycaCtx:
@@ -250,21 +240,16 @@ def test_webui_channel_adapter_land_on_runtime_root(tmp_path: Path) -> None:
         ChannelAction(kind='post', target_window=other_dm.conversation_id, text='x'),
         ctx=_ThycaCtx())
     assert denied['ok'] is False
-    # A group turn writing into the sender's own DM is the message_user
-    # landing path: allowed, and routed to dm_post (no cross-window bar
-    # for DMs — the bar covers public rooms only, asserted below).
     mine_from_group = outbound.land(
         ChannelAction(kind='post', target_window=dm_conversation.conversation_id, text='x'),
         ctx=_Ctx())
     assert mine_from_group == {'ok': True}
     assert calls[-1][0] == 'dm_post'
-    # Cross-window public action refuses.
     other_group = _group(manager, ['coder'])
     cross = outbound.land(
         ChannelAction(kind='post', target_window=other_group.conversation_id, text='x'),
         ctx=_Ctx())
     assert cross['ok'] is False
-    # Own-DM post routes to dm_post; group post routes to room_post.
     mine = outbound.land(
         ChannelAction(kind='post', target_window=group_conversation.conversation_id, text='team'),
         ctx=_Ctx())
@@ -292,13 +277,9 @@ def test_webui_channel_adapter_land_on_runtime_root(tmp_path: Path) -> None:
     assert calls[-1][0] == 'card_post'
 
 
-
 def test_cli_oneshot_routes_through_chat_turn_on_runtime_root(tmp_path: Path) -> None:
     """The CLI channel adapts through ``ChatApp.turn`` on a fixture root."""
-    from seeded_config import seeded_config
-    from thyca.app.cli import Cli
-    from thyca.configs import save
-    from thyca.llms.llm_base import ChatReply
+
 
     save(seeded_config(), tmp_path / 'config.json')
 
@@ -315,16 +296,8 @@ def test_cli_oneshot_routes_through_chat_turn_on_runtime_root(tmp_path: Path) ->
     assert 'fixture reply' in out.getvalue()
 
 
-
 def test_a2a_record_bus_events_on_runtime_root(tmp_path: Path) -> None:
     """The real ``A2ADeliveryService.record_bus_events`` on runtime rooms."""
-    from thyca.app.a2a_delivery import A2ADeliveryDeps, A2ADeliveryService
-    from thyca.app.webui_channel import WebUIChannelAdapter
-    from thyca.bots.bus import Bus
-    from thyca.bots.card import BotCard
-    from thyca.bots.registry import BotRegistry
-    from thyca.bots.runtime import BotRuntime
-    from thyca.conversations.runtime import ConversationManager
 
     manager = _manager(tmp_path)
     group_conversation = _group(manager, ['coder', 'thyca'])
@@ -356,17 +329,12 @@ def test_a2a_record_bus_events_on_runtime_root(tmp_path: Path) -> None:
     rows = room.current.messages
     assert rows[-1].meta['bus_event'] is True
     assert rows[-1].meta['recipient'] == 'thyca'
-    # Drained exactly once: a second record adds nothing.
     service.record_bus_events(room, group_conversation.conversation_id)
     assert len(room.current.messages) == len(rows)
 
 
-
 def test_private_followup_lifecycle_on_runtime_root(tmp_path: Path) -> None:
-    from thyca.bots.private_followups import PrivateFollowupStore
-    from thyca.core.conversation import ConversationRef
 
-    # Hard-cut door ids: a group origin and the bot's own DM window.
     origin_id = ConversationRef.new_group().id
     dm_window_id = 'coder'
     store = PrivateFollowupStore(tmp_path)
@@ -387,7 +355,6 @@ def test_private_followup_lifecycle_on_runtime_root(tmp_path: Path) -> None:
     assert resumed.status == 'resumed'
     assert store.active('coder') is None
 
-    # Second pending: user declines sharing, then cancels.
     second = store.create('coder', work_id='task-bbcc2233',
                           origin_window=origin_id, dm_window=dm_window_id,
                           question='share this too?')
@@ -400,13 +367,9 @@ def test_private_followup_lifecycle_on_runtime_root(tmp_path: Path) -> None:
     assert store.active('coder') is None
 
 
-
 def test_observe_and_compaction_plan_on_runtime_history(
         switched: Path, tmp_path_factory: pytest.TempPathFactory) -> None:
     """``Observe`` + compaction planning over store-assembled history."""
-    from thyca.agents.observe import Observe
-    from thyca.conversations.store import assemble_history
-    from thyca.conversations.runtime import ConversationManager
 
     ref = _dm(switched, 'coder')
     agents = AgentStore(switched)
@@ -414,7 +377,6 @@ def test_observe_and_compaction_plan_on_runtime_history(
     agents.append(ref, 'coder', _msg('assistant', 'a1'))
     conversation = assemble_history(switched, ref, 'coder', intent=_read_intent())
 
-    # Runtime conversations live on a separate initialized root.
     legacy_root = tmp_path_factory.mktemp('runtime-observe')
     manager = _manager(legacy_root)
     manager.create()

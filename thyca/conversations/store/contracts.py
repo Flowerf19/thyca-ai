@@ -154,8 +154,6 @@ class ConversationPage:
         return self.conversation.participants
 
 def validate_metadata(ref: ConversationRef, data: dict) -> None:
-    # Groups may carry one optional title; DMs and every other key stay
-    # refused, and pre-title rows ({participants} only) stay valid.
     allowed = {'participants', 'title'} if ref.kind == 'group' else {'participants'}
     if not isinstance(data, dict) or not set(data) <= allowed or 'participants' not in data:
         raise ValueError('invalid metadata')
@@ -299,4 +297,3 @@ def _encode_canonical_message(message: Message) -> str:
         return payload
     except (TypeError, RecursionError) as exc:
         raise ValueError('invalid message payload') from exc
-

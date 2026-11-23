@@ -27,7 +27,6 @@ def test_load_more_is_owned_by_dashboard() -> None:
     assert 'id="trace-more"' not in renderer and "ThycaRouter.register" not in renderer
     shell_css = _read("share/app-shell.css")
     assert ".quiet-button" in shell_css
-    # The button base style stays global — no page-scoped button resets.
     assert ".quiet-button:hover" in shell_css
 
 
@@ -43,7 +42,6 @@ def test_trace_code_uses_opaque_scoped_surface() -> None:
     assert "border:1px solid" in block
     assert "white-space:pre-wrap" in block
     assert "overflow-wrap:anywhere" in block
-    # Scroll cap keeps long payloads inside the card.
     assert "max-height:320px" in block
     err = trace[trace.index(".dashboard-shell .tl-code.tl-code-err{"):]
     err = err[: err.index("}")]

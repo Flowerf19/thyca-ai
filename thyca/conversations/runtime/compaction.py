@@ -10,9 +10,6 @@ from thyca.core.protocol import Message
 from thyca.core.protocol import estimate_tokens as _chars_to_tokens
 
 _EXCERPT_LIMIT = 1000
-# Reserved head budget for the prior marker's excerpt on re-compaction.
-# The new (most recent) omitted content keeps the remainder at the tail,
-# so the total excerpt never exceeds _EXCERPT_LIMIT.
 _PRIOR_EXCERPT_LIMIT = _EXCERPT_LIMIT // 2
 
 CALIBRATION_MIN = 0.5
@@ -187,14 +184,7 @@ class ConversationCompactor:
         budget already accounts for it.
         """
         overhead = hot_tokens + tools_tokens + pending_user_tokens
-        # Compare in raw-estimate units: dividing the cap by the factor
-        # makes every threshold/budget below mean calibrated tokens.
         cap_raw = context_tokens / _safe_calibration(calibration)
-        # Fire at the backstop ratio, not at the cap: a turn that would
-        # die at the mid-turn guard must compact first (no dead zone).
-        # Overhead covers what assemble adds after this (hot prompt, tools
-        # schema, pending user text) so the estimate matches the guard's.
-        # ``force`` is the manual path: same turn-safe tail, no threshold.
         if not force and (
             sum(estimate_tokens(msg) for msg in messages) + overhead
             <= int(cap_raw * BACKSTOP_RATIO)
@@ -220,11 +210,6 @@ class ConversationCompactor:
         tail = [msg for turn in kept for msg in turn]
         omitted = messages[:leading] + body[: len(body) - len(tail)]
         if len(tail) == len(body):
-            # Overhead alone tripped the cap but every turn fits: shrinking
-            # nothing must not mint a junk 0/0 marker (and churn the file).
-            # Subsumes `not omitted`, and covers omitted==[prior marker]
-            # with tail==body, which would otherwise re-wrap and clip the
-            # prior excerpt 1000->500 chars on every overhead-only trip.
             return None
         prior_parts: list[str] = []
         prior_messages = 0
@@ -335,7 +320,6 @@ class ConversationCompactor:
         if len(text) <= limit:
             return text
         cut = text[-limit:]
-        # Tail cut: a leading low surrogate lost its high half.
         if cut and "\udc00" <= cut[0] <= "\udfff":
             return cut[1:]
         return cut

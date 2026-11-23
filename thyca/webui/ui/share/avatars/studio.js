@@ -1,4 +1,3 @@
-// Expression studio: the 'try states' dialog (live character, playback, idle gallery).
 'use strict';
 const lab={timers:[],mode:null,botId:null,lastChoice:'idle',sample:'',ownsGroup:false};
 
@@ -21,9 +20,6 @@ function chooseIdle(key=null){
  $('#lab-stop').hidden=false;announce(b.name+': '+idleCatalog[chosen].label);return chosen;
 }
 
-/* Shape picker: live character archetype previews, one per DROP_NAMES archetype.
-   The override is browser-only (localStorage, like the tint); picking one
-   persists it and patches every avatar instance in place. */
 const SHAPE_LABELS={
  thyca:'Thyca (Sổ tay)',
  researcher:'Researcher (Học giả)',
@@ -109,11 +105,6 @@ function playLabSequence(){
  labDelay(6800,labWriting);
 }
 
-/* "Custom bot" footer button — opens the seal studio: pick a bot, change
-   its color (persisted via localStorage in setBotColor), or replay the
-   demo expressions to preview each working state. */
-/* Bot customization now lives in the shared Settings dialog (#open-studio
-   button); the footer shortcut opens that dialog instead. */
 $('#open-studio').onclick=()=>{const pick=$('#settings-bot')?.value;const id=pick&&getBot(pick)?pick:selectedBot;stopLab(false);$('#expression-bot').innerHTML=bots.map(b=>`<option value="${b.id}"${b.id===id?' selected':''}>${b.name}</option>`).join('');lab.lastChoice=expressionFor(getBot(id));$('#bot-color').value=getBot(id).color;buildExpressions();$('#expressions-dialog').showModal();};
 $('#expression-bot').onchange=()=>{stopLab();lab.lastChoice=expressionFor(getBot($('#expression-bot').value));$('#bot-color').value=getBot($('#expression-bot').value).color;buildExpressions();};
 $('#bot-color').oninput=e=>(window.ThycaShell||window.ThycaPrototype)?.setBotColor($('#expression-bot').value,e.target.value);

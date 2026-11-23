@@ -11,11 +11,10 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 
-from thyca.core.protocol import Message
+from thyca.core.protocol import Message, parse_ts
+from thyca.memories.heading import validate_task_meta
 from thyca.memories.identity import bind_bot_id, reset_bot_id
 
-#: Backend idle trigger (master §4): a session quiet this long gets its
-#: memories extracted before any compaction. Technical default, recorded here.
 IDLE_SWEEP_SECONDS = 15 * 60
 
 
@@ -26,22 +25,17 @@ class ExtractedMemory:
     content: str = ""
     importance: int = 3
     bots: tuple[str, ...] | None = None
-    # Phase 1C task/habit linkage (all optional; sanitized on parse).
     task: str | None = None
-    # Title of a genuinely new multi-step goal (NOT an id); the apply
-    # step mints one shared id per title group.
     new_task: str | None = None
     cont: str | None = None
     kind: str | None = None
     status: str | None = None
     habit: str | None = None
-    # Phase 1E: the user explicitly stated this habit (not inferred).
     habit_explicit: bool = False
 
 
 def should_idle_sweep(last_activity_ts: str, now_ts: str, idle_s: int = IDLE_SWEEP_SECONDS) -> bool:
     """Pure idle decision: True when the session quieted past ``idle_s``."""
-    from thyca.core.protocol import parse_ts
 
     try:
         last = parse_ts(last_activity_ts)
@@ -212,7 +206,6 @@ def parse_extraction(text: str) -> list[ExtractedMemory]:
     one effective set; when invalid, all six are dropped and the core
     topic/summary/... item is kept.``task`` + ``new_task`` together drop
     both (ambiguous intent)."""
-    from thyca.memories.heading import validate_task_meta
 
     try:
         data = json.loads(_strip_code_fence(text))
@@ -245,16 +238,11 @@ def parse_extraction(text: str) -> list[ExtractedMemory]:
             task = new_task = None
         cont = cont if isinstance(cont, str) and cont.strip() else None
         kind = kind if isinstance(kind, str) and kind.strip() else None
-        # Checkpoints are deliberate in-turn memory writes, never an
-        # extractor output; a checkpoint kind here keeps only its task link.
         if kind == "checkpoint":
             kind = None
         status = status if isinstance(status, str) and status.strip() else None
         habit = habit.strip() if isinstance(habit, str) and habit.strip() else None
         habit_explicit = item.get("habit_explicit") is True
-        # A new goal's id is minted at apply time; validate the rest of
-        # the combination against a probe id so value/shape errors are
-        # still caught without losing the new-task intent.
         probe = task if task is not None else (
             "task-00000000" if new_task is not None else None
         )
@@ -316,8 +304,6 @@ def apply_extracted(facade, items: list[ExtractedMemory], *, default_bot: str = 
                 task = cont = status = None
             is_new_task = False
             if task is None and item.new_task is not None:
-                # Group key: strip + collapse inner whitespace + casefold,
-                # so "Fix  Sink " and "fix sink" update one card.
                 key = " ".join(item.new_task.strip().split()).casefold()
                 if key not in minted:
                     minted[key] = facade.new_task_id()

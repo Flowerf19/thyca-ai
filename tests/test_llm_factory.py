@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from thyca.configs import ProviderCfg
+from thyca.llms._http import BaseConnect
 from thyca.llms.llm_factory import ConnectFactory
 from thyca.llms.openai_chat import OpenAIChat
 from thyca.llms.openai_responses import OpenAIResponses
@@ -32,11 +33,7 @@ def test_factory_responses_injects_provider() -> None:
     assert connect._provider is provider
 
 
-# Moved from test_b4_unification.py / test_b4_p2.py (B4 batch).
 def test_x15_connects_share_base() -> None:
-    from thyca.llms._http import BaseConnect
-    from thyca.llms.openai_chat import OpenAIChat
-    from thyca.llms.openai_responses import OpenAIResponses
 
     assert issubclass(OpenAIChat, BaseConnect)
     assert issubclass(OpenAIResponses, BaseConnect)

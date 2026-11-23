@@ -12,11 +12,22 @@ from pathlib import Path
 from typing import Literal
 
 from thyca.core.conversation import ConversationRef, bot_is_participant
+
 from .contracts import ConversationStoreError, _decode_metadata, _local_error, validate_metadata
-from .rootfs import (DB_FILE_NAME, LOCK_FILE_NAME, ROOT_MARKER_TEMP, _checked_regular_at,
-                     _fsync_dir, _open_root, _open_store_lock, _read_dm_marker, _stat_at,
-                     _validate_root_artifacts, _validate_stable_namespace,
-                     _validate_top_namespace, _verify_root_name)
+from .rootfs import (
+    DB_FILE_NAME,
+    ROOT_MARKER_TEMP,
+    _checked_regular_at,
+    _fsync_dir,
+    _open_root,
+    _open_store_lock,
+    _read_dm_marker,
+    _stat_at,
+    _validate_root_artifacts,
+    _validate_stable_namespace,
+    _validate_top_namespace,
+    _verify_root_name,
+)
 
 BUSY_TIMEOUT_MS = 5000
 
@@ -129,8 +140,6 @@ def _validate_db_file(root_fd: int) -> None:
     _checked_fd, _ = _checked_regular_at(root_fd, DB_FILE_NAME, mode=0o600)
     os.close(_checked_fd)
     _validate_top_namespace(root_fd)
-    # Sidecars are fully covered above with bounded transient retry;
-    # do not re-stat/reopen them here (second TOCTOU).
 
 class _LockedConnection:
     """SQLite connection retaining pinned root, marker, and store-lock FDs."""
@@ -234,7 +243,6 @@ def _transaction(conn: sqlite3.Connection, begin: str) -> Iterator[None]:
             try:
                 conn.execute('ROLLBACK')
             except sqlite3.Error:
-                # The commit may already be durable; callers must not retry.
                 pass
             raise ConversationStoreError() from exc
 
@@ -304,7 +312,6 @@ def _ensure_door_ready(conn: _LockedConnection, ref: ConversationRef,
     return metadata, generation, event_high_water, logical_high_water
 
 def _root_instance_id_from_conn(conn: _LockedConnection) -> str:
-    # The marker was parsed before SQLite opened and is stable under store lock.
     return conn._root_instance_id
 
 def _metadata_for_result(metadata: dict) -> dict:
@@ -400,4 +407,3 @@ def _connect_raw_for_init(root_path: Path) -> sqlite3.Connection:
         except (UnboundLocalError, sqlite3.Error):
             pass
         raise ConversationStoreError() from exc
-

@@ -9,6 +9,7 @@ import asyncio
 from typing import TYPE_CHECKING
 
 from thyca.core.protocol import RESULT_CAP_BYTES, ToolCall, ToolResult
+from thyca.memories.identity import current_bot_id
 from thyca.tools.gateway.execution import (
     PAGE_DEFAULT_LIMIT,
     PROC,
@@ -25,7 +26,6 @@ from thyca.tools.gateway.execution import (
     reset_execution,
     unknown_id,
 )
-from thyca.memories.identity import current_bot_id
 from thyca.tools.gateway.policy import Policy, PolicyDenied
 from thyca.tools.registry import ToolSpec
 
@@ -36,11 +36,6 @@ if TYPE_CHECKING:
 
 _SOFT_TIMEOUT_S = 60
 _SETTLE_GRACE_S = 5.0
-# One retention bound for both maps below. Tracked executions keep engine
-# output (up to 1MB each); locks are tiny but keyed by unbounded resource
-# args. Past the cap the oldest SETTLED execution / oldest UNLOCKED lock is
-# dropped. Running executions and held locks are never evicted, so a burst
-# past the cap only overflows transiently instead of breaking live polls.
 _RETAIN_CAP = 200
 
 
@@ -160,7 +155,6 @@ class ToolGateway:
         try:
             return await self._track(spec, call, execution)
         except asyncio.CancelledError:
-            # The id never reached the model, so nothing can ever poll it.
             self._drop(execution)
             raise
         except Exception as exc:
@@ -178,15 +172,9 @@ class ToolGateway:
             entry = self._tasks.track(task, id=execution.id)
             execution.entry = entry
             try:
-                # Waiting on the settle event (not on the task via shield) keeps
-                # the handler immune to cancellation of this awaiter and avoids
-                # shield's exception-logging on Python 3.14.
-                # Accepted hard≤soft edge: a hard cap at the 59-60s soft boundary may already have fired when this tracks ("still running") — deterministic tracking beats a wait-past-cap carve-out.
                 await asyncio.wait_for(entry.done.wait(), self._soft_timeout_s)
             except TimeoutError:
                 if task.done():
-                    # Finished exactly at the deadline: surface the real outcome
-                    # instead of misclassifying it as tracked.
                     if not task.cancelled() and task.exception() is not None:
                         raise task.exception() from None
                     if not task.cancelled():
@@ -198,8 +186,6 @@ class ToolGateway:
                 execution.exposed = True
                 entry.exposed = True
                 self._evict_settled()
-                # Only genuinely slow handlers get a settle callback: fast ones
-                # resolve inline below, never double-handled.
                 task.add_done_callback(lambda t, e=execution: self._settle_task(e, t))
                 return ToolResult(
                     tool_call_id=call.id,
@@ -224,8 +210,6 @@ class ToolGateway:
         self, call: ToolCall, execution: Execution, raw: Detached
     ) -> ToolResult:
         self._tasks.untrack(execution.id)
-        # The entry belonged to the untracked task: proc reads route via
-        # execution.proc, so a stale pointer here only invites confusion.
         execution.entry = None
         execution.attach_proc(raw.entry)
         execution.exposed = True
@@ -236,9 +220,6 @@ class ToolGateway:
 
     def _resolve(self, call: ToolCall, raw: object) -> ToolResult:
         if isinstance(raw, ToolResult):
-            # exec_ref is gateway-minted: trust a handler-returned ref only
-            # when it names a live tracked execution, else shrink would
-            # promise a pointer to unretained/nonexistent output.
             exec_ref = raw.exec_ref if raw.exec_ref in self._executions else None
             return _result(
                 call, self._cap(raw.content, None),
@@ -271,16 +252,13 @@ class ToolGateway:
         self._executions.pop(execution.id, None)
         self._tasks.untrack(execution.id)
         if execution.proc is not None and self._background is not None:
-            execution.proc.kill()  # no-op once the proc already exited
+            execution.proc.kill()
             self._background.drop(execution.proc.id)
 
     def _lookup(self, id: str) -> Execution:
         execution = self._executions.get(id)
         caller = current_bot_id()
         if caller is not None and caller != "thyca":
-            # Bot callers only ever see their own executions: another
-            # bot's id (or a user/Thyca execution) reads as unknown, and
-            # the known-id listing never enumerates other owners' ids.
             own = sorted(
                 eid for eid, item in self._executions.items() if item.owner == caller
             )
@@ -295,7 +273,7 @@ class ToolGateway:
         async with self._lock_guard:
             lock = self._locks.get(key)
             if lock is not None:
-                self._locks[key] = self._locks.pop(key)  # LRU touch
+                self._locks[key] = self._locks.pop(key)
                 return lock
             self._evict_locks()
             lock = asyncio.Lock()

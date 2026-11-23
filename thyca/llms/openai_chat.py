@@ -10,8 +10,6 @@ import httpx
 from thyca.core.protocol import Message
 
 from ._http import BaseConnect, iter_sse_data, parse_json_bytes, redact
-
-# Re-exported: tests import these from openai_chat.
 from ._shared import parse_tool_calls, slots_to_calls
 from .llm_base import ChatReply, LLMError, normalize_usage
 from .streaming import ContentOut, ReasoningOut
@@ -40,13 +38,8 @@ class OpenAIChat(BaseConnect):
         }
         if tools:
             payload["tools"] = tools
-        # Some OpenAI-compatible providers reject reasoning_effort for
-        # non-reasoning models; _request drops it once and retries in that case.
         if self._provider.reasoningEffort:
             payload["reasoning_effort"] = self._provider.reasoningEffort
-        # Output cap: the resolved default (or the model's own maxTokens)
-        # always rides along; the drop-retry above only strips
-        # reasoning_effort, so this field survives the retry it causes.
         if self._provider.maxTokens:
             payload["max_tokens"] = self._provider.maxTokens
 
@@ -71,12 +64,6 @@ class OpenAIChat(BaseConnect):
 def _to_openai_message(message: Message) -> dict[str, Any]:
     payload: dict[str, Any] = {"role": message.role, "content": message.content}
     if message.reasoning_details:
-        # Round-trip provider thinking signatures; absent for providers that
-        # never emit them, so payloads there are byte-identical to before.
-        # Responses-native items (type "reasoning") are not part of the
-        # Chat contract (chat shapes are reasoning.text/summary/encrypted):
-        # history persisted under Responses must not leak them onto the Chat
-        # wire after a model/provider switch. Chat shapes pass byte-identical.
         kept = [
             dict(detail)
             for detail in message.reasoning_details
@@ -102,8 +89,6 @@ def _to_openai_message(message: Message) -> dict[str, Any]:
 
 
 def _reasoning_text(payload: dict) -> str:
-    # Same field set pi reads for OpenAI-compatible providers; providers pick
-    # whichever they like (this one uses "reasoning").
     for name in ("reasoning_content", "reasoning", "reasoning_text"):
         value = payload.get(name)
         if isinstance(value, str) and value:
@@ -196,8 +181,6 @@ class _ReasoningDetailsOut:
                 self._items.append(detail)
 
     def items(self) -> list[dict] | None:
-        # Redact the merged text, not each chunk: a key split across two
-        # SSE chunks is whole only here.
         out = []
         for item in self._items:
             copied = dict(item)
@@ -294,9 +277,6 @@ async def read_sse_reply(
                 content_parts.append(value)
                 content_out.add(value)
             elif value is not None:
-                # Array (or other non-string) delta content: the non-stream
-                # path raises on this shape, so the stream must too — no
-                # silent text loss.
                 raise LLMError("provider content must be string or null")
         piece = _reasoning_text(delta)
         if piece:
@@ -307,8 +287,6 @@ async def read_sse_reply(
     if not saw_choice:
         raise LLMError("provider response missing choices")
     if not finish and not saw_done:
-        # Clean EOF with neither finish_reason nor [DONE]: the provider cut
-        # the stream, so this is provider-incomplete, never partial success.
         raise LLMError("provider response incomplete")
     content_out.finish()
     content: str | None = redact("".join(content_parts), key) if saw_content_str else None

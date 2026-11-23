@@ -32,9 +32,10 @@ def _eval(node: str, hash_value: str | None) -> object:
     source = """
 import fs from 'node:fs';
 const src = fs.readFileSync(process.env.PROFILE_JS, 'utf8');
+const helperMatch = src.match(/function decodeHashValue\\(rawHash\\) \\{[\\s\\S]*?\\n\\}/);
 const match = src.match(/function decodeHash\\(\\) \\{[\\s\\S]*?\\n\\}/);
-if (!match) throw new Error('decodeHash() not found in profile.js');
-const decodeHash = new Function('ctx', match[0] + '; return decodeHash();');
+if (!helperMatch || !match) throw new Error('decodeHash() not found in profile.js');
+const decodeHash = new Function('ctx', helperMatch[0] + '\\n' + match[0] + '; return decodeHash();');
 console.log(JSON.stringify(decodeHash({ route: { hash: JSON.parse(process.env.HASH) } })));
 """
     result = subprocess.run(

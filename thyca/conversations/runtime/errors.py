@@ -35,7 +35,6 @@ class ConversationCorrupt(ConversationError):
         super().__init__(f"{self.path}{suffix}: {cause}")
 
 
-# No live bot can answer this room (all participants deleted or paused).
 class NoLiveResponder(ConversationError):
     def __init__(self, conversation_id: str) -> None:
         self.conversation_id = conversation_id

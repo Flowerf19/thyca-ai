@@ -73,9 +73,7 @@ def bridge_worker(
     completion enqueue/serialization fails. The first queued item before
     ``turn.accepted`` (or the sentinel) is a pre-accept error.
     """
-    # Local import: thyca.app.chat_app imports thyca.serve.turn_state, so a
-    # top-level import here would cycle (M7-TASK-013).
-    from thyca.app.chat_app import TurnCancelled
+    from thyca.app.chat_app import TurnCancelled  # noqa: PLC0415 -- reason: serve/ lazy app import boundary
 
     sink = bridge_sink(queue_, state)
     try:
@@ -129,7 +127,6 @@ def _log_turn_failure(
     )
 
 
-# Pump queued turn items as NDJSON, applying any public detail shape.
 def pump_stream(
     handler,
     items: queue.Queue,
@@ -161,7 +158,6 @@ def pump_stream(
             handler._json(503, {"error": "chat unavailable"})
             return
         else:
-            # Pre-accept exception: same HTTP error as /turn, no NDJSON.
             _type, exc = first
             if _type == "cancelled":
                 handler._stream_headers()
@@ -200,8 +196,6 @@ def pump_stream(
                 )
             terminal = True
         if not terminal and not state["disconnected"]:
-            # Sentinel with no terminal item: write the constant public
-            # failure so the client never sees a stream without a terminal.
             _log_turn_failure(app, conversation_id, model, RuntimeError("missing terminal"))
             write_line(
                 handler.wfile,
@@ -212,11 +206,9 @@ def pump_stream(
                 },
             )
     except (BrokenPipeError, ConnectionResetError):
-        # Client left: drop further events, let persist finish.
         state["disconnected"] = True
 
 
-# Stream one turn as NDJSON with its public detail shape applied.
 def stream_turn(
     handler,
     app: ChatApp,
@@ -247,8 +239,4 @@ def stream_turn(
             detail_transform=detail_transform,
         )
     finally:
-        # The worker is a daemon and only this conversation's turn was ever at
-        # stake, so persistence completes regardless of the client. A live
-        # stream waits for the terminal item; an abandoned one only
-        # parks this handler thread briefly.
         worker.join(timeout=5 if state["disconnected"] else 60)

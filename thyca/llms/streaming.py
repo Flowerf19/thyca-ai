@@ -66,8 +66,6 @@ class DeltaOut:
             self.flush()
 
     def _split(self) -> tuple[str, str]:
-        # Hold back a tail shorter than the key so a secret split across
-        # flushes is only emitted (redacted) once its remainder arrives.
         tail = len(self._key) - 1 if self._key else 0
         if tail and len(self._buf) <= tail:
             return "", self._buf
@@ -104,8 +102,6 @@ class DeltaOut:
         self.finish()
         if self._cap is None:
             return None
-        # Redact the join, not just each piece: a key split across two
-        # SSE chunks is whole only here.
         return redact("".join(self._parts), self._key) or None
 
 

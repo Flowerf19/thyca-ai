@@ -21,6 +21,7 @@ legacy guard passes, the live root).
 """
 from __future__ import annotations
 
+import os
 import re
 import uuid
 from dataclasses import dataclass
@@ -29,12 +30,22 @@ from pathlib import Path
 from thyca.core.conversation import ConversationRef
 
 from .admin import AdminStore
-from .agent import AgentStore
 from .contracts import (
-    Conversation,
     ConversationStoreError,
-    DMBootstrapIntent,
     RootInitializationIntent,
+)
+from .database import (
+    _ensure_root_ready,
+    _root_instance_id_from_conn,
+    _transaction_context,
+    open_existing_conversation,
+)
+from .rootfs import (
+    DB_FILE_NAME,
+    DM_MARKERS_NAME,
+    LOCK_FILE_NAME,
+    ROOT_MARKER_NAME,
+    ROOT_MARKER_TEMP,
 )
 
 _GROUP_RE = re.compile(r"group-[0-9a-f]{32}\Z")
@@ -75,9 +86,7 @@ def _require_write_intent(intent: object) -> RuntimeWriteIntent:
     return intent
 
 
-# Report whether a name exists under a root without following links.
 def _artifact_exists(root: Path, name: str) -> bool:
-    import os
 
     try:
         os.lstat(Path(root) / name)
@@ -86,15 +95,7 @@ def _artifact_exists(root: Path, name: str) -> bool:
     return True
 
 
-# List the store-owned artifact names whose presence proves prior state.
 def _store_artifact_names() -> tuple[str, ...]:
-    from .rootfs import (
-        DB_FILE_NAME,
-        DM_MARKERS_NAME,
-        LOCK_FILE_NAME,
-        ROOT_MARKER_NAME,
-        ROOT_MARKER_TEMP,
-    )
 
     return (
         DB_FILE_NAME + "-wal",
@@ -114,7 +115,6 @@ def is_runtime_ready(root: Path) -> bool:
         return False
 
 
-# Ensure the runtime store exists and passes one full audit.
 def ensure_runtime_store(root: Path) -> str:
     """Initialize the runtime store under *root* (idempotent).
 
@@ -134,9 +134,6 @@ def ensure_runtime_store(root: Path) -> str:
     root = Path(root)
     if is_runtime_ready(root):
         AdminStore(root).audit()
-        # Read the current instance id without re-initializing.
-        from .database import _root_instance_id_from_conn, open_existing_conversation
-        from .database import _transaction_context, _ensure_root_ready
 
         conn = open_existing_conversation(root, lock_mode="shared")
         try:
@@ -145,16 +142,13 @@ def ensure_runtime_store(root: Path) -> str:
                 return _root_instance_id_from_conn(conn)
         finally:
             conn.close()
-    # Missing DB with leftover store state is partial/corrupt, never fresh.
     if any(_artifact_exists(root, name) for name in _store_artifact_names()):
         raise ConversationStoreError("conversation unavailable")
-    # Fresh root: mint a random instance id and initialize.
     root_id = str(uuid.uuid4())
     AdminStore(root).initialize(RootInitializationIntent(root_id))
     return root_id
 
 
-# Refuse to start when any root still carries legacy conversation files.
 def require_no_legacy_conversations(root: Path) -> None:
     """Storage guard: refuse to start on legacy ``sessions/`` files.
 
@@ -182,7 +176,6 @@ def require_no_legacy_conversations(root: Path) -> None:
         )
 
 
-# Resolve one stored door id to its ref by database lookup only.
 def resolve_ref(root: Path, conversation_id: str) -> ConversationRef:
     """Resolve a stored door id to its ``ConversationRef`` via the store.
 
@@ -196,13 +189,6 @@ def resolve_ref(root: Path, conversation_id: str) -> ConversationRef:
         raise ValueError("conversation id must be a non-empty string")
     if not (_GROUP_RE.fullmatch(conversation_id) or _BOT_RE.fullmatch(conversation_id)):
         raise ValueError(f"invalid conversation id: {conversation_id!r}")
-    # Authority is the store: one indexed lookup by id across both kinds.
-    from .database import (
-        _ensure_root_ready,
-        _root_instance_id_from_conn,
-        _transaction_context,
-        open_existing_conversation,
-    )
 
     try:
         conn = open_existing_conversation(Path(root), lock_mode="shared")
@@ -217,8 +203,6 @@ def resolve_ref(root: Path, conversation_id: str) -> ConversationRef:
             conn.close()
     except ConversationStoreError:
         raise
-    # Same id in both doors cannot happen (namespaces are disjoint);
-    # prefer the DM deterministically if corrupt data ever says so.
     for kind, identifier in rows:
         if kind == "dm":
             try:
@@ -233,7 +217,6 @@ def resolve_ref(root: Path, conversation_id: str) -> ConversationRef:
     raise ConversationStoreError("conversation unavailable", scope="local")
 
 
-# Pick a member reader for one door without authorizing any write.
 def runtime_reader_for(ref: ConversationRef, participants: tuple[str, ...] | list[str]) -> str:
     """Member reader for membership-checked reads of one door.
 

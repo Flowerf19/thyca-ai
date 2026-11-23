@@ -2,37 +2,51 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import threading
+import time
 from pathlib import Path
 
 import pytest
 
 from thyca.agents.assemble import Assemble
 from thyca.agents.stage import Stage
+from thyca.bots.timeline import CanonicalConversationStore, WorkspaceTimeline
 from thyca.configs import LimitsCfg
-from thyca.llms.llm_base import ChatReply
-from thyca.core.protocol import Message, ToolCall
-from thyca.serve import routes as serve_routes
-from thyca.serve import trace as serve_trace
-from thyca.serve.conversations_api import _conv_error
 from thyca.conversations.runtime import (
-    ConversationRuntime,
     ConversationBusy,
     ConversationCorrupt,
     ConversationError,
     ConversationManager,
     ConversationNotFound,
+    ConversationRuntime,
     ConversationStore,
+    calibration_factor,
+    context_usage,
     estimate_tokens,
 )
+from thyca.conversations.runtime.compaction import ConversationCompactor, _marker_reserve_tokens
+from thyca.conversations.runtime.compaction import estimate_tokens as session_estimate
+from thyca.conversations.runtime.manager import _last_user_index
 from thyca.conversations.runtime.models import is_blank
 from thyca.conversations.runtime.store import CONVERSATION_ID_PATTERN
 from thyca.conversations.runtime.wire import (
+    conversation_http_error,
+    conversation_summary,
     delete_error,
     message_dict,
-    conversation_http_error,
     tool_call_dict,
+    turn_slices,
 )
+from thyca.conversations.store.runtime import ensure_runtime_store
+from thyca.core.channel import WindowRef
+from thyca.core.conversation import ConversationRef
+from thyca.core.protocol import Message, ToolCall
+from thyca.core.protocol import estimate_tokens as core_estimate
+from thyca.serve import routes as serve_routes
+from thyca.serve import trace as serve_trace
+from thyca.serve.conversations_api import _conv_error
+from thyca.serve.turn_state import TurnHub, TurnState
 from thyca.skills.skill_event import skill_name_for_call
 
 
@@ -40,9 +54,7 @@ def msg(role: str, content: str | None = "x", **kw: object) -> Message:
     return Message(role=role, content=content, ts="2026-01-01T00:00:00Z", **kw)
 
 
-# Build a runtime-store manager over a fresh initialized root.
 def _runtime_manager(root: Path, limits: LimitsCfg | None = None) -> ConversationManager:
-    from thyca.conversations.store.runtime import ensure_runtime_store
 
     conversations_dir = Path(root)
     store_root = conversations_dir.parent if conversations_dir.name == "sessions" else conversations_dir
@@ -50,10 +62,7 @@ def _runtime_manager(root: Path, limits: LimitsCfg | None = None) -> Conversatio
     return ConversationManager(conversations_dir, limits)
 
 
-# Build a canonical-timeline manager holding one execution conversation.
 def _canonical_manager(root: Path, limits: LimitsCfg | None = None) -> ConversationManager:
-    from thyca.bots.timeline import CanonicalConversationStore, WorkspaceTimeline
-    from thyca.core.channel import WindowRef
 
     timeline = WorkspaceTimeline(root, "thyca")
     window = WindowRef(
@@ -85,9 +94,7 @@ def test_roundtrip_three_turns_and_permissions(tmp_path: Path) -> None:
     assert loaded.messages[3].tool_calls is not None
 
 
-
 def test_list_conversations_skips_corrupt_does_not_set_current(tmp_path: Path) -> None:
-    import sqlite3
 
     manager = _runtime_manager(tmp_path)
     good = manager.create()
@@ -103,7 +110,6 @@ def test_list_conversations_skips_corrupt_does_not_set_current(tmp_path: Path) -
     other = ConversationManager(tmp_path)
     listed = other.list_conversations()
     assert [item.conversation_id for item in listed] == [good.conversation_id]
-    # list_conversations must not set current
     with pytest.raises(ConversationError, match="no current conversation"):
         _ = other.current
     other.load(good.conversation_id)
@@ -124,12 +130,6 @@ def test_discard_empty_keeps_spoken_and_keep(tmp_path: Path) -> None:
     assert _runtime_manager(tmp_path).load(kept.conversation_id) is not None
     loaded = _runtime_manager(tmp_path).load(spoken.conversation_id)
     assert not is_blank(loaded)
-
-
-
-
-
-
 
 
 def test_concurrent_append(tmp_path: Path) -> None:
@@ -188,7 +188,6 @@ def test_compact_overhead_triggers_when_transcript_alone_fits(tmp_path: Path) ->
 
 
 def test_compact_tail_budget_subtracts_overhead_and_marker() -> None:
-    from thyca.conversations.runtime.compaction import ConversationCompactor, _marker_reserve_tokens
 
     compactor = ConversationCompactor()
     messages: list[Message] = []
@@ -226,8 +225,6 @@ def test_single_oversize_turn_kept(tmp_path: Path) -> None:
     conversation = manager.create()
     manager.append(msg("user", "u" * 8000))
     manager.append(msg("assistant", "a" * 8000), actor="thyca")
-    # Nothing can be omitted (the lone turn must survive), so no junk
-    # 0/0 marker is minted and the file is left untouched.
     assert not manager.compact_if_needed()
     roles = [item.role for item in conversation.messages]
     assert roles == ["user", "assistant"]
@@ -236,7 +233,6 @@ def test_single_oversize_turn_kept(tmp_path: Path) -> None:
 
 
 def test_context_usage_includes_overhead() -> None:
-    from thyca.conversations.runtime import context_usage
 
     messages = [msg("user", "hello"), msg("assistant", "hi there")]
     bare = context_usage(messages, 1000)
@@ -268,7 +264,6 @@ def _pair(model: str, actual: int, estimated: int) -> Message:
 
 
 def test_calibration_factor_median_clamp_and_model_filter() -> None:
-    from thyca.conversations.runtime import calibration_factor
 
     assert calibration_factor([], model="m") == 1.0
     pairs =([
@@ -277,11 +272,9 @@ def test_calibration_factor_median_clamp_and_model_filter() -> None:
         _pair("m", 500, 100),
         _pair("other", 200, 100),
     ])
-    # Median of in-band ratios for m (1.2, 1.3); the 5.0 outlier drops.
     assert calibration_factor(pairs, model="m") == 1.25
     assert calibration_factor(pairs, model="other") == 2.0
     assert calibration_factor(pairs, model="absent") == 1.0
-    # A wildly low provider count is an outlier, not a factor near zero.
     assert calibration_factor([_pair("m", 5, 100)], model="m") == 1.0
 
 
@@ -301,8 +294,6 @@ def test_manual_compact_forces_below_threshold(tmp_path: Path) -> None:
     for i in range(4):
         manager.append(msg("user", "u" * 300 + str(i)))
         manager.append(msg("assistant", "a" * 300), actor="thyca")
-    # Under the 95% auto threshold, over the 60% tail budget: auto is a
-    # no-op, manual must still compact with the same turn-safe tail.
     assert not manager.compact_if_needed()
     result = manager.compact_manual()
     assert result["compacted"] is True
@@ -335,8 +326,6 @@ def test_manual_compact_keeps_incomplete_tail(tmp_path: Path) -> None:
     result = manager.compact_manual()
     assert result["compacted"] is True
     assert manager.current.messages[-1].content == "pending-question"
-
-
 
 
 def test_compaction_keeps_complete_tool_round(tmp_path: Path) -> None:
@@ -412,9 +401,7 @@ def test_delete_removes_the_file_and_refuses_mid_turn(tmp_path: Path) -> None:
     manager.delete(conversation.conversation_id)
     with pytest.raises(ConversationNotFound):
         manager.load(conversation.conversation_id)
-    # Deleting again is a no-op, not an error: the row is already gone.
     manager.delete(conversation.conversation_id)
-
 
 
 def test_delete_gate_blocks_a_claim_inside_the_window(tmp_path: Path) -> None:
@@ -425,30 +412,24 @@ def test_delete_gate_blocks_a_claim_inside_the_window(tmp_path: Path) -> None:
     so its transcript was removed under it — and the next append re-created the
     file truncated, silently dropping the earlier history.
     """
-    from thyca.conversations.runtime import ConversationBusy
-    from thyca.serve.turn_state import TurnState
 
     turns = TurnState()
     manager = _runtime_manager(tmp_path)
     conversation = manager.create()
     manager.append(msg("user", "câu hỏi"))
 
-    # A turn claims first: the delete must refuse.
     turns.claim(conversation.conversation_id)
     with pytest.raises(ConversationBusy):
         turns.delete_unclaimed(manager, conversation.conversation_id)
     assert _runtime_manager(tmp_path).load(conversation.conversation_id) is not None
     turns.release(conversation.conversation_id)
 
-    # No turn: the delete goes through.
     turns.delete_unclaimed(manager, conversation.conversation_id)
     with pytest.raises(ConversationNotFound):
         _runtime_manager(tmp_path).load(conversation.conversation_id)
 
 
 def test_turn_state_claim_is_exclusive_and_releasable(tmp_path: Path) -> None:
-    from thyca.conversations.runtime import ConversationBusy
-    from thyca.serve.turn_state import TurnState
 
     turns = TurnState()
     assert turns.started_at("s") is None
@@ -458,19 +439,16 @@ def test_turn_state_claim_is_exclusive_and_releasable(tmp_path: Path) -> None:
     assert turns.snapshot() == {"s": first}
     with pytest.raises(ConversationBusy):
         turns.claim("s")
-    # A snapshot is a copy: later claims do not leak into it.
     held = turns.snapshot()
     turns.claim("other")
     assert held == {"s": first}
     turns.release("s")
     assert turns.started_at("s") is None
-    turns.claim("s")  # free again
-    # Releasing an unknown conversation is a no-op, not an error.
+    turns.claim("s")
     turns.release("never-claimed")
 
 
 def test_turn_hub_replays_to_late_subscriber_and_closes_on_release() -> None:
-    from thyca.serve.turn_state import TurnHub, TurnState
 
     turns = TurnState()
     hub = turns.claim("s")
@@ -495,11 +473,7 @@ def test_turn_hub_replays_to_late_subscriber_and_closes_on_release() -> None:
 
 def test_claim_cannot_slip_between_the_check_and_the_unlink(tmp_path: Path) -> None:
     """A concurrent claim waits for the delete, so it cannot land in the window."""
-    import threading
-    import time
 
-    from thyca.conversations.runtime import ConversationNotFound
-    from thyca.serve.turn_state import TurnState
 
     turns = TurnState()
     manager = _runtime_manager(tmp_path)
@@ -522,7 +496,7 @@ def test_claim_cannot_slip_between_the_check_and_the_unlink(tmp_path: Path) -> N
     def claim_from_another_thread():
         try:
             turns.claim(conversation.conversation_id)
-        except Exception as exc:  # pragma: no cover - nothing should raise
+        except Exception as exc:  # pragma: no cover -- reason: nothing should raise
             failures.append(exc)
         finally:
             claimed.set()
@@ -537,8 +511,6 @@ def test_claim_cannot_slip_between_the_check_and_the_unlink(tmp_path: Path) -> N
 
         claimer = threading.Thread(target=claim_from_another_thread, daemon=True)
         claimer.start()
-        # The whole point: while the delete holds the claim, no other thread can
-        # take the conversation — the claim is what used to slip through.
         time.sleep(0.2)
         assert not claimed.is_set(), "claim got through the delete window"
         assert _runtime_manager(tmp_path).load(conversation.conversation_id) is not None
@@ -552,8 +524,6 @@ def test_claim_cannot_slip_between_the_check_and_the_unlink(tmp_path: Path) -> N
 
     assert not failures
     assert claimed.is_set()
-    # The claim landed after the unlink, so the turn now finds a conversation that is
-    # gone (a 404 the client can act on) instead of writing into a removed path.
     with pytest.raises(ConversationNotFound):
         manager.load(conversation.conversation_id)
     turns.release(conversation.conversation_id)
@@ -607,7 +577,6 @@ def test_message_reasoning_details_canonical_roundtrip(tmp_path: Path) -> None:
         reasoning_details=details,
     )
     assert Message.from_dict(msg.to_canonical_dict()).reasoning_details == details
-    # old lines without the key load as None
     bare = Message.from_dict(
         {"role": "user", "content": "x", "ts": "2026-01-01T00:00:00Z"}
     )
@@ -616,7 +585,7 @@ def test_message_reasoning_details_canonical_roundtrip(tmp_path: Path) -> None:
 
 def test_message_reasoning_details_rejects_bad_shape() -> None:
     with pytest.raises(ValueError, match="reasoning_details"):
-        Message(role="assistant", content="x", reasoning_details="nope")  # type: ignore[arg-type]
+        Message(role="assistant", content="x", reasoning_details="nope")  # type: ignore[arg-type] -- reason: intentional invalid-type or test-double argument
     with pytest.raises(ValueError, match="reasoning_details"):
         Message.from_dict(
             {
@@ -627,8 +596,6 @@ def test_message_reasoning_details_rejects_bad_shape() -> None:
             }
         )
 
-
-# --- X1: conversations-owned wire canonicalization ---
 
 _TS = "2026-09-01T10:00:00Z"
 _SID = "2026-09-01T10-00-00_ab12"
@@ -731,10 +698,6 @@ def test_x1_call_and_message_dicts_match_old_shapes(tmp_path: Path) -> None:
 
 
 def test_x1_conversation_id_grammar_is_single_pattern(tmp_path: Path) -> None:
-    # Hard-cut grammar: public doors are dm(bot)/group ids only, and the
-    # legacy /api/conversations routes are gone. Canonical per-bot timeline
-    # ids keep the timestamp shape as a separate internal concept.
-    from thyca.core.conversation import ConversationRef
 
     assert CONVERSATION_ID_PATTERN == r"(?:group-[0-9a-f]{32}|[a-z0-9]+(?:-[a-z0-9]+)*)"
     group_id = "group-" + "a" * 32
@@ -745,12 +708,10 @@ def test_x1_conversation_id_grammar_is_single_pattern(tmp_path: Path) -> None:
     with pytest.raises(ValueError):
         ConversationRef.dm(_SID)
     store = ConversationStore(tmp_path / "sessions")
-    # Public door ids bind to a path; canonical timestamp ids do not.
     assert store.path_for("coder").name == "coder.jsonl"
     assert store.path_for(group_id).name == f"{group_id}.jsonl"
     with pytest.raises(ConversationNotFound):
         store.path_for(_SID)
-    # New routes address doors explicitly; no conversation route remains.
     assert not hasattr(serve_routes, "_SESSION_RE")
     assert serve_routes._BOT_DM_RE.fullmatch("/api/bots/coder/dm") is not None
     assert serve_routes._GROUP_RE.fullmatch(f"/api/groups/{group_id}") is not None
@@ -761,11 +722,11 @@ def test_x1_conversation_id_grammar_is_single_pattern(tmp_path: Path) -> None:
     dm_detail = serve_routes._TRACE_DM_DETAIL_RE.fullmatch("/api/traces/dm/coder/3")
     assert dm_detail is not None and dm_detail.group(2) == "3"
     bad = [
-        "2026-09-01T10-00-00_ab1g",  # non-hex
-        "2026-09-01T10-00-00_ab123",  # too long
-        "2026-09-01T10-00-00_ab1",  # too short
-        "2026-09-01 10-00-00_ab12",  # space, not T
-        "../2026-09-01T10-00-00_ab12",  # traversal
+        "2026-09-01T10-00-00_ab1g",
+        "2026-09-01T10-00-00_ab123",
+        "2026-09-01T10-00-00_ab1",
+        "2026-09-01 10-00-00_ab12",
+        "../2026-09-01T10-00-00_ab12",
     ]
     for raw in bad:
         try:
@@ -813,27 +774,14 @@ def test_x1_conversations_error_delegates_with_chat_fallback() -> None:
         if expected is None:
             assert handler.calls == [(503, {"error": "chat unavailable"})], exc
         else:
-            # Public wording names conversations, never conversations or paths.
             public = expected[1]
             assert handler.calls == [(expected[0], {"error": public})], exc
 
 
-
-
-# Moved from test_b4_unification.py / test_b4_p2.py (B4 batch).
-import json
-import pytest
-
 def test_x17_shared_estimator() -> None:
-    from thyca.core.protocol import estimate_tokens as core_estimate
-
-    from thyca.conversations.runtime.compaction import estimate_tokens as session_estimate
-    from thyca.core.protocol import Message
 
     assert core_estimate("abcd") == 1
     assert core_estimate("") == 0
-    # Wire payload only: ts/meta/reasoning are stripped by both adapters,
-    # so they must not move the estimate.
     base = Message(role="user", content="same")
     noisy = Message(
         role="user",
@@ -846,7 +794,6 @@ def test_x17_shared_estimator() -> None:
     assert session_estimate(base) == core_estimate(
         json.dumps({"role": "user", "content": "same"}, ensure_ascii=False)
     )
-    # reasoning_details rides the chat path uncapped: it stays counted.
     signed = Message(
         role="assistant", content="same", reasoning_details=[{"sig": "s" * 400}]
     )
@@ -855,11 +802,8 @@ def test_x17_shared_estimator() -> None:
     )
 
 
-
-
 def test_last_user_index_shared_by_truncate_and_mark(tmp_path: Path) -> None:
     """truncate + mark agree on the last user message in a multi-turn run."""
-    from thyca.conversations.runtime.manager import _last_user_index
 
     mgr = _canonical_manager(tmp_path)
     mgr.append(msg("user", "first"))
@@ -877,10 +821,8 @@ def test_last_user_index_shared_by_truncate_and_mark(tmp_path: Path) -> None:
     assert [m.content for m in mgr.current.messages] == ["first", "answer", "second"]
 
 
-
 def test_wire_turns_match_trace_turn_slices(tmp_path: Path) -> None:
     """Wire turns, turn_slices, and Trace agree incl. system/orphan rows."""
-    from thyca.conversations.runtime.wire import conversation_summary, turn_slices
 
     conversation = ConversationRuntime(
         conversation_id="s1",
@@ -899,20 +841,11 @@ def test_wire_turns_match_trace_turn_slices(tmp_path: Path) -> None:
     assert len(serve_trace.turns_from_conversation(conversation)) == 2
 
 
-
-
-
-
-# --- T1: compaction excerpt is the tail, carried forward on re-compaction ---
-
-
 def _marker_excerpt(marker: Message) -> str:
     return (marker.content or "").rsplit("excerpt: ", 1)[-1][:-1]
 
 
 def test_t1_excerpt_takes_tail_of_omitted_content() -> None:
-    from thyca.conversations.runtime import ConversationCompactor
-
     compactor = ConversationCompactor()
     messages: list[Message] = []
     for i in range(8):
@@ -922,7 +855,7 @@ def test_t1_excerpt_takes_tail_of_omitted_content() -> None:
     assert result is not None
     tail_len = len(result) - 1
     omitted = messages[: len(messages) - tail_len]
-    assert len(omitted) >= 4  # enough omitted history to clip the head away
+    assert len(omitted) >= 4
     excerpt_src = "\n".join(
         m.content
         for m in omitted
@@ -931,24 +864,21 @@ def test_t1_excerpt_takes_tail_of_omitted_content() -> None:
     assert len(excerpt_src) > 1000
     excerpt = _marker_excerpt(result[0])
     assert len(excerpt) <= 1000
-    assert excerpt_src.endswith(excerpt)  # tail, not head
+    assert excerpt_src.endswith(excerpt)
     newest = omitted[-2].content or ""
-    assert newest[:20] in excerpt  # most recent omitted turn survives
+    assert newest[:20] in excerpt
     oldest = omitted[0].content or ""
-    assert oldest[:20] not in excerpt  # oldest clipped away
+    assert oldest[:20] not in excerpt
 
 
 def test_t1_clip_excerpt_tail_and_surrogate_safety() -> None:
-    from thyca.conversations.runtime.compaction import ConversationCompactor
 
     clip = ConversationCompactor._clip_excerpt
     assert clip("abcdef", 4) == "cdef"
     assert clip("abc", 10) == "abc"
     assert clip("", 5) == ""
     assert clip("abcdef", 0) == ""
-    # Cut lands between a surrogate pair: the orphaned low surrogate drops.
     assert clip("ab\ud800\udc00cd", 3) == "cd"
-    # Astral characters off the cut point pass through intact.
     assert clip("ab\U0001f600cdef", 4) == "cdef"
 
 
@@ -971,28 +901,23 @@ def test_t1_recompact_carries_prior_excerpt_and_counts(tmp_path: Path) -> None:
     before = len(manager.current.messages)
     assert manager.compact_if_needed()
     compacted = manager.current.messages
-    # Single leading system marker: store.scan's contract.
     assert compacted[0].role == "system"
     assert all(m.role != "system" for m in compacted[1:])
     excerpt2 = _marker_excerpt(compacted[0])
     assert len(excerpt2) <= 1000
-    # Prior excerpt survives (capped to its head budget), newest stays.
     prior_kept = excerpt1[-500:] if len(excerpt1) > 500 else excerpt1
     assert prior_kept in excerpt2
     assert "gen2-" in excerpt2
-    # Counts accumulate the carried-forward history, not just fresh omits.
     meta2 = compacted[0].meta or {}
     fresh_omitted = before - len(compacted)
     assert fresh_omitted > 0
     assert meta2["omitted_messages"] == meta1["omitted_messages"] + fresh_omitted
     assert meta2["omitted_turns"] >= meta1["omitted_turns"]
     assert meta2["omitted_chars"] > meta1["omitted_chars"]
-    # Output round-trips through store.scan (load path).
     reloaded = _canonical_manager(tmp_path).load(conversation.conversation_id)
     assert reloaded.messages[0].role == "system"
     assert reloaded.messages[0].meta == meta2
 
-    # Markers stay bounded across repeated compactions.
     for i in range(6):
         manager.append(msg("user", f"gen3-TURN{i}-" + "w" * 300))
         manager.append(msg("assistant", f"gen3-REPLY{i}-" + "c" * 300), actor="thyca")
@@ -1005,12 +930,9 @@ def test_t1_recompact_carries_prior_excerpt_and_counts(tmp_path: Path) -> None:
 
 
 def test_compact_overhead_only_returns_none_without_junk_marker() -> None:
-    from thyca.conversations.runtime.compaction import ConversationCompactor
 
     compactor = ConversationCompactor()
     messages = [msg("user", "u" * 100), msg("assistant", "a" * 100)]
-    # Overhead alone trips the cap but every turn fits: shrink nothing,
-    # mint no "omitted 0 messages/0 turns" marker.
     assert (
         compactor.compact(messages, 1000, pending_user_tokens=1000) is None
     )
@@ -1018,7 +940,6 @@ def test_compact_overhead_only_returns_none_without_junk_marker() -> None:
 
 
 def test_ensure_dm_finds_marked_creates_marked(tmp_path: Path) -> None:
-    from thyca.conversations.runtime import ConversationManager
 
     manager = _runtime_manager(tmp_path / "sessions")
     first = manager.ensure_dm("coder")

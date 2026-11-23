@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from thyca.memories.active import ActiveSnapshot
+if TYPE_CHECKING:
+    from thyca.memories.active import ActiveSnapshot
 
 _PROMPTS_DIR = Path(__file__).resolve().parents[1] / "seeds" / "prompts"
 _TEMPLATE_NAMES = frozenset({"soul", "identity", "user"})
@@ -13,8 +15,6 @@ _STUB_USER = frozenset({"", "# User"})
 
 class PromptManager:
     def build(self, hot: ActiveSnapshot) -> str:
-        # Stub profile files inject nothing: no silent template substitution.
-        # (Templates still seed new files on creation via ActiveMemory.)
         soul = hot.soul.strip()
         identity = hot.identity.strip()
         user = hot.user.strip()

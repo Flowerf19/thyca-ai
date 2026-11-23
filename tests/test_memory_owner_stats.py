@@ -46,9 +46,9 @@ def test_owner_filter_precedes_every_inventory_and_ranking_metric():
     searches = {rows[0]["chunk_id"]: (7, "2026-08-16T10:00:00Z")}
     chunks = [today("11111111", ["coder"]), today("22222222", ["researcher"]),
               today("33333333", ["team"]), today("44444444", None)]
-    kwargs = dict(archived=rows + [rows[0]], today_chunks=chunks, gets=gets,
-                  searches=searches, today="2026-08-17", now_ts="2026-08-17T12:00:00Z",
-                  files=[CanonicalFile("USER.md", "global profile")])
+    kwargs = {"archived": [*rows, rows[0]], "today_chunks": chunks, "gets": gets,
+                  "searches": searches, "today": "2026-08-17", "now_ts": "2026-08-17T12:00:00Z",
+                  "files": [CanonicalFile("USER.md", "global profile")]}
     scoped = MemoryStats.build(**kwargs, bot_id="coder")
     assert scoped.bot_id == "coder"
     assert scoped.total == 3
@@ -63,7 +63,7 @@ def test_owner_filter_precedes_every_inventory_and_ranking_metric():
     assert all(leaf.bots and "team" not in leaf.bots for leaf in scoped.suggest_removal)
     overall = MemoryStats.build(**kwargs)
     assert overall.bot_id is None
-    assert overall.total == 10  # unique original leaves, not a sum of owner views
+    assert overall.total == 10
     assert len(overall.files) == 1
     other = MemoryStats.build(**kwargs, bot_id="researcher")
     assert other.total == 3

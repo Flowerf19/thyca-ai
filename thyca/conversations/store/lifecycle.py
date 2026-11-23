@@ -7,29 +7,63 @@ import sqlite3
 from pathlib import Path
 
 from thyca.core.protocol import utc_now_ts
-from .contracts import (BootstrapResult, ConversationRef, ConversationStoreError, DMBootstrapIntent,
-                        InitializationResult, RootInitializationIntent, _decode_message,
-                        _decode_metadata, _encode_metadata, _local_error, _metadata, _view,
-                        validate_metadata)
-from .database import (_LockedConnection, _commit_final, _connect_raw, _create_pending_database,
-                       _ensure_root_ready, _raw_connection_for_resolution, _read_door_row,
-                       _root_instance_id_from_conn, _transaction_context, _validate_db_file,
-                       _validate_door_row, open_existing_conversation)
-from .rootfs import (DM_MARKERS_NAME, DM_MARKER_MAX_BYTES, LOCK_FILE_NAME, ROOT_MARKER_MAX_BYTES,
-                     ROOT_MARKER_NAME, ROOT_MARKER_TEMP, _create_marker_directory, _fsync_dir,
-                     _marker_filename,
-                     _open_root, _open_store_lock, _parse_marker_bytes, _publish_marker,
-                     _read_dm_marker, _read_marker_at, _reserved_root_entries, _stat_at,
-                     _validate_root_artifacts, _validate_stable_namespace,
-                     _validate_top_namespace, _verify_root_name)
+
+from .contracts import (
+    BootstrapResult,
+    ConversationRef,
+    ConversationStoreError,
+    DMBootstrapIntent,
+    InitializationResult,
+    RootInitializationIntent,
+    _decode_message,
+    _decode_metadata,
+    _encode_metadata,
+    _local_error,
+    _metadata,
+    _view,
+    validate_metadata,
+)
+from .database import (
+    _commit_final,
+    _connect_raw,
+    _create_pending_database,
+    _ensure_root_ready,
+    _LockedConnection,
+    _raw_connection_for_resolution,
+    _read_door_row,
+    _root_instance_id_from_conn,
+    _transaction_context,
+    _validate_db_file,
+    _validate_door_row,
+    open_existing_conversation,
+)
+from .rootfs import (
+    DM_MARKER_MAX_BYTES,
+    LOCK_FILE_NAME,
+    ROOT_MARKER_MAX_BYTES,
+    ROOT_MARKER_NAME,
+    ROOT_MARKER_TEMP,
+    _create_marker_directory,
+    _fsync_dir,
+    _marker_filename,
+    _open_root,
+    _open_store_lock,
+    _publish_marker,
+    _read_dm_marker,
+    _read_marker_at,
+    _reserved_root_entries,
+    _stat_at,
+    _validate_root_artifacts,
+    _validate_stable_namespace,
+    _validate_top_namespace,
+    _verify_root_name,
+)
+
 
 def _audit_in_transaction(conn: _LockedConnection, *, full: bool) -> None:
     root_instance_id = _root_instance_id_from_conn(conn)
     _ensure_root_ready(conn, root_instance_id)
-    # Inside a SQLite read transaction: do not open/close -shm here.
     _validate_stable_namespace(conn.root_fd)
-    # First pass streams every marker and validates it against the same SQLite
-    # snapshot. It retains no per-bot set in memory.
     for entry in os.scandir(conn.marker_fd):
         name = entry.name
         if name.startswith('.') and name.endswith('.json.tmp'):
@@ -51,8 +85,6 @@ def _audit_in_transaction(conn: _LockedConnection, *, full: bool) -> None:
         _validate_door_row(ref, row)
         if marker['dm'] != 'ready':
             raise _local_error(ref)
-    # Second pass proves no ready DM row is missing its exact marker and checks
-    # each record independently, keeping memory bounded per record.
     try:
         doors = conn.execute(
             'SELECT kind,id,metadata,lifecycle_state,generation,event_high_water,logical_high_water '
@@ -178,8 +210,6 @@ def initialize_root(root: Path, intent: RootInitializationIntent) -> Initializat
         except OSError as exc:
             raise ConversationStoreError() from exc
         if not created_lock:
-            # Existing artifacts are never adopted or repaired. Only a fully
-            # ready matching instance may return already_initialized.
             marker_fd = _validate_ready_root(root_fd, absolute, intent.root_instance_id)
             conn = _connect_raw(absolute)
             locked = _LockedConnection(conn, root_fd, parent_fd, root_name,
@@ -193,21 +223,17 @@ def initialize_root(root: Path, intent: RootInitializationIntent) -> Initializat
                 locked.close()
                 root_fd = parent_fd = lock_fd = marker_fd = -1
                 raise
-            # Transfer descriptors to the wrapper; its close releases both locks.
             locked.close()
             root_fd = parent_fd = lock_fd = marker_fd = -1
             return InitializationResult(intent.root_instance_id, 'already_initialized')
         if other:
             raise ConversationStoreError()
-        # This invocation created the stable lock in an otherwise empty store
-        # namespace while holding the pinned directory admission lock.
         marker_fd = _create_marker_directory(root_fd)
         _publish_marker(root_fd, ROOT_MARKER_NAME, ROOT_MARKER_TEMP,
                         {'root_instance_id': intent.root_instance_id,
                          'state': 'pending', 'version': 1},
                         max_bytes=ROOT_MARKER_MAX_BYTES)
         _create_pending_database(root_fd, absolute, intent.root_instance_id)
-        # The marker directory's directory entry is durable before root-ready.
         _fsync_dir(root_fd)
         _publish_marker(root_fd, ROOT_MARKER_NAME, ROOT_MARKER_TEMP,
                         {'root_instance_id': intent.root_instance_id,
@@ -317,4 +343,3 @@ def audit_root(root: Path) -> None:
             _audit_in_transaction(conn, full=True)
     finally:
         conn.close()
-

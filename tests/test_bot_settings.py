@@ -11,22 +11,31 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 import pytest
+import yaml
+from filelock import FileLock
+from seeded_config import seeded_config
 
-from thyca.app.chat_app import ChatApp
+import thyca.bots.registry as registry_mod
+from thyca.app.chat_app import ChatApp, ConnectFactory
 from thyca.bots.admin_tools import apply_card_edit
+from thyca.bots.bus import new_span_id, new_trace_id
 from thyca.bots.card import BotCard, BotModel
+from thyca.bots.context import BotTurnContext, BotTurnScope
 from thyca.bots.registry import BotRegistry, RegistryError
 from thyca.bots.settings import (
     SettingsError,
     read_settings,
     strip_card_model_text,
+    validate_model_id,
+    validate_thinking,
 )
+from thyca.bots.settings import write_settings as _write_settings
 from thyca.configs import ModelCfg, ProviderEntry, default_config, load, save
-from seeded_config import seeded_config
+from thyca.conversations.runtime import ConversationManager
+from thyca.core.protocol import Message
 from thyca.llms.llm_base import ChatReply
 from thyca.memories.facade import MemoryFacade
 from thyca.serve import default_webui, make_server
-
 
 LEGACY_TWIN = """\
 ---
@@ -64,9 +73,6 @@ def _legacy_bot(root: Path, bot_id: str = "coder") -> BotRegistry:
     dest.mkdir(parents=True, exist_ok=True)
     (dest / "TWIN.md").write_text(LEGACY_TWIN, encoding="utf-8")
     return reg
-
-
-# --- persistence & hydration --------------------------------------------
 
 
 def test_create_persists_settings_and_strips_twin(tmp_path: Path) -> None:
@@ -109,12 +115,9 @@ def test_legacy_save_strips_only_model_preserving_persona(tmp_path: Path) -> Non
 
 
 def test_settings_precedence_over_conflicting_legacy(tmp_path: Path) -> None:
-    import yaml
 
     reg = _legacy_bot(tmp_path)
     reg.update_settings("coder", BotModel(id="settings-model", thinking="low"))
-    # Re-insert a REAL conflicting frontmatter model block (the strip had
-    # removed the legacy key, so a plain text replace would be a no-op).
     twin_path = tmp_path / "bots" / "coder" / "TWIN.md"
     text = twin_path.read_text(encoding="utf-8")
     assert "\nmodel:" not in text.split("---")[1]
@@ -180,7 +183,6 @@ def test_atomic_failure_retains_original(tmp_path: Path, monkeypatch) -> None:
         raise OSError("disk gone")
 
     monkeypatch.setattr("thyca.bots.settings.atomic_write_text", _boom)
-    # Settings write itself fails: nothing changes, legacy TWIN untouched.
     with pytest.raises((RegistryError, SettingsError, OSError)):
         reg.update_settings("coder", BotModel(id="bad", thinking=None))
     assert settings_path.read_bytes() == before_settings
@@ -198,7 +200,6 @@ def test_mode_and_traversal_and_symlink_rejection(tmp_path: Path) -> None:
         with pytest.raises((RegistryError, SettingsError)):
             reg.update_settings(bad_id, BotModel(id="m"))
         assert not reg.get(bad_id).ok
-    # Symlinked bot dir is rejected, never followed.
     real = tmp_path / "realdir"
     real.mkdir()
     link = tmp_path / "bots" / "ghost"
@@ -210,7 +211,6 @@ def test_mode_and_traversal_and_symlink_rejection(tmp_path: Path) -> None:
         read_settings(tmp_path, "ghost")
     with pytest.raises((RegistryError, SettingsError)):
         reg.update_settings("ghost", BotModel(id="m"))
-    # Symlinked settings file is rejected.
     target = tmp_path / "bots" / "coder" / "settings.json"
     target.unlink()
     target.symlink_to(tmp_path / "bots" / "thyca" / "settings.json")
@@ -240,12 +240,9 @@ def test_ensure_thyca_seeds_only_new_system_bot(tmp_path: Path) -> None:
     assert (tmp_path / "bots" / "thyca" / "settings.json").is_file()
     (tmp_path / "bots" / "thyca" / "settings.json").unlink()
     reg.ensure_thyca()
-    # Reads never migrate: a deleted settings file stays deleted.
     assert not (tmp_path / "bots" / "thyca" / "settings.json").exists()
     doc = reg.get("thyca")
     assert doc.ok and doc.card is not None
-    # The canonical TWIN holds no model key, so with settings deleted the
-    # legacy fallback is None (existing semantics preserved, no migration).
     assert doc.card.model is None
 
 
@@ -256,9 +253,6 @@ def test_strip_card_model_text_round_trip() -> None:
     assert "model:" not in stripped.split("---")[1]
     with pytest.raises(SettingsError):
         strip_card_model_text("no frontmatter")
-
-
-# --- runtime integration -------------------------------------------------
 
 
 class _RecordingLLM:
@@ -294,7 +288,6 @@ def _runtime_config() -> object:
 
 
 def _runtime_app(root: Path, llm: _RecordingLLM, monkeypatch) -> tuple[ChatApp, list]:
-    from thyca.app.chat_app import ConnectFactory
 
     save(_runtime_config(), root / "config.json")
     captured: list = []
@@ -360,7 +353,6 @@ def test_explicit_override_wins_without_overwriting_settings(
 def test_operations_and_compact_honor_saved_settings(
     tmp_path: Path, monkeypatch,
 ) -> None:
-    from thyca.core.protocol import Message
 
     llm = _RecordingLLM(ChatReply(content="summary", model="card-model"))
     app, captured = _runtime_app(tmp_path, llm, monkeypatch)
@@ -387,12 +379,10 @@ def test_operations_and_compact_honor_saved_settings(
         assert ops["model"]["reasoning_effort"] == "low"
         assert captured[-1].model == "card-model"
         assert captured[-1].reasoningEffort == "low"
-        # Force a real compaction with a long canonical history.
         room = app._conversations.store.load(group)
         window = app._webui.window_for(room)
         internal = app._runtime.internal_conversation("coder", group)
         store = app._runtime._canonical_store("coder", window, internal.conversation_id)
-        from thyca.conversations.runtime import ConversationManager
 
         manager = ConversationManager(store=store)
         manager.load(internal.conversation_id)
@@ -406,8 +396,6 @@ def test_operations_and_compact_honor_saved_settings(
 
 
 def test_a2a_recipient_uses_own_thinking(tmp_path: Path, monkeypatch) -> None:
-    from thyca.bots.bus import new_span_id, new_trace_id
-    from thyca.bots.context import BotTurnContext, BotTurnScope
 
     llm = _RecordingLLM()
     app, captured = _runtime_app(tmp_path, llm, monkeypatch)
@@ -433,8 +421,6 @@ def test_a2a_recipient_uses_own_thinking(tmp_path: Path, monkeypatch) -> None:
             memory=app._memory, state=app._state, zone=app._zone,
             injected_connect=None,
         )
-        # No explicit effort: the recipient's own thinking wins, not the
-        # sender's saved thinking.
         ctx = BotTurnContext(
             sender_id="sender", room_id=group, trace_id=new_trace_id(),
             span_id=new_span_id(), scope=scope,
@@ -443,7 +429,6 @@ def test_a2a_recipient_uses_own_thinking(tmp_path: Path, monkeypatch) -> None:
         asyncio.run(app._deliver_envelope(envelope, ctx))
         assert captured[-1].model == "card-model"
         assert captured[-1].reasoningEffort == "low"
-        # An invalid explicit effort fails honestly instead of leaking.
         envelope2 = app._runtime.send(
             sender="sender", recipient="coder", kind="delegate",
             conversation_id=group, payload="do it fast",
@@ -458,9 +443,6 @@ def test_a2a_recipient_uses_own_thinking(tmp_path: Path, monkeypatch) -> None:
         assert captured[-1].reasoningEffort == "custom"
     finally:
         app.shutdown()
-
-
-# --- HTTP API ------------------------------------------------------------
 
 
 class _IdleLLM:
@@ -541,8 +523,6 @@ def test_http_get_post_persist_restart_and_isolation(tmp_path: Path) -> None:
         )
         assert status == 404 and body == {"error": "bot not found"}
 
-        # No PATCH handler exists (settings are POST): the method is
-        # unsupported with a 501 HTML body, not a JSON 404.
         patch = Request(
             f"http://127.0.0.1:{server.server_address[1]}/api/bots/coder/settings",
             data=json.dumps({"model": {"id": "default"}}).encode("utf-8"),
@@ -558,7 +538,6 @@ def test_http_get_post_persist_restart_and_isolation(tmp_path: Path) -> None:
         assert status == 404 and body == {"error": "bot not found"}
     finally:
         _stop(server, thread, app)
-    # Restart with a fresh app on the same root: settings persisted.
     app2 = ChatApp(tmp_path, load(tmp_path / "config.json"), connect=_IdleLLM())
     try:
         assert app2.bot_settings("coder")["model"] == {"id": "default", "thinking": "low"}
@@ -585,22 +564,18 @@ def test_http_validation_errors_are_safe(tmp_path: Path) -> None:
             status, body = _request(server, "/api/bots/coder/settings", "POST", payload)
             assert status == 400, payload
             assert body == {"error": error}, (payload, body)
-        # Invalid effort is a safe constant (no value/config echo).
         status, body = _request(
             server, "/api/bots/coder/settings", "POST",
             {"model": {"id": "default", "thinking": "ultra"}},
         )
         assert status == 400 and body == {"error": "invalid thinking"}, body
-        # Unknown model id echoes no path/secret: exact constant only.
         status, body = _request(
             server, "/api/bots/coder/settings", "POST",
             {"model": {"id": "m" * 201}},
         )
         assert status == 400 and body == {"error": "invalid model"}
-        # Unknown bot + traversal ids stay 404 with the constant.
         status, body = _request(server, "/api/bots/ghost/settings")
         assert status == 404 and body == {"error": "bot not found"}
-        # Path traversal never reaches a bot dir (regex rejects it).
         raw = Request(f"http://127.0.0.1:{server.server_address[1]}/api/bots/../x/settings")
         try:
             with urlopen(raw, timeout=5) as response:
@@ -643,12 +618,9 @@ def test_http_custom_effort_set_and_corrupt_is_503(tmp_path: Path) -> None:
             {"model": {"id": "custom-model", "thinking": "max"}},
         )
         assert status == 400, body
-        # Corrupt the file behind the server: GET degrades to safe 503.
         (tmp_path / "bots" / "thyca" / "settings.json").write_text("{broken", encoding="utf-8")
         status, body = _request(server, "/api/bots/thyca/settings")
         assert status == 503 and body == {"error": "bot settings unavailable"}, body
-        # POST on the corrupt bot is 503 too (the bot exists; its settings
-        # are unreadable) — never a silent write or a 404.
         status, body = _request(
             server, "/api/bots/thyca/settings", "POST",
             {"model": {"id": "default"}},
@@ -677,7 +649,6 @@ def test_http_get_creates_no_files_and_config_untouched(tmp_path: Path) -> None:
         )
         assert status == 200
         assert (tmp_path / "config.json").read_bytes() == before_cfg
-        # save() also maintains auth.json; a settings POST must not touch it.
         auth_path = tmp_path / "auth.json"
         before_auth = auth_path.read_bytes() if auth_path.exists() else None
         status, body = _request(
@@ -695,7 +666,6 @@ def test_http_get_creates_no_files_and_config_untouched(tmp_path: Path) -> None:
 
 
 def test_shape_bounds_reject_controls_and_padding(tmp_path: Path) -> None:
-    from thyca.bots.settings import validate_model_id, validate_thinking
 
     assert validate_model_id("m1") == "m1"
     assert validate_model_id("  m1  ") == "m1"
@@ -720,15 +690,12 @@ def test_invalid_utf8_and_directory_mark_invalid_without_raise(tmp_path: Path) -
     settings.write_bytes(b"{\xff\xfe broken")
     doc = reg.get("coder")
     assert not doc.ok and doc.card is None
-    # The healthy bot stays listed; the roster skips only the broken one.
     ids = [doc.card.bot_id for doc in reg.list() if doc.ok and doc.card]
     assert "okbot" in ids and "coder" not in ids
-    # A directory at the settings path is corruption, never a fallback.
     settings.unlink()
     settings.mkdir()
     doc = reg.get("coder")
     assert not doc.ok and doc.card is None
-    # Symlinked card targets are never followed.
     twin = tmp_path / "bots" / "coder" / "TWIN.md"
     twin.unlink()
     twin.symlink_to(tmp_path / "bots" / "okbot" / "TWIN.md")
@@ -739,7 +706,6 @@ def test_invalid_utf8_and_directory_mark_invalid_without_raise(tmp_path: Path) -
 def test_failed_strip_reports_and_preserves_then_repair_succeeds(
     tmp_path: Path, monkeypatch,
 ) -> None:
-    import thyca.bots.registry as registry_mod
 
     reg = _legacy_bot(tmp_path)
     twin_path = tmp_path / "bots" / "coder" / "TWIN.md"
@@ -755,13 +721,10 @@ def test_failed_strip_reports_and_preserves_then_repair_succeeds(
     monkeypatch.setattr(registry_mod, "atomic_write_text", _fail_twin)
     with pytest.raises(RegistryError):
         reg.update_settings("coder", BotModel(id="new-model", thinking=None))
-    # Card bytes intact (legacy model still there), settings already
-    # landed and stay authoritative.
     assert twin_path.read_bytes() == before
     payload = json.loads((tmp_path / "bots" / "coder" / "settings.json").read_text())
     assert payload == {"model": {"id": "new-model", "thinking": None}}
     assert reg.get("coder").card.model == BotModel(id="new-model", thinking=None)
-    # Repair and retry: the strip lands this time.
     monkeypatch.setattr(registry_mod, "atomic_write_text", real_atomic)
     updated = reg.update_settings("coder", BotModel(id="new-model", thinking=None))
     assert updated.model == BotModel(id="new-model", thinking=None)
@@ -787,9 +750,7 @@ def test_directory_settings_path_is_503(tmp_path: Path) -> None:
 
 
 def test_pause_serializes_behind_held_lock(tmp_path: Path) -> None:
-    import threading
 
-    from filelock import FileLock
 
     reg = _registry(tmp_path)
     reg.create(BotCard(
@@ -809,7 +770,7 @@ def test_pause_serializes_behind_held_lock(tmp_path: Path) -> None:
         started.set()
         try:
             outcome["card"] = other.set_paused("coder", True)
-        except Exception as exc:  # noqa: BLE001 — recorded for assert
+        except Exception as exc:
             outcome["error"] = exc
         finally:
             done.set()
@@ -818,12 +779,7 @@ def test_pause_serializes_behind_held_lock(tmp_path: Path) -> None:
     try:
         thread.start()
         assert started.wait(timeout=10)
-        # The pauser cannot have finished: the lock is held here.
         assert not done.is_set()
-        # A concurrent settings save lands while the pauser waits. The
-        # caller (this thread) already holds the lock, so write the file
-        # directly instead of re-entering the registry lock.
-        from thyca.bots.settings import write_settings as _write_settings
 
         _write_settings(tmp_path, "coder", BotModel(id="m2", thinking="high"))
         assert reg.get("coder").card.model == BotModel(id="m2", thinking="high")
@@ -831,7 +787,6 @@ def test_pause_serializes_behind_held_lock(tmp_path: Path) -> None:
         held.release()
     assert done.wait(timeout=10)
     assert "error" not in outcome, outcome.get("error")
-    # The pause applied on top of the NEW model, not the stale snapshot.
     assert outcome["card"].paused is True
     assert outcome["card"].model == BotModel(id="m2", thinking="high")
     assert thread is not None
@@ -839,10 +794,6 @@ def test_pause_serializes_behind_held_lock(tmp_path: Path) -> None:
 
 
 def test_update_bot_settings_fails_closed_on_unreadable_config(tmp_path: Path) -> None:
-    # The mutation path loads strictly: a config that became unreadable
-    # after startup must not validate against the stale construction-time
-    # snapshot (which would authorize assigning a model the live config
-    # no longer vouches for).
     save(_runtime_config(), tmp_path / "config.json")
     app = ChatApp(tmp_path, load(tmp_path / "config.json"))
     try:
@@ -883,7 +834,6 @@ def test_stale_snapshot_identity_edit_retains_new_model(tmp_path: Path) -> None:
 
 
 def test_concurrent_delete_never_resurrects_and_lock_stable(tmp_path: Path) -> None:
-    import threading
 
     reg = _legacy_bot(tmp_path)
     reg.update_settings("coder", BotModel(id="m1", thinking=None))
@@ -897,7 +847,7 @@ def test_concurrent_delete_never_resurrects_and_lock_stable(tmp_path: Path) -> N
         barrier.wait(timeout=10)
         try:
             BotRegistry(tmp_path).delete("coder")
-        except Exception as exc:  # noqa: BLE001 — recorded for assert
+        except Exception as exc:
             errors.append(exc)
 
     def _save() -> None:
@@ -907,7 +857,7 @@ def test_concurrent_delete_never_resurrects_and_lock_stable(tmp_path: Path) -> N
                 "coder", BotModel(id="m2", thinking=None)
             )
         except (RegistryError, SettingsError):
-            pass  # losing the race to delete is the expected outcome
+            pass
 
     first, second = threading.Thread(target=_delete), threading.Thread(target=_save)
     first.start()
@@ -923,8 +873,6 @@ def test_concurrent_delete_never_resurrects_and_lock_stable(tmp_path: Path) -> N
 def test_invalid_settings_trigger_no_fallback_provider_call(
     tmp_path: Path, monkeypatch,
 ) -> None:
-    from thyca.app.chat_app import ConnectFactory
-    from thyca.app.turn_options import resolve_bot_cfg
 
     llm = _RecordingLLM()
     captured: list = []
@@ -949,9 +897,6 @@ def test_invalid_settings_trigger_no_fallback_provider_call(
         with pytest.raises(RegistryError):
             asyncio.run(app._flush_bot_memory("coder", [], app._current_cfg()))
         assert captured == []
-        # Compaction refuses the corrupt bot instead of compacting it
-        # under a fallback global model: the bot settles as unavailable
-        # and no provider is ever created.
         result = app.compact_conversation(group)
         assert result["compaction"]["per_bot"]["coder"] == {
             "compacted": False,

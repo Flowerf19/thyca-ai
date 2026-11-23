@@ -15,30 +15,29 @@ from __future__ import annotations
 
 import json
 import re
+import secrets
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 
 from filelock import FileLock
 
-from thyca.bots.card import NAME_MAX, _NAME_RE
+from thyca.bots.card import _NAME_RE, NAME_MAX
 from thyca.configs import atomic_write_text
-from thyca.core.channel import WindowRef
+from thyca.core.channel import WORK_REF_RE, WindowRef
+from thyca.memories.heading import iter_session_blocks
 
 REGISTRY_FILENAME = "registry.json"
 REGISTRY_VERSION = 1
 
 
-# Canonical internal conversation-id grammar, owned here next to its minter.
 _INTERNAL_CONVERSATION_ID_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}_[0-9a-f]{4}$")
 
 
-# Mint one fresh canonical internal conversation id.
 def _new_internal_conversation_id() -> str:
     """Fresh canonical conversation id (same grammar as room conversations)."""
-    import secrets
-    from datetime import datetime, timezone
 
-    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%S")
+    timestamp = datetime.now(UTC).strftime("%Y-%m-%dT%H-%M-%S")
     return f"{timestamp}_{secrets.token_hex(2)}"
 
 
@@ -180,7 +179,6 @@ class WorkspaceStore:
         Written only when a NEW memory task is created (memory_remember
         new_task success); never inferred from catalog unions."""
         _check_bot_id(bot_id)
-        from thyca.core.channel import WORK_REF_RE
 
         if not WORK_REF_RE.fullmatch(work_id or ""):
             raise WorkspaceStoreError(f"invalid work id: {work_id!r}")
@@ -220,7 +218,6 @@ class WorkspaceStore:
         A task already owned by another bot's registry wins globally —
         this file never claims a task owned elsewhere."""
         _check_bot_id(bot_id)
-        from thyca.memories.heading import iter_session_blocks
 
         owner = self.task_owner(bot_id, work_id)
         if owner is not None:

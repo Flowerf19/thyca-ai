@@ -14,10 +14,6 @@ from .timeline import TimelineCfg
 
 
 def _default_providers() -> dict[str, ProviderEntry]:
-    # Module-level (not a lambda) so Config stays picklable.
-    # Fresh configs ship with NO provider: the user adds one in the UI.
-    # (Legacy ProviderEntry/Config() objects keep their own OpenAI-flavored
-    # dataclass defaults for hand-built use; the wire form stays empty.)
     return {}
 
 
@@ -87,13 +83,9 @@ class Config:
         entry = self.providers.get(self.provider_id_for(model_id))
         if entry is None:
             if not self.providers:
-                # Empty config (no provider yet): fail clearly so the setup
-                # gate reports "not ready" instead of calling OpenAI.
                 raise ConfigError(
                     f"chưa cấu hình provider cho model {model_id!r}"
                 )
-            # Hand-built Configs have no parsing guard: fall back to any
-            # entry, never to built-in defaults.
             entry = next(iter(self.providers.values()))
         return resolve(entry, model_id, self.models.get(model_id))
 

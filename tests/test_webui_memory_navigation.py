@@ -53,14 +53,10 @@ def test_header_links_every_page_and_marks_current() -> None:
     header = out["header"]
     links = re.findall(
         r'<a href="([^"]+)" data-page-link="([^"]+)"([^>]*)>([^<]+)</a>', header)
-    # One relative route per page, in the shell's own order.
     assert [page for _href, page, _rest, _label in links] == [
         "chat", "memories", "profile", "provider", "dashboard"]
     for href, page, _rest, _label in links:
         assert href == f"../{page}/index.html"
-        # Legacy hrefs are unchanged and resolve to the single SPA entry
-        # through the static alias (locked by test_webui_spa_frontend).
-    # The current page is the only marked link.
     marks = {page: rest for _href, page, rest, _label in links}
     assert 'class="is-current"' in marks["memories"]
     assert 'aria-current="page"' in marks["memories"]
@@ -77,9 +73,6 @@ def test_every_shell_page_emits_its_own_id() -> None:
     for page in SHELL_PAGES:
         js = (UI / page / "js" / f"{page}.js").read_text(encoding="utf-8")
         assert f"ThycaRouter.register('{page}'" in js, page
-    # Chat keeps its own static header — the landing page still carries the
-    # shared nav as an empty <nav data-page-nav="chat"> that util.js fills
-    # on load; every other page links back to ../chat/index.html.
     chat = (UI / "chat" / "index.html").read_text(encoding="utf-8")
     assert "emitShell" not in chat
     assert 'class="page-links"' in chat
@@ -100,13 +93,9 @@ def test_scope_navigation_flows_through_sidebar_and_url() -> None:
     assert "submenu" not in shell
 
     js = MEM_JS.read_text(encoding="utf-8")
-    # The old toolbar bot select is gone — kind/use/search filter in-page.
     assert 'id="memory-bot"' not in js
     for marker in ('id="memory-kind"', 'id="memory-use"', 'id="memory-search"'):
         assert marker in js, marker
-    # Sidebar clicks scope the journal: selectBot() rewrites ?bot=, the boot
-    # reads it back, the stats call carries bot_id=, and the scope card's
-    # "Bỏ lọc" button clears the filter.
     assert "function selectBot(id)" in js
     assert "'?bot=' + encodeURIComponent" in js
     assert "ctx.updateRoute({ search: q })" in js
@@ -114,6 +103,5 @@ def test_scope_navigation_flows_through_sidebar_and_url() -> None:
     assert "/api/memory/stats?bot_id=${encodeURIComponent(scope)}" in js
     assert 'id="memory-scope-card"' in js
     assert "mem-scope-clear" in js
-    # The sidebar still delegates bot cards to the page's selectBot.
     sidebar = (UI / "share" / "sidebar.js").read_text(encoding="utf-8")
     assert "selectBot(b.id)" in sidebar

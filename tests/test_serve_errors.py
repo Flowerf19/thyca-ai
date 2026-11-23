@@ -7,14 +7,18 @@ from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-from thyca.serve.errors import public_turn_error
-from thyca.app.chat_app import ChatApp, InvalidTurnOption, InvalidTurnText, TurnCancelled
-from thyca.configs import ConfigError, load, save
+import pytest
 from seeded_config import seeded_config
-from thyca.llms.llm_base import LLMError
-from thyca.serve import default_webui, make_server
+
+from thyca.app.chat_app import ChatApp, InvalidTurnOption, InvalidTurnText, TurnCancelled
+from thyca.bots.registry import RegistryError
+from thyca.configs import ConfigError, load, save
 from thyca.conversations.runtime import ConversationCorrupt, ConversationError, ConversationNotFound
+from thyca.llms.llm_base import LLMError
 from thyca.memories.facade import MemoryFacade
+from thyca.serve import default_webui, make_server
+from thyca.serve.conversations_api import bot_dm, dm_private_followup, dm_turn
+from thyca.serve.errors import _with_json, parse_turn_body, public_turn_error
 
 WEBUI = default_webui()
 
@@ -60,7 +64,6 @@ def test_maps_each_exception_to_exact_public_triple() -> None:
         "invalid_text",
         "invalid text: invalid",
     )
-    # Unexpected ValueError is a bug: 500, constant message (B2/F10).
     assert public_turn_error(ValueError("boom")) == (
         500,
         "internal_error",
@@ -124,7 +127,7 @@ def test_turn_config_error_returns_constant_json_message(tmp_path: Path) -> None
 
     httpd, thread = _start(tmp_path, _chat(tmp_path, ConfigBoom()))
     try:
-        created = _json_create(httpd)
+        _json_create(httpd)
         try:
             urlopen(
                 Request(
@@ -157,12 +160,7 @@ def _json_create(httpd) -> dict:
         return json.loads(response.read().decode("utf-8"))
 
 
-# Moved from test_b4_unification.py / test_b4_p2.py (B4 batch).
-import pytest
-
 def test_x2_serve_parses_via_turn_options() -> None:
-    from thyca.app.chat_app import InvalidTurnOption
-    from thyca.serve.errors import parse_turn_body
 
     assert parse_turn_body({"text": "hi"}) == ("hi", None, None, False)
     assert parse_turn_body({"text": "  hi  "}) == ("hi", None, None, False)
@@ -190,7 +188,6 @@ def test_x2_serve_parses_via_turn_options() -> None:
 
 
 def test_x26_with_json_preamble() -> None:
-    from thyca.serve.errors import _with_json
 
     class Handler:
         def __init__(self, payload=None, explode=False):
@@ -216,10 +213,6 @@ def test_x26_with_json_preamble() -> None:
     _with_json(stream, lambda payload: "never", error="invalid text")
     assert stream.sent == [(400, {"error": "invalid text"})]
 
-
-# Moved from tests/test_b2_contracts.py (B2 batch).
-import pytest
-from thyca.serve.conversations_api import dm_turn
 
 def test_f10_unexpected_turn_value_error_is_500_and_logged(capsys) -> None:
     """Fails pre-fix: an in-turn bug ValueError returned 400, masking it."""
@@ -257,8 +250,6 @@ def test_f10_unexpected_turn_value_error_is_500_and_logged(capsys) -> None:
 
 def test_conversation_handlers_never_leak_exception_text() -> None:
     """Registry/consent failures map to constant public errors (M4)."""
-    from thyca.bots.registry import RegistryError
-    from thyca.serve.conversations_api import bot_dm, dm_private_followup
 
     class Handler:
         def __init__(self) -> None:
@@ -275,7 +266,7 @@ def test_conversation_handlers_never_leak_exception_text() -> None:
             raise RegistryError("/tmp/secret-root bot coder missing")
 
     handler = Handler()
-    bot_dm(handler, LeakyApp(), "coder")  # type: ignore[arg-type]
+    bot_dm(handler, LeakyApp(), "coder")  # type: ignore[arg-type] -- reason: intentional invalid-type or test-double argument
     assert handler.sent == [(404, {"error": "bot not found"})]
     assert "/tmp" not in json.dumps(handler.sent)
 
@@ -284,6 +275,6 @@ def test_conversation_handlers_never_leak_exception_text() -> None:
             return {"id": bot_id}
 
     consent = Handler()
-    dm_private_followup(consent, ConsentApp(), "coder")  # type: ignore[arg-type]
+    dm_private_followup(consent, ConsentApp(), "coder")  # type: ignore[arg-type] -- reason: intentional invalid-type or test-double argument
     assert consent.sent == [(400, {"error": "invalid body"})]
     assert "/tmp" not in json.dumps(consent.sent)

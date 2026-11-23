@@ -8,7 +8,11 @@ serve/API tests); this file only pins that the old shapes never return.
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
+
+import thyca.configs.schema as schema
+from thyca.conversations.runtime.store import ConversationStore
 
 ROOT = Path(__file__).resolve().parents[1]
 WEBUI = ROOT / "thyca" / "webui"
@@ -66,7 +70,6 @@ def test_retired_team_and_kit_anatomy_is_gone() -> None:
               "onBotRosterChanged", "onSessionsChanged",
               "Tools used:", "screen-shell", "pick-shell", "is-picking",
               "conversation-rename", "unread"]
-    import re
 
     visible = "\n".join(_sources().values())
     assert not re.search(r"\brefreshBotDrawer\b", visible)
@@ -77,14 +80,11 @@ def test_retired_team_and_kit_anatomy_is_gone() -> None:
 
 
 def test_superseded_tool_and_journal_shapes_are_gone() -> None:
-    import re
 
     src = _sources()
-    # TURN-CURATE: the composer meter/nudge is gone from the entry.
     for marker in ('id="context-nudge"', 'id="context-meter"',
                    'id="context-focus"', "Gọn phiên"):
         assert marker not in src["index.html"], marker
-    # Superseded meter internals surface nowhere in the shipped UI.
     blob = "\n".join(
         path.read_text(encoding="utf-8")
         for path in UI.rglob("*")
@@ -93,11 +93,9 @@ def test_superseded_tool_and_journal_shapes_are_gone() -> None:
     for marker in ("sumLastTurnUsage", "lastTurnTools", "renderComposerMeter",
                    'id="meter"', 'id="tool-meter"'):
         assert marker not in blob, marker
-    # Reload copy never invents turn status.
     for copy in ("Đang trả lời lượt trước", "Phiên đang trả lời",
                  "SESSION_BUSY_STATUS"):
         assert copy not in src["chat.js"], copy
-    # The per-conversation cost journal left with the old grouped conversation list.
     for gone in ("Chi phí theo phiên", "cost-conversations", "aggregateSessions",
                  "renderSessions", "NO_SESSION_KEY", "modelTurnCoverage",
                  "estimatedCostSplit", "priceRates"):
@@ -114,8 +112,6 @@ def test_legacy_pager_styles_are_gone() -> None:
 
 
 def test_removed_python_apis_stay_gone() -> None:
-    import thyca.configs.schema as schema
-    from thyca.conversations.runtime.store import ConversationStore
 
     assert not hasattr(schema, "_dict_section")
     for key in ("model", "mcpServers", "pricing", "input", "cache", "output"):

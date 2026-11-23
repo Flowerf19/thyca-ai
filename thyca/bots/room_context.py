@@ -10,10 +10,7 @@ from __future__ import annotations
 
 import hashlib
 
-#: Assistant finals that are public speech (kind="message" additionally
-#: requires parent_span_id None to tell finals apart from old bus rows).
 PUBLIC_FINAL_KINDS = frozenset({"message", "result"})
-#: Thyca-root finals (assistant_meta kind="llm", no tool calls).
 ROOT_FINAL_KIND = "llm"
 
 PREAMBLE = (
@@ -91,14 +88,12 @@ def _public_item(message, recipient_bot_id: str) -> dict | None:
         return None
     kind = meta.get("kind")
     if kind is None:
-        pass  # legacy/plain final: public speech.
+        pass
     elif kind in PUBLIC_FINAL_KINDS:
         if kind == "message" and meta.get("parent_span_id") is not None:
             return None
-    elif kind == "card":
-        pass  # already rendered above (never raw JSON).
-    elif kind == ROOT_FINAL_KIND:
-        pass  # Thyca-root final.
+    elif kind == "card" or kind == ROOT_FINAL_KIND:
+        pass
     else:
         return None
     speaker = _speaker(message, meta)

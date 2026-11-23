@@ -1,26 +1,10 @@
-// Shared app shell markup for every Thyca page except chat (chat keeps its
-// own static markup). Two phases because studio.js/sidebar.js bind elements
-// at load time:
-//   emitShell()  — synchronous DOM insert; call BEFORE avatars/sidebar/studio
-//                  scripts. Page content goes into the returned .workspace.
-//   bootShell()  — async roster/conversation fetch; call from the page's JS once
-//                  every shared script has loaded.
-// Script order for each page:
-//   util.js -> data.js -> shell.js -> emitShell() -> avatars.js -> idle.js
-//   -> sidebar.js -> studio.js -> shell-app.js -> js/<page>.js (calls bootShell)
 'use strict';
 
-/* SHELL_PAGES + pageLinksMarkup live in util.js (loaded everywhere) so the
-   chat page — which ships static markup instead of emitShell — renders the
-   same nav. */
 function thycaHeader(current) {
   const currentLabel = (Array.isArray(SHELL_PAGES) && SHELL_PAGES.find(([id]) => id === current)?.[1]) || 'Trò chuyện';
   return `<header class="site-header"><div class="header-left"><button class="icon-button menu-button" type="button" aria-label="Mở mục lục" aria-controls="chat-sidebar" aria-expanded="false"><svg class="icon"><use href="#i-menu"/></svg></button><span class="wordmark" aria-hidden="true">thyca</span><span class="header-rule"></span></div><div class="header-right"><button type="button" class="page-menu-toggle" id="page-menu-toggle" aria-expanded="false" aria-controls="page-links-nav" aria-haspopup="true"><span class="page-menu-label">${escapeHTML(currentLabel)}</span></button><nav class="page-links" id="page-links-nav" aria-label="Điều hướng">${pageLinksMarkup(current)}</nav></div></header>`;
 }
 
-/* Shared sidebar includes the group section (chat-only) so SPA navigation
-   between chat and other pages can toggle visibility via CSS instead of
-   needing a second sidebar element. */
 function thycaSidebarMarkup() {
   return `<aside class="sidebar" id="chat-sidebar" aria-label="Đội bot">
  <div class="sessions-heading"><h2 id="team-nav-title">Đội</h2><span class="bot-count">0 người bạn</span></div>
@@ -31,7 +15,6 @@ function thycaSidebarMarkup() {
 <button type="button" class="splitter" aria-label="Thu gọn thanh bot" aria-controls="chat-sidebar" aria-expanded="true" title="Thu gọn/Mở rộng thanh bot">‹</button>`;
 }
 
-/* The same dialogs chat ships statically — needed before studio.js binds. */
 function thycaDialogs() {
   return `<div class="mobile-overlay" id="mobile-overlay" hidden></div>
 <dialog class="screen-dialog" id="expressions-dialog" aria-label="Xưởng biểu cảm">
@@ -103,17 +86,6 @@ function thycaDialogs() {
 <div class="toast" role="status" id="toast" hidden></div><div class="sr-only" role="status" aria-live="polite" id="announcer"></div>`;
 }
 
-/* The shared paper artwork now lives on .notebook-shell::before (base.css),
-   so workspaces no longer inject per-pane SVG ornaments. */
-
-/* Interface preferences shared by every page (moved here from the old
-   per-page settings module so they apply globally from startup and
-   reload). Persisted under 'thyca.ui.preferences' as
-   {typeScale,reduceMotion,ornaments}; same key, shape and defaults the
-   old settings page used, so saved values carry over. Missing/unreadable
-   storage fails closed to defaults (artwork visible, motion allowed).
-   Runs at script load — before shell-app.js defines toggleMotion — so it
-   touches the body class directly instead of calling it. */
 const PREFS_KEY = 'thyca.ui.preferences';
 const PREF_DEFAULTS = { typeScale: 'medium', reduceMotion: false, ornaments: true };
 
@@ -131,17 +103,16 @@ function applyPrefs(next = prefs, { save = true } = {}) {
   prefs = next;
   try {
     if (typeof document === 'undefined' || !document.documentElement) return;
-    document.documentElement.dataset.typeScale = next.typeScale;                    // zoom hook in base.css
-    document.documentElement.dataset.ornaments = next.ornaments ? 'on' : 'off';    // shared paper artwork hook in base.css
+    document.documentElement.dataset.typeScale = next.typeScale;
+    document.documentElement.dataset.ornaments = next.ornaments ? 'on' : 'off';
     for (const view of document.querySelectorAll('.workspace')) view.dataset.ornaments = next.ornaments ? 'on' : 'off';
     motionPaused = Boolean(next.reduceMotion) || (typeof reduced !== 'undefined' && reduced.matches);
     document.body.classList.toggle('motion-paused', motionPaused);
-  } catch { /* markup still renders; hooks default on next load */ }
-  if (save) try { localStorage.setItem(PREFS_KEY, JSON.stringify(next)); } catch { /* controls still apply when storage is unavailable */ }
+  } catch {  }
+  if (save) try { localStorage.setItem(PREFS_KEY, JSON.stringify(next)); } catch {  }
 }
 applyPrefs(prefs, { save: false });
 
-/* Synchronous DOM insert. Returns the .workspace element the page fills. */
 function emitShell(current, { title = 'Thyca' } = {}) {
   const main = document.createElement('main');
   main.className = `notebook-shell ${current}-shell`;
@@ -152,13 +123,12 @@ function emitShell(current, { title = 'Thyca' } = {}) {
   return $('.workspace', main);
 }
 
-/* Async boot: live roster + conversations into the shared sidebar. */
 async function bootShell() {
-  applyPrefs(readPrefs(), { save: false });  // re-apply the saved preferences for this page
-  await loadRoster();                                        // API: GET /api/bots
+  applyPrefs(readPrefs(), { save: false });
+  await loadRoster();
   renderTeam();
   bots.forEach(updateCard);
   $('.bot-count').textContent = bots.length + ' người bạn';
   rebuildExpressionBots();
-  try { await refreshConversations(); renderGroups(); renderHeaderBots(); } catch {}  // API: GET /api/conversations
+  try { await refreshConversations(); renderGroups(); renderHeaderBots(); } catch {}
 }

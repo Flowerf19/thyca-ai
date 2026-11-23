@@ -23,12 +23,10 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from thyca.core.conversation import ConversationRef
 from thyca.core.protocol import Message, parse_ts
-from thyca.serve.trace import TurnSummary, turns_from_conversation
-from thyca.conversations.runtime import ConversationRuntime, calibration_factor, context_usage
-from thyca.conversations.runtime.wire import ask_remember, message_dict, turn_slices
 
 from .agent import AgentStore
 from .contracts import (
@@ -36,17 +34,18 @@ from .contracts import (
     Conversation,
     ConversationStoreError,
     PageCursor,
+    _metadata,
+    _view,
 )
 from .runtime import RuntimeReadIntent
 
-#: Bound on resync restarts while assembling one history. A concurrently
-#: compacted/purged conversation bumps generation per page; without a bound
-#: the assembler could chase it forever. Fixture readers without writers
-#: never restart.
+if TYPE_CHECKING:
+    from thyca.conversations.runtime import ConversationRuntime
+    from thyca.serve.trace import TurnSummary
+
 _MAX_ASSEMBLY_RESYNCS = 5
 
 
-# Require an explicit runtime read intent before any store I/O.
 def _require_intent(intent: object):
     if isinstance(intent, RuntimeReadIntent):
         return intent
@@ -59,7 +58,6 @@ def _check_page_limit(page_limit: object) -> int:
     return min(page_limit, MAX_PAGE_LIMIT)
 
 
-# Assemble one full conversation history across paged store reads.
 def assemble_history(
     root: Path,
     ref: ConversationRef,
@@ -96,22 +94,16 @@ def assemble_history(
             metadata = None
             cursor = page.cursor
             continue
-        if metadata is None:
-            metadata = page.conversation
-        else:
-            # The final page carries the newest metadata stamp.
-            metadata = page.conversation
+        metadata = page.conversation
         collected.extend(page.messages)
         if not page.has_more:
             break
         cursor = page.cursor
-    assert metadata is not None  # read always returns a conversation view
-    from .contracts import _metadata, _view
+    assert metadata is not None
 
     return _view(metadata.ref, _metadata(list(metadata.participants), metadata.title), tuple(collected))
 
 
-# Project a store conversation onto the wire ConversationRuntime shape.
 def _wire_conversation(
     conversation: Conversation,
     *,
@@ -123,6 +115,8 @@ def _wire_conversation(
     blank helper never stat it. ``updated_at`` callers must not use
     this conversation's path; the adapter resolves timestamps explicitly.
     """
+    from thyca.conversations.runtime import ConversationRuntime  # noqa: PLC0415 -- reason: break circular import with conversations.runtime
+
     ref = conversation.ref
     return ConversationRuntime(
         conversation_id or ref.id,
@@ -145,9 +139,10 @@ def _updated_at(messages: tuple[Message, ...] | list[Message], created_at: str |
     return created_at
 
 
-# Build the wire summary with kind taken from the conversation ref.
 def summary_for(conversation: Conversation, created_at: str) -> dict:
     """Wire-shaped summary for one assembled conversation (pure, no I/O)."""
+    from thyca.conversations.runtime.wire import turn_slices  # noqa: PLC0415 -- reason: break circular import with conversations.runtime
+
     view = _wire_conversation(conversation)
     summary = {
         'conversation_id': view.conversation_id,
@@ -165,7 +160,6 @@ def summary_for(conversation: Conversation, created_at: str) -> dict:
     return summary
 
 
-# Build the wire detail with kind taken from the conversation ref.
 def detail_for(
     conversation: Conversation,
     cfg,
@@ -179,6 +173,9 @@ def detail_for(
     ``context`` is the transcript-only lower bound, matching the wire
     fallback for I/O-free callers.
     """
+    from thyca.conversations.runtime import calibration_factor, context_usage  # noqa: PLC0415 -- reason: break circular import with conversations.runtime
+    from thyca.conversations.runtime.wire import ask_remember, message_dict  # noqa: PLC0415 -- reason: break circular import with conversations.runtime
+
     view = _wire_conversation(conversation)
     context = context_usage(
         list(conversation.messages),
@@ -205,13 +202,13 @@ def detail_for(
     return detail
 
 
-# Build trace turns over one assembled conversation.
 def trace_turns_for(conversation: Conversation) -> list[TurnSummary]:
     """Trace turns over one assembled conversation (pure, no I/O)."""
+    from thyca.serve.trace import turns_from_conversation  # noqa: PLC0415 -- reason: break circular import with serve.trace
+
     return turns_from_conversation(_wire_conversation(conversation))
 
 
-# Build one wire-shaped trace detail over an assembled conversation.
 def trace_detail_for(
     conversation: Conversation,
     turn_index: int,
@@ -225,6 +222,8 @@ def trace_detail_for(
     Phase 1 has no canonical execution rows to merge; the public rows are
     the whole turn.
     """
+    from thyca.conversations.runtime.wire import message_dict  # noqa: PLC0415 -- reason: break circular import with conversations.runtime
+
     if isinstance(turn_index, bool) or not isinstance(turn_index, int) or turn_index < 0:
         raise ValueError('turn_index must be a non-negative int')
     for turn in trace_turns_for(conversation):

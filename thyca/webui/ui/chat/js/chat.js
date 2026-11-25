@@ -220,6 +220,13 @@ async function openExchangeModal(ownerId, partnerId) {
     const side = author === ownerId ? 'owner' : 'partner';
     return `<div class="exchange-row is-${side}"><header><span>${escapeHTML(b.name || author)}</span><time>${fmtTime(row.ts)}</time></header><div class="exchange-bubble markdown-body">${contentHtml(row.content || '')}</div></div>`;
   }).join('');
+  const scrollLatest = () => {
+    dialog.scrollTop = dialog.scrollHeight;
+    body.scrollTop = body.scrollHeight;
+    body.lastElementChild?.scrollIntoView?.({ block: 'end' });
+  };
+  scrollLatest();
+  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(scrollLatest);
 }
 
 function answerCardLabel(label, button) {
@@ -313,7 +320,7 @@ async function loadConversation(id, botId) {
 async function selectBot(id) {
   const b = getBot(id); if (!b) return;
   if (window.ThycaRouter?.currentPage() === 'chat') ThycaRouter.updateCurrent({ search: '?bot=' + encodeURIComponent(id), hash: '' });
-  if (selectedBot === id && currentConversation) return;
+  if (selectedBot === id && currentConversation === dmKey(id)) return;
   const nav = nextChatNav();
   try {
     const detail = await getJson(`/api/bots/${encodeURIComponent(id)}/dm`);

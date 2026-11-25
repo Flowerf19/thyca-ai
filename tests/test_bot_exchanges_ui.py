@@ -164,11 +164,16 @@ globalThis.fetch = async (url, opts = {}) => {
   }
   throw new Error('unexpected fetch ' + url);
 };
-await ui.openExchangeModal('thyca', 'helper');
 const dialog = doc.querySelector('#exchange-modal');
+const modalBody = doc.querySelector('#exchange-modal-body');
+if (dialog) { dialog.scrollHeight = 900; dialog.scrollTop = 0; }
+if (modalBody) { modalBody.scrollHeight = 900; modalBody.scrollTop = 0; }
+await ui.openExchangeModal('thyca', 'helper');
 result.modal = {
   open: !!dialog?.open,
   title: dialog?.querySelector('#exchange-modal-title')?.textContent ?? null,
+  dialogScrollTop: dialog?.scrollTop ?? null,
+  bodyScrollTop: modalBody?.scrollTop ?? null,
   rows: [...(dialog?.querySelectorAll('.exchange-row') ?? [])].map(
     r => [r.className, r.querySelector('header span')?.textContent ?? null,
           r.querySelector('.exchange-bubble')?.textContent ?? null]),
@@ -255,4 +260,6 @@ def test_modal_shows_both_sides_and_closes(exchange_ui: dict) -> None:
     assert [r[2] for r in modal["rows"]] == ["làm giúp", "xong"]
     assert any("is-owner" in r[0] for r in modal["rows"])
     assert any("is-partner" in r[0] for r in modal["rows"])
+    assert modal["dialogScrollTop"] == 900
+    assert modal["bodyScrollTop"] == 900
     assert exchange_ui["modalClosed"] is True

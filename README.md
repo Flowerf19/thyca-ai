@@ -4,42 +4,23 @@ Thyca is a personal assistant that runs on your own Linux machine. It is a **tea
 
 **Version: 0.88.0.dev4** (development build, not yet a stable release)
 
-![Chat with a team of bots](docs/images/webui-chat-readme.png)
+## Live Demo
 
-*The Chat screen: your bot team on the left, a conversation in the middle.*
+[▶ Watch the live 3-bot demo video (`docs/demo/thyca-demo.mp4`)](docs/demo/thyca-demo.mp4)
+
+*Live walkthrough on local Thyca `0.88.0.dev4`: `thyca` delegates research to `searcher` (Tavily MCP) and Discord publishing to `march7th` (Discord MCP), inspects bot-to-bot exchanges, saves memory via `memory_remember`, coordinates in a group room, and walks through Profile, Expression Studio, Usage/Trace, and the live post in Discord.*
 
 ## What you can do
 
-- **Chat with the team.** Pick a bot in the sidebar, or type `@bot-name` in the composer to hand a message to another bot. Bots show what they are doing while they work.
+- **Chat with the team.** Pick a bot in the sidebar, or type `@bot-name` in the composer to hand a message to another bot. Bots show what they are doing while they work, and bot-to-bot exchanges can be opened directly from the thread.
 - **Talk to several bots at once.** Group conversations bring multiple bots into one room; groups can be named, pinned, and opened from the same sidebar as bots.
-- **Give each bot its own model.** Choose a per-bot model, reasoning level, and advanced runtime limits in Profile; leave them empty to follow the shared default.
-- **Let Thyca remember.** Bots write memories to a daily journal you can browse, search, and filter on the Journal screen.
-
-## Screens
-
-![Journal: daily memories and search](docs/images/webui-memories-readme.png)
-
-*Journal (`Nhật ký`): browse, filter, reinforce, edit, or forget daily memory leaves.*
-
-![Profile: shared user, soul, and identity files](docs/images/webui-profile-readme.png)
-
-*Profile (`Hồ sơ`): edit `USER.md`, `SOUL.md`, and `IDENTITY.md`, or inspect each bot's dossier.*
-
-![Provider: connections, models, pricing, and reasoning levels](docs/images/webui-provider-readme.png)
-
-*Provider: configure OpenAI-compatible endpoints, models, token pricing, and reasoning levels.*
-
-![Usage: token, cost, latency, and trace dashboard](docs/images/webui-usage-readme.png)
-
-*Usage (`Sử dụng`): track tokens, estimated cost, latency, and per-turn traces.*
-
-![Settings: per-bot model and app preferences](docs/images/webui-settings-readme.png)
-
-*Settings (`Cài đặt`): per-bot companion settings, appearance, and run limits in one dialog.*
+- **Give each bot its own model & limits.** Choose a per-bot model, reasoning level, and advanced runtime limits (`loopMax`, `hotTailKB`, `contextTokens`, `softTimeoutS`) in Profile; leave them empty to follow the shared default.
+- **Let Thyca remember.** Bots write memories when asked (`memory_remember`) or during context compaction to a daily journal you can browse, search, and filter on the Journal screen.
+- **Multi-provider & full trace visibility.** Connect OpenAI Chat/Responses, Anthropic Messages, or Google Gemini on the Provider screen, and inspect token usage, cost, latency, and per-turn tool traces on the Usage screen.
 
 ## Quick start
 
-You need Linux, Python 3.14+, and an API key for an OpenAI-compatible provider.
+You need Linux, Python 3.14+, and an API key for OpenAI, Anthropic, Google Gemini, or any OpenAI-compatible provider.
 
 ```bash
 curl -LsSf https://raw.githubusercontent.com/Flowerf19/thyca-ai/main/install.sh | sh

@@ -2642,6 +2642,26 @@ def test_select_bot_resolves_dm_get_only(node: str) -> None:
     assert "Không mở được phiên với Coder" in out["error"]
 
 
+def test_select_bot_returns_to_dm_from_group_when_same_bot_selected(node: str) -> None:
+    out = _run(node, _CHAT_SEED + """
+        currentConversation = 'group:g1';
+        selectedBot = 'thyca';
+        const calls = installFetch(url => {
+            if (url === '/api/bots/thyca/dm') return { kind: 'dm', bot_id: 'thyca', messages: [{ role: 'assistant', content: 'quay lại DM', ts: 2 }] };
+            return { exchanges: [] };
+        });
+        await selectBot('thyca');
+        return {
+            conversation: currentConversation,
+            title: $('#chat-title').textContent,
+            urls: calls.map(c => c[0]),
+        };
+    """, via="chat")
+    assert out["conversation"] == "dm:thyca"
+    assert out["title"] == "Thyca"
+    assert out["urls"] == ["/api/bots/thyca/dm", "/api/bots/thyca/exchanges"]
+
+
 def test_render_transcript_skips_sidecars_and_attributes_bots(node: str) -> None:
     """renderTranscript keeps user + assistant rows, drops system/tool roles
     and compaction meta, attributes assistants via meta.bot_id then

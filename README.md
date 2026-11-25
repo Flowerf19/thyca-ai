@@ -6,7 +6,7 @@ Thyca is a personal assistant that runs on your own Linux machine. It is a **tea
 
 ## Live Demo
 
-[▶ Watch the live 3-bot demo video (`docs/demo/thyca-demo.mp4`)](docs/demo/thyca-demo.mp4)
+https://github.com/user-attachments/assets/e239a112-78c8-4a59-bec7-fe29d5174dfe
 
 *Live walkthrough on local Thyca `0.88.0.dev4`: `thyca` delegates research to `searcher` (Tavily MCP) and Discord publishing to `march7th` (Discord MCP), inspects bot-to-bot exchanges, saves memory via `memory_remember`, coordinates in a group room, and walks through Profile, Expression Studio, Usage/Trace, and the live post in Discord.*
 

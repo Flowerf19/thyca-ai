@@ -462,7 +462,7 @@ def test_cursor_full_once_then_delta(tmp_path: Path) -> None:
 
 def test_flush_sees_intact_canonical_transcript(tmp_path: Path) -> None:
     llm = _SpyLLM()
-    app = _chat(tmp_path, llm, context_tokens=5200)
+    app = _chat(tmp_path, llm, context_tokens=32000)
     try:
         app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
                                  description="Codes.", persona="PERSONA-CODER"))
@@ -475,10 +475,10 @@ def test_flush_sees_intact_canonical_transcript(tmp_path: Path) -> None:
         manager.load(binding.conversation_id)
         for index in range(10):
             manager.append(Message(
-                role="user", content=f"FLUSH-ME-{index} " + "u" * 500,
+                role="user", content=f"FLUSH-ME-{index} " + "u" * 7000,
                 ts=f"2026-08-01T10:{index:02d}:00Z"))
             manager.append(Message(
-                role="assistant", content=f"answer-{index} " + "a" * 500,
+                role="assistant", content=f"answer-{index} " + "a" * 7000,
                 ts=f"2026-08-01T10:{index:02d}:30Z"))
 
         seen: list[bool] = []

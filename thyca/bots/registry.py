@@ -22,6 +22,7 @@ from thyca.bots.card import (
     TEAM_TINTS,
     BotCard,
     BotCardDoc,
+    BotLimits,
     BotModel,
     effective_avatar,
     parse_bot_card,
@@ -31,7 +32,7 @@ from thyca.bots.card import (
 from thyca.bots.settings import (
     SettingsError,
     lock_path_for,
-    read_settings,
+    read_bot_settings,
     strip_card_model_text,
     write_settings,
 )
@@ -45,6 +46,7 @@ from thyca.skills.sharing import SharingCorrupt, load_shared_names
 from thyca.skills.store import _NAME_RE, NAME_MAX, SkillMeta, SkillStore
 
 SYSTEM_BOT_ID = "thyca"
+_LIMITS_UNSET = object()
 
 _PACKAGED_BOTS = Path(__file__).resolve().parents[1] / "seeds" / "bots"
 _PACKAGED_TEAM_SKILLS = Path(__file__).resolve().parents[1] / "seeds" / "skills-team"
@@ -147,14 +149,14 @@ class BotRegistry:
         return FileLock(str(lock_path_for(self.thyca_dir, bot_id)), timeout=5)
 
     def _persist_settings_first(self, bot_id: str, card: BotCard) -> BotModel:
-        """Persist a card's model to ``settings.json`` before any TWIN write.
+        """Persist a card's model and limits to ``settings.json`` before any TWIN write.
 
         Settings always win on read, so a later TWIN rewrite can never
         erase the model first: the settings write lands before the card
         write, and a settings failure leaves the legacy TWIN untouched."""
         model = card.model if card.model is not None else BotModel(id="default")
         try:
-            return write_settings(self.thyca_dir, bot_id, model)
+            return write_settings(self.thyca_dir, bot_id, model, limits=card.limits)
         except SettingsError as exc:
             raise RegistryError(str(exc)) from None
 
@@ -237,12 +239,14 @@ class BotRegistry:
         writes; an unreadable or invalid file marks the bot invalid
         (the roster skips it, like any other broken card)."""
         try:
-            settings = read_settings(self.thyca_dir, card.bot_id)
+            settings = read_bot_settings(self.thyca_dir, card.bot_id)
         except SettingsError as exc:
             return BotCardDoc(None, ok=False, error=f"invalid bot settings: {exc}")
         if settings is None:
             return BotCardDoc(card, ok=True)
-        return BotCardDoc(replace(card, model=settings), ok=True)
+        return BotCardDoc(
+            replace(card, model=settings.model, limits=settings.limits), ok=True
+        )
 
     def settings_path(self, bot_id: str) -> Path:
         """Validated path of a bot's ``settings.json`` (no I/O)."""
@@ -292,7 +296,9 @@ class BotRegistry:
         dest.mkdir(parents=True, exist_ok=True)
         dest.chmod(0o700)
         with self._bot_lock(card.bot_id):
-            self._persist_settings_first(card.bot_id, doc.card)
+            self._persist_settings_first(
+                card.bot_id, replace(doc.card, limits=card.limits)
+            )
             self._write_card(card.bot_id, doc.card)
             (dest / "skills").mkdir(exist_ok=True)
             (dest / "sessions").mkdir(exist_ok=True)
@@ -323,12 +329,20 @@ class BotRegistry:
                 raise RegistryError(f"invalid card: {doc.error}")
             if card.paused != current.paused:
                 raise RegistryError("use pause/restore to change paused state")
-            self._persist_settings_first(bot_id, doc.card)
+            self._persist_settings_first(
+                bot_id, replace(doc.card, limits=current.limits)
+            )
             self._write_card(bot_id, doc.card)
         return self.require(bot_id)
 
-    def update_settings(self, bot_id: str, model: BotModel) -> BotCard:
-        """Replace one bot's model settings (the dedicated edit API).
+    def update_settings(
+        self,
+        bot_id: str,
+        model: BotModel,
+        *,
+        limits: BotLimits | object | None = _LIMITS_UNSET,
+    ) -> BotCard:
+        """Replace one bot's model and optional limits settings (the dedicated edit API).
 
         Writes ``settings.json`` first, then strips only the frontmatter
         ``model`` key from the card — persona, policies, and unknown
@@ -337,9 +351,19 @@ class BotRegistry:
         failure raises (the card stays intact, settings stay
         authoritative) instead of returning a silently duplicated 200."""
         with self._bot_lock(bot_id):
-            self.require(bot_id)
+            current = self.require(bot_id)
+            next_limits = (
+                current.limits
+                if limits is _LIMITS_UNSET
+                else limits
+            )
             try:
-                write_settings(self.thyca_dir, bot_id, model)
+                write_settings(
+                    self.thyca_dir,
+                    bot_id,
+                    model,
+                    limits=next_limits if isinstance(next_limits, BotLimits) else None,
+                )
             except SettingsError as exc:
                 raise RegistryError(str(exc)) from None
             self._strip_legacy_model(bot_id)

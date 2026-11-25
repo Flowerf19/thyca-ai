@@ -135,6 +135,54 @@ def normalize_usage(raw: dict | None, provider: str) -> dict | None:
     return out or None
 
 
+_STOP_REASONS = frozenset({"stop", "completed", "end_turn", "stop_sequence", "pause_turn"})
+_TOOL_REASONS = frozenset({"tool_calls", "tool_use", "function_call"})
+_LENGTH_REASONS = frozenset(
+    {"length", "max_tokens", "incomplete", "model_context_window_exceeded"}
+)
+_BLOCKED_REASONS = frozenset(
+    {
+        "blocked",
+        "content_filter",
+        "refusal",
+        "safety",
+        "recitation",
+        "prohibited_content",
+        "blocklist",
+        "spii",
+        "image_safety",
+        "image_prohibited_content",
+        "language",
+    }
+)
+_MALFORMED_TOOL_REASONS = frozenset(
+    {
+        "malformed_tool",
+        "malformed_function_call",
+        "unexpected_tool_call",
+        "too_many_tool_calls",
+    }
+)
+
+
+def normalize_finish_reason(raw: object, *, has_tool_calls: bool = False) -> str:
+    """Normalize provider stop/finish reasons to ``stop|tool_calls|length|blocked|malformed_tool``."""
+    text = raw.strip().lower() if isinstance(raw, str) else ""
+    if not text:
+        return "tool_calls" if has_tool_calls else ""
+    if text in _TOOL_REASONS:
+        return "tool_calls"
+    if text in _STOP_REASONS:
+        return "tool_calls" if has_tool_calls else "stop"
+    if text in _LENGTH_REASONS:
+        return "length"
+    if text in _BLOCKED_REASONS:
+        return "blocked"
+    if text in _MALFORMED_TOOL_REASONS:
+        return "malformed_tool"
+    return text
+
+
 class LLMError(RuntimeError):
     """Provider HTTP or payload error. Must not contain API keys."""
 

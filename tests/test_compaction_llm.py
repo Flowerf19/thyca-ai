@@ -63,10 +63,10 @@ class NoTools:
 
 
 def _seeded(tmp_path: Path, turns: int = 4) -> ConversationManager:
-    manager = _canonical_manager(tmp_path, LimitsCfg(contextTokens=1000))
+    manager = _canonical_manager(tmp_path, LimitsCfg(contextTokens=32000))
     for i in range(turns):
-        manager.append(Message(role="user", content=f"old-{i}-" + "u" * 300))
-        manager.append(Message(role="assistant", content="a" * 300))
+        manager.append(Message(role="user", content=f"old-{i}-" + "u" * 16000))
+        manager.append(Message(role="assistant", content="a" * 16000))
     return manager
 
 
@@ -161,7 +161,7 @@ def test_auto_compact_in_loop_uses_summarizer(tmp_path: Path) -> None:
         observe=Observe(manager),
         loop_max=3,
         model="m",
-        context_tokens=1000,
+        context_tokens=32000,
         summarizer=stub,
     )
     assert asyncio.run(loop.run("new question")) == "next answer"

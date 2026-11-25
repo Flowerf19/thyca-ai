@@ -21,8 +21,8 @@ class NoCalls:
 @pytest.fixture
 def app(tmp_path):
     cfg = replace(seeded_config(), defaultModel="unknown-unpriced", models={
-        "card-model": ModelCfg(contextTokens=4096, input=1, cache=0.5, output=2),
-        "override-model": ModelCfg(contextTokens=8192, input=3, cache=1, output=4),
+        "card-model": ModelCfg(contextTokens=32768, input=1, cache=0.5, output=2),
+        "override-model": ModelCfg(contextTokens=65536, input=3, cache=1, output=4),
     })
     save(cfg, tmp_path / "config.json")
     instance = ChatApp(tmp_path, cfg, connect=NoCalls())
@@ -85,7 +85,7 @@ def test_operations_use_only_original_window_events_and_recorded_cost(app):
     assert result["last_turn"]["model"] == "observed-old-model"
     assert result["trace"] == {"conversation_id": room["conversation_id"], "turn_index": 0}
     assert result["model"]["id"] == "card-model"
-    assert result["context"]["context_tokens"] == 4096
+    assert result["context"]["context_tokens"] == 32768
     assert result["context"]["transcript_tokens"] == sum(map(estimate_tokens, basis))
     assert result["context"]["overhead_tokens"] == 150
     assert result["context"]["estimated"] is True
@@ -95,7 +95,7 @@ def test_operations_use_only_original_window_events_and_recorded_cost(app):
     }
     assert "private" not in str(result)
     selected = app.bot_operations(room["conversation_id"], "coder", model="override-model", effort="low")
-    assert selected["context"]["context_tokens"] == 8192
+    assert selected["context"]["context_tokens"] == 65536
     assert selected["model"]["reasoning_effort"] == "low"
     assert selected["rates"]["input"] == 3
     assert selected["conversation"]["cost_usd"] == 0.03

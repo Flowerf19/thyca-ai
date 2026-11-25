@@ -88,8 +88,8 @@ def _append_long_canonical_history(app: ChatApp, bot_id: str, room_id: str) -> N
     manager = ConversationManager(store=store)
     manager.load(internal.conversation_id)
     for index in range(4):
-        manager.append(Message(role="user", content=f"old user {index} " + "u" * 1200))
-        manager.append(Message(role="assistant", content=f"old assistant {index} " + "a" * 1200))
+        manager.append(Message(role="user", content=f"old user {index} " + "u" * 12000))
+        manager.append(Message(role="assistant", content=f"old assistant {index} " + "a" * 12000))
 
 
 def test_bot_and_operation_model_precedence_reaches_chat_and_compaction(
@@ -112,13 +112,13 @@ def test_bot_and_operation_model_precedence_reaches_chat_and_compaction(
         defaultProvider="default",
         defaultModel="global-model",
         models={
-            "global-model": ModelCfg(contextTokens=8192, hotTailKB=2),
+            "global-model": ModelCfg(contextTokens=32768, hotTailKB=2),
             "card-model": ModelCfg(
-                provider="card-provider", contextTokens=16384, hotTailKB=3,
+                provider="card-provider", contextTokens=65536, hotTailKB=3,
                 input=1.0, cache=0.5, output=2.0,
             ),
             "override-model": ModelCfg(
-                provider="override-provider", contextTokens=32768, hotTailKB=4,
+                provider="override-provider", contextTokens=131072, hotTailKB=4,
                 input=3.0, cache=1.5, output=4.0,
             ),
         },
@@ -189,7 +189,7 @@ def test_bot_and_operation_model_precedence_reaches_chat_and_compaction(
             "card-key", "global-key", "override-key"
         ]
         assert [item["context_tokens"] for item in captured_builds[:3]] == [
-            16384, 8192, 32768
+            65536, 32768, 131072
         ]
         assert [item["tail_kb"] for item in captured_builds[:3]] == [3, 2, 4]
         assert captured_builds[0]["pricing"]["card-model"] == PricingCfg(
@@ -209,7 +209,7 @@ def test_bot_and_operation_model_precedence_reaches_chat_and_compaction(
             "global-model", "card-model"
         ]
         assert [item["context_tokens"] for item in captured_compactions] == [
-            8192, 16384
+            32768, 65536
         ]
         assert [item["tail_kb"] for item in captured_compactions] == [2, 3]
 
@@ -223,7 +223,7 @@ def test_bot_and_operation_model_precedence_reaches_chat_and_compaction(
             "override-model", "override-model"
         ]
         assert [item["context_tokens"] for item in captured_compactions] == [
-            32768, 32768
+            131072, 131072
         ]
         assert [item["tail_kb"] for item in captured_compactions] == [4, 4]
     finally:
@@ -512,7 +512,7 @@ def test_multi_bot_compact_preserves_room_and_reports_absent_and_failed_contexts
     tmp_path: Path, monkeypatch
 ) -> None:
     llm = RecordingLLM(ChatReply(content="summary", model="test-model"))
-    app = _app(tmp_path, llm, context_tokens=4096)
+    app = _app(tmp_path, llm, context_tokens=32000)
     try:
         _coder(app)
         group = app.create(bots=["thyca", "coder"])["conversation_id"]
@@ -620,7 +620,7 @@ def test_compaction_does_not_pollute_next_turn_usage_or_trace(tmp_path: Path) ->
             usage={"prompt_tokens": 11, "completion_tokens": 2},
         )
     )
-    app = _app(tmp_path, llm, context_tokens=9000)
+    app = _app(tmp_path, llm, context_tokens=32000)
     try:
         group = app.create(bots=["thyca"])["conversation_id"]
         app.turn(group, "first")

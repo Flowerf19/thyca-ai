@@ -105,7 +105,17 @@ function playLabSequence(){
  labDelay(6800,labWriting);
 }
 
-$('#open-studio').onclick=()=>{const pick=$('#settings-bot')?.value;const id=pick&&getBot(pick)?pick:selectedBot;stopLab(false);$('#expression-bot').innerHTML=bots.map(b=>`<option value="${b.id}"${b.id===id?' selected':''}>${b.name}</option>`).join('');lab.lastChoice=expressionFor(getBot(id));$('#bot-color').value=getBot(id).color;buildExpressions();$('#expressions-dialog').showModal();};
+function openExpressionStudio(pick){
+ const id=pick&&getBot(pick)?pick:(selectedBot||bots[0]?.id||'');
+ const target=getBot(id);if(!target)return;
+ stopLab(false);
+ $('#expression-bot').innerHTML=bots.map(b=>`<option value="${b.id}"${b.id===id?' selected':''}>${b.name}</option>`).join('');
+ $('#expression-bot').value=id;
+ lab.lastChoice=expressionFor(target);
+ $('#bot-color').value=target.color;
+ buildExpressions();
+ $('#expressions-dialog').showModal();
+}
 $('#expression-bot').onchange=()=>{stopLab();lab.lastChoice=expressionFor(getBot($('#expression-bot').value));$('#bot-color').value=getBot($('#expression-bot').value).color;buildExpressions();};
 $('#bot-color').oninput=e=>(window.ThycaShell||window.ThycaPrototype)?.setBotColor($('#expression-bot').value,e.target.value);
 $('#shape-picker').addEventListener('click',e=>{const btn=e.target.closest('[data-shape]');if(!btn)return;const id=$('#expression-bot').value;if((window.ThycaShell||window.ThycaPrototype)?.setBotShape(id,btn.dataset.shape))buildExpressions();});

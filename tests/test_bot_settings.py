@@ -19,7 +19,7 @@ import thyca.bots.registry as registry_mod
 from thyca.app.chat_app import ChatApp, ConnectFactory
 from thyca.bots.admin_tools import apply_card_edit
 from thyca.bots.bus import new_span_id, new_trace_id
-from thyca.bots.card import BotCard, BotModel
+from thyca.bots.card import BotCard, BotLimits, BotModel
 from thyca.bots.context import BotTurnContext, BotTurnScope
 from thyca.bots.registry import BotRegistry, RegistryError
 from thyca.bots.settings import (
@@ -611,7 +611,15 @@ def test_http_custom_effort_set_and_corrupt_is_503(tmp_path: Path) -> None:
         )
         assert status == 200, body
         assert body["effective"] == {
-            "model": "custom-model", "provider": "default", "thinking": "custom",
+            "model": "custom-model",
+            "provider": "default",
+            "thinking": "custom",
+            "limits": {
+                "loopMax": 200,
+                "hotTailKB": 4,
+                "contextTokens": 272000,
+                "softTimeoutS": 60,
+            },
         }
         status, body = _request(
             server, "/api/bots/thyca/settings", "POST",
@@ -905,3 +913,182 @@ def test_invalid_settings_trigger_no_fallback_provider_call(
         assert captured == []
     finally:
         app.shutdown()
+
+
+def test_bot_limits_persist_validate_reset_and_override_runtime(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    cfg = replace(
+        _runtime_config(),
+        models={
+            "global-model": ModelCfg(contextTokens=200_000, hotTailKB=6, loopMax=90),
+            "card-model": ModelCfg(
+                provider="card-provider",
+                contextTokens=180_000,
+                hotTailKB=5,
+                loopMax=80,
+                reasoningEfforts=("low", "custom"),
+            ),
+        },
+    )
+    save(cfg, tmp_path / "config.json")
+    llm = _RecordingLLM()
+    monkeypatch.setattr(ConnectFactory, "create", lambda api, provider: llm)
+    captured_builds: list[dict] = []
+    original_build = __import__(
+        "thyca.app.toolchain", fromlist=["build_agent_loop"]
+    ).build_agent_loop
+
+    def spy_build(**kwargs):
+        captured_builds.append({
+            "context_tokens": kwargs["context_tokens"],
+            "loop_max": kwargs["loop_max"],
+            "hot_tail_kb": kwargs["conversations"].limits.hotTailKB,
+        })
+        return original_build(**kwargs)
+
+    monkeypatch.setattr("thyca.app.toolchain.build_agent_loop", spy_build)
+    app = ChatApp(tmp_path, load(tmp_path / "config.json"))
+    app._bots.create(BotCard(
+        bot_id="coder", name="coder", role="Coder",
+        description="Writes code.", persona="",
+        model=BotModel(id="card-model", thinking="low"),
+    ))
+    app._bots.create(BotCard(
+        bot_id="designer", name="designer", role="Designer",
+        description="Designs.", persona="",
+    ))
+    server, thread = _serve(tmp_path, app)
+    try:
+        status, body = _request(server, "/api/bots/coder/settings")
+        assert status == 200
+        assert body["limits"] == {
+            "loopMax": None,
+            "hotTailKB": None,
+            "contextTokens": None,
+            "softTimeoutS": None,
+        }
+        assert body["effective"]["limits"] == {
+            "loopMax": 80,
+            "hotTailKB": 5,
+            "contextTokens": 180_000,
+            "softTimeoutS": 60,
+        }
+
+        for bad_limits in (
+            {"contextTokens": 31_999},
+            {"contextTokens": 1_000_001},
+            {"loopMax": 0},
+            {"loopMax": 201},
+            {"hotTailKB": 65},
+            {"softTimeoutS": 301},
+            {"contextTokens": True},
+            {"contextTokens": 64000.5},
+            {"unknown": 1},
+            "bad",
+        ):
+            status, body = _request(
+                server,
+                "/api/bots/coder/settings",
+                "POST",
+                {"model": {"id": "card-model", "thinking": "low"}, "limits": bad_limits},
+            )
+            assert status == 400 and body == {"error": "invalid limits"}, (bad_limits, body)
+
+        status, body = _request(
+            server,
+            "/api/bots/coder/settings",
+            "POST",
+            {
+                "model": {"id": "card-model", "thinking": "low"},
+                "limits": {
+                    "loopMax": 45,
+                    "hotTailKB": 12,
+                    "contextTokens": 128_000,
+                    "softTimeoutS": 30,
+                },
+            },
+        )
+        assert status == 200, body
+        assert body["limits"] == {
+            "loopMax": 45,
+            "hotTailKB": 12,
+            "contextTokens": 128_000,
+            "softTimeoutS": 30,
+        }
+        assert body["effective"]["limits"] == {
+            "loopMax": 45,
+            "hotTailKB": 12,
+            "contextTokens": 128_000,
+            "softTimeoutS": 30,
+        }
+
+        stored = json.loads((tmp_path / "bots" / "coder" / "settings.json").read_text())
+        assert stored["limits"] == {
+            "loopMax": 45,
+            "hotTailKB": 12,
+            "contextTokens": 128_000,
+            "softTimeoutS": 30,
+        }
+
+        edited = apply_card_edit(app._bots.require("coder"), {"role": "Principal Coder"})
+        app._bots.update_card("coder", edited)
+        assert app._bots.require("coder").limits == BotLimits(
+            loopMax=45, hotTailKB=12, contextTokens=128_000, softTimeoutS=30
+        )
+
+        status, body = _request(
+            server,
+            "/api/bots/coder/settings",
+            "POST",
+            {"model": {"id": "card-model", "thinking": "custom"}},
+        )
+        assert status == 200
+        assert body["limits"] == {
+            "loopMax": 45,
+            "hotTailKB": 12,
+            "contextTokens": 128_000,
+            "softTimeoutS": 30,
+        }
+
+        app.turn(app.bot_dm("coder")["conversation_id"], "use my bot limits")
+        assert captured_builds[-1] == {
+            "context_tokens": 128_000,
+            "loop_max": 45,
+            "hot_tail_kb": 12,
+        }
+        assert app._memory.tail_kb == 12
+        assert app._gateway._soft_timeout_s == 30
+
+        app.turn(app.bot_dm("designer")["conversation_id"], "use default limits")
+        assert captured_builds[-1] == {
+            "context_tokens": 200_000,
+            "loop_max": 90,
+            "hot_tail_kb": 6,
+        }
+
+        status, body = _request(
+            server,
+            "/api/bots/coder/settings",
+            "POST",
+            {"model": {"id": "card-model", "thinking": "custom"}, "limits": None},
+        )
+        assert status == 200
+        assert body["limits"] == {
+            "loopMax": None,
+            "hotTailKB": None,
+            "contextTokens": None,
+            "softTimeoutS": None,
+        }
+        assert body["effective"]["limits"] == {
+            "loopMax": 80,
+            "hotTailKB": 5,
+            "contextTokens": 180_000,
+            "softTimeoutS": 60,
+        }
+        stored_after_reset = json.loads(
+            (tmp_path / "bots" / "coder" / "settings.json").read_text()
+        )
+        assert "limits" not in stored_after_reset
+    finally:
+        _stop(server, thread, app)

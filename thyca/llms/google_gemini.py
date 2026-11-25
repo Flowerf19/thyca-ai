@@ -12,7 +12,7 @@ import httpx
 from thyca.core.protocol import Message, ToolCall
 
 from ._http import BaseConnect, cap, iter_sse_data, parse_json_bytes, redact
-from ._shared import _arguments
+from ._shared import _arguments, iter_tool_specs, resolve_finish_reason
 from .llm_base import ChatReply, LLMError, normalize_usage
 from .streaming import ContentOut, ReasoningOut
 
@@ -47,21 +47,12 @@ def _gemini_stream_url(base_url: str, model: str) -> str:
 def _to_gemini_tools(tools: list) -> list[dict[str, Any]]:
     """Chat-schema tools (the ``Connect`` contract) to Gemini functionDeclarations."""
     declarations: list[dict[str, Any]] = []
-    for spec in tools:
-        if not isinstance(spec, dict):
-            continue
-        fn = spec.get("function")
-        if isinstance(fn, dict):
-            name, desc, params = fn.get("name"), fn.get("description"), fn.get("parameters")
-        else:
-            name, desc, params = spec.get("name"), spec.get("description"), spec.get("parameters")
-        if not isinstance(name, str) or not name:
-            continue
-        decl: dict[str, Any] = {"name": name}
-        if isinstance(desc, str) and desc:
-            decl["description"] = desc
-        if isinstance(params, dict) and params:
-            decl["parametersJsonSchema"] = params
+    for spec in iter_tool_specs(tools):
+        decl: dict[str, Any] = {"name": spec.name}
+        if spec.description:
+            decl["description"] = spec.description
+        if spec.parameters:
+            decl["parametersJsonSchema"] = spec.parameters
         declarations.append(decl)
     if not declarations:
         return []
@@ -81,12 +72,13 @@ def _append_content_parts(
 
 def _extract_gemini_signatures(
     details: list[dict] | None,
-) -> tuple[list[dict[str, Any]], dict[str, str], str]:
+) -> tuple[list[dict[str, Any]], dict[str, str], str, list[str]]:
     thought_parts: list[dict[str, Any]] = []
     call_sigs: dict[str, str] = {}
     text_sig = ""
+    standalone_sigs: list[str] = []
     if not details:
-        return thought_parts, call_sigs, text_sig
+        return thought_parts, call_sigs, text_sig, standalone_sigs
     for detail in details:
         if not isinstance(detail, dict):
             continue
@@ -110,7 +102,11 @@ def _extract_gemini_signatures(
             sig = detail.get("thoughtSignature")
             if isinstance(sig, str) and sig:
                 text_sig = sig
-    return thought_parts, call_sigs, text_sig
+        elif dtype == "gemini.thought_signature":
+            sig = detail.get("thoughtSignature")
+            if isinstance(sig, str) and sig:
+                standalone_sigs.append(sig)
+    return thought_parts, call_sigs, text_sig, standalone_sigs
 
 
 def _to_gemini_contents(
@@ -131,7 +127,7 @@ def _to_gemini_contents(
             _append_content_parts(contents, "user", [{"text": text}])
             continue
         if message.role == "assistant":
-            thought_parts, call_sigs, text_sig = _extract_gemini_signatures(
+            thought_parts, call_sigs, text_sig, standalone_sigs = _extract_gemini_signatures(
                 message.reasoning_details
             )
             parts: list[dict[str, Any]] = list(thought_parts)
@@ -140,6 +136,8 @@ def _to_gemini_contents(
                 if text_sig:
                     text_part["thoughtSignature"] = text_sig
                 parts.append(text_part)
+            elif text_sig:
+                parts.append({"text": "", "thoughtSignature": text_sig})
             for call in message.tool_calls or []:
                 call_names[call.id] = call.name
                 fc: dict[str, Any] = {"name": call.name, "args": call.arguments}
@@ -150,6 +148,7 @@ def _to_gemini_contents(
                 if sig:
                     part["thoughtSignature"] = sig
                 parts.append(part)
+            parts.extend({"thoughtSignature": sig} for sig in standalone_sigs)
             _append_content_parts(contents, "model", parts)
             continue
         if message.role == "tool":
@@ -239,6 +238,8 @@ def _parse_parts(
                 raise LLMError("provider content must be string or null")
             if has_sig:
                 details.append({"type": "gemini.text_signature", "thoughtSignature": sig})
+        elif has_sig:
+            details.append({"type": "gemini.thought_signature", "thoughtSignature": sig})
 
 
 def parse_gemini_payload(raw: dict, key: str) -> ChatReply:
@@ -247,11 +248,12 @@ def parse_gemini_payload(raw: dict, key: str) -> ChatReply:
         raise LLMError("provider response must be an object")
     if isinstance(raw.get("error"), dict):
         raise LLMError(f"provider error: {redact(cap(json.dumps(raw['error'])), key)}")
+    feedback = raw.get("promptFeedback")
+    if isinstance(feedback, dict) and feedback.get("blockReason"):
+        reason_text = redact(cap(str(feedback["blockReason"])), key)
+        raise LLMError(f"provider error: blocked ({reason_text})")
     candidates = raw.get("candidates")
     if not isinstance(candidates, list) or not candidates:
-        feedback = raw.get("promptFeedback")
-        if isinstance(feedback, dict) and feedback.get("blockReason"):
-            raise LLMError(f"provider error: blocked ({feedback['blockReason']})")
         raise LLMError("provider response missing candidates")
     first = candidates[0]
     if not isinstance(first, dict):
@@ -275,12 +277,18 @@ def parse_gemini_payload(raw: dict, key: str) -> ChatReply:
     finish = first.get("finishReason") or ""
     if not isinstance(finish, str):
         finish = str(finish)
+    raw_msg = first.get("finishMessage")
+    finish_message = raw_msg if isinstance(raw_msg, str) else ""
+    content = redact("".join(content_parts), key) or None
+    reason = resolve_finish_reason(
+        finish, content=content, calls=calls, key=key, detail=finish_message
+    )
     model = raw.get("modelVersion")
     return ChatReply(
-        content=redact("".join(content_parts), key) or None,
+        content=content,
         tool_calls=calls,
         usage=usage,
-        finish_reason=finish,
+        finish_reason=reason,
         model=model if isinstance(model, str) else None,
         reasoning=redact("".join(thought_parts), key) or None,
         reasoning_details=details or None,
@@ -305,6 +313,7 @@ async def read_gemini_sse(
     usage: dict | None = None
     model: str | None = None
     finish = ""
+    finish_message = ""
     saw_candidate = False
 
     async for chunk in iter_sse_data(response, key):
@@ -315,11 +324,12 @@ async def read_gemini_sse(
         raw_usage = chunk.get("usageMetadata")
         if isinstance(raw_usage, dict):
             usage = normalize_usage(raw_usage, "google_gemini")
+        feedback = chunk.get("promptFeedback")
+        if isinstance(feedback, dict) and feedback.get("blockReason"):
+            reason_text = redact(cap(str(feedback["blockReason"])), key)
+            raise LLMError(f"provider error: blocked ({reason_text})")
         candidates = chunk.get("candidates")
         if not isinstance(candidates, list) or not candidates:
-            feedback = chunk.get("promptFeedback")
-            if isinstance(feedback, dict) and feedback.get("blockReason"):
-                raise LLMError(f"provider error: blocked ({feedback['blockReason']})")
             continue
         first = candidates[0]
         if not isinstance(first, dict):
@@ -328,6 +338,9 @@ async def read_gemini_sse(
         reason = first.get("finishReason")
         if isinstance(reason, str) and reason:
             finish = reason
+        raw_msg = first.get("finishMessage")
+        if isinstance(raw_msg, str) and raw_msg:
+            finish_message = raw_msg
         content_obj = first.get("content")
         parts = content_obj.get("parts") if isinstance(content_obj, dict) else None
         _parse_parts(
@@ -345,11 +358,15 @@ async def read_gemini_sse(
     if not finish and not calls:
         raise LLMError("provider response incomplete")
     content_out.finish()
+    content = redact("".join(content_parts), key) or None
+    reason = resolve_finish_reason(
+        finish, content=content, calls=calls, key=key, detail=finish_message
+    )
     return ChatReply(
-        content=redact("".join(content_parts), key) or None,
+        content=content,
         tool_calls=calls,
         usage=usage,
-        finish_reason=finish,
+        finish_reason=reason,
         model=model,
         reasoning=reasoning.text(),
         reasoning_details=details or None,

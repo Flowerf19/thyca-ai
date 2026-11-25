@@ -93,15 +93,18 @@ def test_scope_navigation_flows_through_sidebar_and_url() -> None:
     assert "submenu" not in shell
 
     js = MEM_JS.read_text(encoding="utf-8")
-    assert 'id="memory-bot"' not in js
+    html = (UI / "chat" / "index.html").read_text(encoding="utf-8")
+    tpl = html.split('<template id="tpl-memories">', 1)[1].split("</template>", 1)[0]
+    assert 'id="memory-bot"' not in js and 'id="memory-bot"' not in tpl
     for marker in ('id="memory-kind"', 'id="memory-use"', 'id="memory-search"'):
-        assert marker in js, marker
+        assert marker in tpl, marker
+    assert "template#tpl-memories" in js
     assert "function selectBot(id)" in js
     assert "'?bot=' + encodeURIComponent" in js
     assert "ctx.updateRoute({ search: q })" in js
     assert "new URLSearchParams(ctx.route.search)" in js
     assert "/api/memory/stats?bot_id=${encodeURIComponent(scope)}" in js
-    assert 'id="memory-scope-card"' in js
+    assert 'id="memory-scope-card"' in tpl
     assert "mem-scope-clear" in js
     sidebar = (UI / "share" / "sidebar.js").read_text(encoding="utf-8")
     assert "selectBot(b.id)" in sidebar

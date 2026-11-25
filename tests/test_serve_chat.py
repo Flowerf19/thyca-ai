@@ -1393,7 +1393,7 @@ def test_conversation_payload_includes_context(tmp_path: Path) -> None:
 
 def _chat_small_context(tmp_path: Path) -> ChatApp:
     cfg = seeded_config()
-    cfg = replace(cfg, limits=replace(cfg.limits, contextTokens=1000))
+    cfg = replace(cfg, limits=replace(cfg.limits, contextTokens=32000))
     save(cfg, tmp_path / "config.json")
     return ChatApp(tmp_path, load(tmp_path / "config.json"), connect=FakeLLM(ChatReply(content="x")))
 
@@ -1453,8 +1453,8 @@ def _seed_canonical_long_conversation(app: ChatApp, conversation_id: str) -> int
     manager = ConversationManager(store=store)
     manager.load(binding.internal_conversation_id)
     for i in range(4):
-        manager.append(Message(role="user", content="canonical user " + "u" * 300 + str(i)))
-        manager.append(Message(role="assistant", content="canonical reply " + "a" * 300))
+        manager.append(Message(role="user", content="canonical user " + "u" * 12000 + str(i)))
+        manager.append(Message(role="assistant", content="canonical reply " + "a" * 12000))
     return len(manager.current.messages)
 
 

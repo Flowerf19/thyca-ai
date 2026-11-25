@@ -1,38 +1,53 @@
-"""Per-bot model settings (``bots/<id>/settings.json``).
+"""Per-bot model and limits settings (``bots/<id>/settings.json``).
 
-``TWIN.md`` owns identity/persona/policies; this file owns only the model
-selection (``{"model": {"id": ..., "thinking": ...}}``) so the Settings page
-and admin tools can edit it without rewriting the persona body. Reads never
-migrate: a missing file means "fall back to the legacy card model", while a
-present-but-invalid file is a hard error (no silent fallback).
+``TWIN.md`` owns identity/persona/policies; this file owns per-bot runtime
+settings (``{"model": {"id": ..., "thinking": ...}, "limits": {...}}``) so the
+Profile page and admin tools can edit them without rewriting the persona
+body. Reads never migrate: a missing file means "fall back to the legacy card
+model", while a present-but-invalid file is a hard error (no silent fallback).
 """
 from __future__ import annotations
 
 import json
 import unicodedata
+from dataclasses import dataclass
 from pathlib import Path
 
 import yaml
 
-from thyca.bots.card import BotModel
+from thyca.bots.card import BotLimits, BotModel
 from thyca.configs import atomic_write_text
+from thyca.configs.defaults import LIMIT_RANGES
 from thyca.skills.store import _FM_RE, _NAME_RE, NAME_MAX
 
 SETTINGS_FILENAME = "settings.json"
 
 MODEL_ID_MAX = 200
+LIMIT_FIELDS: tuple[str, ...] = ("loopMax", "hotTailKB", "contextTokens", "softTimeoutS")
 
 __all__ = [
+    "LIMIT_FIELDS",
     "SETTINGS_FILENAME",
+    "BotSettings",
     "SettingsError",
     "lock_path_for",
+    "read_bot_settings",
     "read_settings",
     "settings_path",
     "strip_card_model_text",
+    "validate_limits",
     "validate_model_id",
     "validate_thinking",
     "write_settings",
 ]
+
+
+@dataclass(frozen=True)
+class BotSettings:
+    """Parsed contents of ``bots/<id>/settings.json``."""
+
+    model: BotModel
+    limits: BotLimits | None = None
 
 
 class SettingsError(RuntimeError):
@@ -127,8 +142,36 @@ def _real_bot_dir(root: Path, bot_id: str) -> Path:
     return bot_dir
 
 
-def read_settings(root: Path, bot_id: str) -> BotModel | None:
-    """The persisted model, or None when the bot has no settings file.
+def validate_limits(raw: object) -> BotLimits | None:
+    """Per-bot runtime limit overrides, or None when inheriting defaults."""
+    if raw is None:
+        return None
+    if isinstance(raw, BotLimits):
+        mapping: dict[str, object] = raw.to_dict()
+    elif isinstance(raw, dict):
+        if any(key not in LIMIT_FIELDS for key in raw):
+            raise SettingsError("invalid limits")
+        mapping = raw
+    else:
+        raise SettingsError("invalid limits")
+    cleaned: dict[str, int | None] = {}
+    for key in LIMIT_FIELDS:
+        value = mapping.get(key)
+        if value is None:
+            cleaned[key] = None
+            continue
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise SettingsError("invalid limits")
+        lower, upper = LIMIT_RANGES[key]
+        if not lower <= value <= upper:
+            raise SettingsError("invalid limits")
+        cleaned[key] = value
+    limits = BotLimits(**cleaned)
+    return None if limits.is_empty() else limits
+
+
+def read_bot_settings(root: Path, bot_id: str) -> BotSettings | None:
+    """The persisted model and limits, or None when no settings file exists.
 
     Raises :class:`SettingsError` for unreadable, malformed, or invalid
     files — callers fall back to the legacy card model only when the
@@ -154,24 +197,36 @@ def read_settings(root: Path, bot_id: str) -> BotModel | None:
         raise SettingsError("bot settings unavailable") from None
     if not isinstance(data, dict):
         raise SettingsError("bot settings unavailable")
+    if "model" not in data or not set(data) <= {"model", "limits"}:
+        raise SettingsError("bot settings unavailable")
     model = data.get("model")
     if not isinstance(model, dict):
         raise SettingsError("bot settings unavailable")
     unknown = [key for key in model if key not in ("id", "thinking")]
     if unknown or "id" not in model:
         raise SettingsError("bot settings unavailable")
-    if set(data) != {"model"}:
-        raise SettingsError("bot settings unavailable")
     try:
         model_id = validate_model_id(model["id"])
         thinking = validate_thinking(model.get("thinking"))
+        limits = validate_limits(data.get("limits"))
     except SettingsError:
         raise SettingsError("bot settings unavailable") from None
-    return BotModel(id=model_id, thinking=thinking)
+    return BotSettings(model=BotModel(id=model_id, thinking=thinking), limits=limits)
 
 
-def write_settings(root: Path, bot_id: str, model: BotModel) -> BotModel:
-    """Atomically persist one bot's model settings (0600).
+def read_settings(root: Path, bot_id: str) -> BotModel | None:
+    """The persisted model, or None when the bot has no settings file."""
+    settings = read_bot_settings(root, bot_id)
+    return None if settings is None else settings.model
+
+
+def write_settings(
+    root: Path,
+    bot_id: str,
+    model: BotModel,
+    limits: BotLimits | None = None,
+) -> BotModel:
+    """Atomically persist one bot's model and optional limits settings (0600).
 
     The caller must already hold the bot lock; like every
     ``atomic_write_text`` caller, the lock lives with the caller and this
@@ -182,6 +237,7 @@ def write_settings(root: Path, bot_id: str, model: BotModel) -> BotModel:
     model_id = validate_model_id(model.id)
     thinking = validate_thinking(model.thinking)
     normalized = BotModel(id=model_id, thinking=thinking)
+    normalized_limits = validate_limits(limits)
     bot_dir = _real_bot_dir(root, bot_id)
     target = bot_dir / SETTINGS_FILENAME
     try:
@@ -189,7 +245,15 @@ def write_settings(root: Path, bot_id: str, model: BotModel) -> BotModel:
             raise SettingsError("bot settings unavailable")
     except OSError:
         raise SettingsError("bot settings unavailable") from None
-    payload = {"model": {"id": normalized.id, "thinking": normalized.thinking}}
+    payload: dict[str, object] = {
+        "model": {"id": normalized.id, "thinking": normalized.thinking}
+    }
+    if normalized_limits is not None:
+        payload["limits"] = {
+            key: value
+            for key, value in normalized_limits.to_dict().items()
+            if value is not None
+        }
     text = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
     try:
         atomic_write_text(target, text, mode=0o600)

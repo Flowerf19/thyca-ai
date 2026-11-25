@@ -57,15 +57,15 @@ class _FakeDispatcher:
 
 
 def _manager(tmp_path: Path) -> ConversationManager:
-    limits = LimitsCfg(contextTokens=4000)
+    limits = LimitsCfg(contextTokens=32000)
     return _canonical_manager(tmp_path, limits)
 
 
 def _seed_pairs(manager: ConversationManager) -> None:
     for round_no in (1, 2, 3):
-        manager.append(Message(role="user", content=f"q{round_no} " + "u" * 2497))
+        manager.append(Message(role="user", content=f"q{round_no} " + "u" * 20790))
         manager.append(
-            Message(role="assistant", content=f"a{round_no} " + "a" * 2497)
+            Message(role="assistant", content=f"a{round_no} " + "a" * 20790)
         )
 
 
@@ -77,7 +77,7 @@ def _loop(manager: ConversationManager, llm: _FakeLLM) -> AgentLoop:
         act=Act(_FakeDispatcher()),
         observe=Observe(manager),
         loop_max=5,
-        context_tokens=4000,
+        context_tokens=32000,
     )
 
 
@@ -106,7 +106,7 @@ def test_recovery_turn_reaches_llm_after_compaction(tmp_path: Path) -> None:
     manager = _manager(tmp_path)
     _seed_pairs(manager)
     estimate = sum(estimate_tokens(m) for m in manager.current.messages)
-    assert int(4000 * BACKSTOP_RATIO) < estimate <= 4000
+    assert int(32000 * BACKSTOP_RATIO) < estimate <= 32000
     llm = _FakeLLM([ChatReply(content="still here")])
     reply = asyncio.run(_loop(manager, llm).run("hi"))
     assert reply == "still here"
@@ -168,7 +168,7 @@ def test_overhead_only_trip_mints_no_marker(tmp_path: Path) -> None:
     manager.append(messages[1])
     journal = tmp_path / "bots" / "thyca" / "workspace" / "timeline.jsonl"
     before = journal.read_bytes()
-    assert manager.compact_if_needed(pending_user_tokens=5000) is False
+    assert manager.compact_if_needed(pending_user_tokens=35000) is False
     assert journal.read_bytes() == before
 
 
@@ -203,7 +203,7 @@ def test_overhead_only_trip_keeps_prior_marker_byte_identical(
     manager.append(body[1])
     journal = tmp_path / "bots" / "thyca" / "workspace" / "timeline.jsonl"
     before = journal.read_bytes()
-    assert manager.compact_if_needed(pending_user_tokens=5000) is False
+    assert manager.compact_if_needed(pending_user_tokens=35000) is False
     assert journal.read_bytes() == before
     assert manager.current.messages[0].content == marker.content
     assert manager.current.messages[0].meta == marker.meta

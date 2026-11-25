@@ -84,6 +84,30 @@ class BotModel:
 
 
 @dataclass(frozen=True)
+class BotLimits:
+    loopMax: int | None = None
+    hotTailKB: int | None = None
+    contextTokens: int | None = None
+    softTimeoutS: int | None = None
+
+    def is_empty(self) -> bool:
+        return (
+            self.loopMax is None
+            and self.hotTailKB is None
+            and self.contextTokens is None
+            and self.softTimeoutS is None
+        )
+
+    def to_dict(self) -> dict[str, int | None]:
+        return {
+            "loopMax": self.loopMax,
+            "hotTailKB": self.hotTailKB,
+            "contextTokens": self.contextTokens,
+            "softTimeoutS": self.softTimeoutS,
+        }
+
+
+@dataclass(frozen=True)
 class BotMemoryPolicy:
     read: bool = True
     write: bool = True
@@ -101,6 +125,7 @@ class BotCard:
     avatar: str | None = None
     version: int = VERSION
     model: BotModel | None = None
+    limits: BotLimits | None = None
     skills: tuple[str, ...] = ()
     tools: tuple[str, ...] = ()
     hidden_tools: tuple[str, ...] = ()

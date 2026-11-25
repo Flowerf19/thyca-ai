@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import TYPE_CHECKING
 
-from thyca.configs import REASONING_EFFORTS, Config, ProviderCfg
+from thyca.configs import REASONING_EFFORTS, Config, LimitsCfg, ProviderCfg
 
 if TYPE_CHECKING:
     from thyca.bots.card import BotCard
@@ -58,14 +58,59 @@ def validate_turn_options(payload: dict) -> tuple[str | None, str | None, bool]:
 def resolve_bot_cfg(
     cfg: Config, card: BotCard, *, model_override: str | None = None
 ) -> Config:
-    """Resolve operation > explicit card model > configured default."""
+    """Resolve operation > explicit card model > configured default, plus per-bot limits."""
     card_model = card.model.id if card.model is not None else "default"
     selected = (
         model_override
         if model_override is not None
         else card_model if card_model != "default" else cfg.defaultModel
     )
-    return replace(cfg, defaultModel=selected)
+    bot_limits = card.limits
+    if bot_limits is None or bot_limits.is_empty():
+        return replace(cfg, defaultModel=selected)
+    next_limits = LimitsCfg(
+        loopMax=(
+            bot_limits.loopMax
+            if bot_limits.loopMax is not None
+            else cfg.limits.loopMax
+        ),
+        hotTailKB=(
+            bot_limits.hotTailKB
+            if bot_limits.hotTailKB is not None
+            else cfg.limits.hotTailKB
+        ),
+        contextTokens=(
+            bot_limits.contextTokens
+            if bot_limits.contextTokens is not None
+            else cfg.limits.contextTokens
+        ),
+        softTimeoutS=(
+            bot_limits.softTimeoutS
+            if bot_limits.softTimeoutS is not None
+            else cfg.limits.softTimeoutS
+        ),
+    )
+    next_models = cfg.models
+    registered = cfg.models.get(selected)
+    if registered is not None:
+        cleared = replace(
+            registered,
+            loopMax=None if bot_limits.loopMax is not None else registered.loopMax,
+            hotTailKB=None if bot_limits.hotTailKB is not None else registered.hotTailKB,
+            contextTokens=(
+                None
+                if bot_limits.contextTokens is not None
+                else registered.contextTokens
+            ),
+        )
+        if cleared != registered:
+            next_models = {**cfg.models, selected: cleared}
+    return replace(
+        cfg,
+        defaultModel=selected,
+        limits=next_limits,
+        models=next_models,
+    )
 
 
 def resolve_bot_provider(

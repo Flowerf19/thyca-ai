@@ -8,7 +8,6 @@
   const chatWorkspace = document.querySelector('#chat-workspace');
   if (chatWorkspace) { chatWorkspace.hidden = true; chatWorkspace.inert = true; chatWorkspace.setAttribute('aria-hidden', 'true'); }
   const PAGE_IDS = ['chat', 'memories', 'profile', 'provider', 'dashboard'];
-  let pendingSettingsDialog = false;
   const validPage = id => PAGE_IDS.includes(id);
 
   function parseTurnHash(hash) {
@@ -69,20 +68,18 @@
   }
   function normalize(value) {
     if (value && value.page === 'settings' && typeof value.search === 'string' && typeof value.hash === 'string') {
-      pendingSettingsDialog = true;
-      return { page: 'chat', search: '', hash: '' };
+      return { page: 'profile', search: '', hash: '' };
     }
     return value && typeof value.page === 'string' && typeof value.search === 'string' && typeof value.hash === 'string'
       && (validPage(value.page) || value.page === 'trace') ? routeParts(value.page, value.search, value.hash) : null;
   }
   function legacyRoute(path, search, hash) {
-    const map = { '/ui/chat': 'chat', '/ui/memories': 'memories', '/ui/profile': 'profile', '/ui/provider': 'provider', '/ui/dashboard': 'dashboard', '/ui/trace': 'trace', '/ui/settings': 'chat' };
+    const map = { '/ui/chat': 'chat', '/ui/memories': 'memories', '/ui/profile': 'profile', '/ui/provider': 'provider', '/ui/dashboard': 'dashboard', '/ui/trace': 'trace', '/ui/settings': 'profile' };
     let decodedPath;
     try { decodedPath = decodeURIComponent(path); } catch { decodedPath = ''; }
     const key = decodedPath.replace(/\/index\.html$/, '').replace(/\/$/, '') || '/';
     if (key === '/ui/settings') {
-      pendingSettingsDialog = true;
-      return { page: 'chat', search: '', hash: '' };
+      return { page: 'profile', search: '', hash: '' };
     }
     let page = map[key] || 'chat';
     const params = new URLSearchParams(search);
@@ -371,7 +368,7 @@
     const destinationRouteChanged = !entry.ctx || saved.search !== next.search || saved.hash !== next.hash;
     const previous = current;
     const sameRoute = route?.page === next.page && route.search === next.search && route.hash === next.hash;
-    if (!force && previous === entry && sameRoute) { drainPendingSettingsDialog(); return; }
+    if (!force && previous === entry && sameRoute) return;
     const pageChanged = !previous || previous.page !== page;
     let returnMarker;
     if (Object.hasOwn(options, 'returnTo')) returnMarker = validReturn(options.returnTo, next);
@@ -446,33 +443,21 @@
     if (pageMenuLabel) pageMenuLabel.textContent = entry.title;
     if (typeof closePageMenu === 'function') closePageMenu();
     document.title = `Thyca — ${entry.title}`;
-    drainPendingSettingsDialog();
     if (pageChanged) {
       const heading = entry.view.querySelector('h1, [data-page-heading]') || entry.view;
       if (!heading.hasAttribute('tabindex')) heading.tabIndex = -1;
       heading.focus({ preventScroll: true });
     }
   }
-  function drainPendingSettingsDialog() {
-    if (pendingSettingsDialog && setupState === 'ready') {
-      pendingSettingsDialog = false;
-      if (typeof openSettingsDialog === 'function') openSettingsDialog();
-    }
-  }
   function historyWrite(method, state) {
-    if (method === 'replaceState' && history.state?.thycaSettings && state.thycaSettings !== true) {
-      state = { ...state, thycaSettings: true };
-    }
     history[method](state, '', '/');
   }
   function navigateFromState(state) {
     const raw = state?.thycaSpa;
-    const marked = raw?.page === 'settings' || state?.thycaSettings === true;
     const next = normalize(raw) || legacyRoute(location.pathname, location.search, location.hash);
-    if (marked) pendingSettingsDialog = true;
     const returnMarker = validReturn(state?.thycaReturn, next);
     const out = historyState(next, returnMarker);
-    historyWrite('replaceState', marked ? { ...out, thycaSettings: true } : out);
+    historyWrite('replaceState', out);
     navigate(next.page, next, { replace: true, returnTo: returnMarker });
   }
   function dispatch(action, id, ...args) {
@@ -508,10 +493,7 @@
   const initial = normalize(history.state?.thycaSpa) || legacyRoute(location.pathname, location.search, location.hash);
   startupRoute = { ...initial };
   startupReturn = validReturn(history.state?.thycaReturn, startupRoute);
-  if (history.state?.thycaSettings === true) pendingSettingsDialog = true;
   route = initial;
-  historyWrite('replaceState', pendingSettingsDialog
-    ? { ...historyState(route, startupReturn), thycaSettings: true }
-    : historyState(route, startupReturn));
+  historyWrite('replaceState', historyState(route, startupReturn));
   document.addEventListener('DOMContentLoaded', () => { void startSetupCheck(); }, { once: true });
 })();

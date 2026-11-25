@@ -236,7 +236,7 @@ async def test_stream_full_turn_headers_thinking_tools_and_usage() -> None:
         {"type": "thinking", "thinking": "step 1 [redacted]", "signature": "sig-abc"}
     ]
     assert reply.tool_calls == [ToolCall(id="tu_9", name="bash", arguments={"cmd": "ls"})]
-    assert reply.finish_reason == "tool_use"
+    assert reply.finish_reason == "tool_calls"
     assert reply.model == "claude-sonnet-4-6"
     assert reply.usage == {
         "prompt_tokens": 100,
@@ -346,3 +346,27 @@ async def test_message_delta_null_usage_fields_preserve_message_start_counters()
         "completion_tokens": 12,
         "total_tokens": 112,
     }
+    assert reply.finish_reason == "stop"
+
+
+def test_refusal_and_empty_max_tokens_raise_while_partial_max_tokens_normalizes() -> None:
+    with pytest.raises(LLMError, match="refusal"):
+        parse_anthropic_payload(
+            {"model": "claude-sonnet-4-6", "stop_reason": "refusal", "content": []},
+            "sk-ant-secret",
+        )
+    with pytest.raises(LLMError, match="max_tokens"):
+        parse_anthropic_payload(
+            {"model": "claude-sonnet-4-6", "stop_reason": "max_tokens", "content": []},
+            "sk-ant-secret",
+        )
+    partial = parse_anthropic_payload(
+        {
+            "model": "claude-sonnet-4-6",
+            "stop_reason": "max_tokens",
+            "content": [{"type": "text", "text": "cut off"}],
+        },
+        "sk-ant-secret",
+    )
+    assert partial.content == "cut off"
+    assert partial.finish_reason == "length"

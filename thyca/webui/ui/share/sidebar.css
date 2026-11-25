@@ -120,9 +120,6 @@ body[data-active-page="dashboard"] #team-nav-title:hover,body[data-active-page="
 .group-mini-member[data-speaking=true] .seal-avatar{outline:2px solid var(--bot-mid);outline-offset:1px;border-radius:50%}
 .group-meta{max-width:100%;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .group-card[data-coordinating=true] .group-meta{color:var(--forest)}
-.sidebar-footer{border-top:1px solid #e2d6bf;display:flex;align-items:center;justify-content:space-between;padding:clamp(8px,1.2dvh,14px) clamp(12px,1vw,18px);background:#faf3e6b3;z-index:1;flex-shrink:0}
-.sidebar-footer button{font-size:var(--fs-xs);color:#7b715e;display:flex;align-items:center;gap:7px}
-.sidebar-footer svg{width:16px}
 .rail-scroll{display:none}
 .rail-scroll{flex:1;min-height:0;flex-direction:column}
 .rail-avatar-list{display:flex;flex-direction:column;align-items:center;gap:10px;padding:10px 3px;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;scrollbar-width:none;flex:1;min-height:0;width:100%}
@@ -194,7 +191,6 @@ body[data-active-page="dashboard"] #team-nav-title:hover,body[data-active-page="
 .session-list{gap:6px}
 .bot-header{padding:3px 6px}
 .paper-footer.card-status,.group-card-footer{padding:0 6px 5px}
-.sidebar-footer{padding:8px 14px}
 .rail-avatar-list{gap:7px;padding:7px 3px}
 }
 .card-actions .favorite{width:22px}

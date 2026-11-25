@@ -10,7 +10,7 @@ Read the project guidance in this order before planning, editing, or reviewing:
 
 ## Current Package Snapshot
 
-Phiên bản gói hiện tại là `0.88.0.dev3` (đồng bộ giữa `pyproject.toml`, `thyca/__init__.py`, `README.md` và `.agents/`). Lượt gốc và lượt con dùng chung `BotRuntime`. CLI đi qua `ChatApp.turn` với `--bot <bot_id>` (DM) hoặc `--group <group_id>` (nhóm). Hội thoại công khai chỉ lưu trong SQLite tại `thyca/conversations/store/` (`AdminStore`/`AgentStore`, schema v2, WAL). Mọi `/api/sessions*` nhận `404`. `WorkspaceStore` và `WorkspaceTimeline` theo từng bot (`thyca/bots/timeline.py`) là nguồn canonical cho thực thi.
+Phiên bản gói hiện tại là `0.88.0.dev4` (đồng bộ giữa `pyproject.toml`, `thyca/__init__.py`, `README.md` và `.agents/`). Lượt gốc và lượt con dùng chung `BotRuntime`. CLI đi qua `ChatApp.turn` với `--bot <bot_id>` (DM) hoặc `--group <group_id>` (nhóm). Hội thoại công khai chỉ lưu trong SQLite tại `thyca/conversations/store/` (`AdminStore`/`AgentStore`, schema v2, WAL). Mọi `/api/sessions*` nhận `404`. `WorkspaceStore` và `WorkspaceTimeline` theo từng bot (`thyca/bots/timeline.py`) là nguồn canonical cho thực thi.
 
 ## Workflow & Verification Gates
 

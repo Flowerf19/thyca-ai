@@ -17,7 +17,13 @@ import httpx
 from thyca.core.protocol import Message
 
 from ._http import BaseConnect, cap, iter_sse_data, parse_json_bytes, redact
-from ._shared import parse_tool_calls, slots_to_calls, typed_text_parts
+from ._shared import (
+    iter_tool_specs,
+    parse_tool_calls,
+    resolve_finish_reason,
+    slots_to_calls,
+    typed_text_parts,
+)
 from .llm_base import ChatReply, LLMError, normalize_usage
 from .streaming import ContentOut, ReasoningOut
 
@@ -38,23 +44,14 @@ def _output_texts(raw: object) -> list[str]:
 def _to_responses_tools(tools: list) -> list[dict[str, Any]]:
     """Chat-schema tools (the ``Connect`` contract) to flat responses tools."""
     out: list[dict[str, Any]] = []
-    for spec in tools:
-        if not isinstance(spec, dict):
-            continue
-        fn = spec.get("function")
-        if isinstance(fn, dict):
-            name, desc, params = fn.get("name"), fn.get("description"), fn.get("parameters")
-        else:
-            name, desc, params = spec.get("name"), spec.get("description"), spec.get("parameters")
-        if not isinstance(name, str) or not name:
-            continue
+    for spec in iter_tool_specs(tools):
         tool: dict[str, Any] = {
             "type": "function",
-            "name": name,
-            "parameters": params if isinstance(params, dict) else {},
+            "name": spec.name,
+            "parameters": spec.parameters or {},
         }
-        if isinstance(desc, str) and desc:
-            tool["description"] = desc
+        if spec.description:
+            tool["description"] = spec.description
         out.append(tool)
     return out
 
@@ -211,11 +208,18 @@ def parse_responses_payload(raw: dict, key: str) -> ChatReply:
     raw_usage = raw.get("usage")
     usage = normalize_usage(raw_usage, "openai_responses") if isinstance(raw_usage, dict) else None
     model = raw.get("model")
+    content = redact("".join(content_parts), key) or None
+    parsed_calls = parse_tool_calls(calls)
     return ChatReply(
-        content=redact("".join(content_parts), key) or None,
-        tool_calls=parse_tool_calls(calls),
+        content=content,
+        tool_calls=parsed_calls,
         usage=usage,
-        finish_reason=status if isinstance(status, str) and status else "completed",
+        finish_reason=resolve_finish_reason(
+            status if isinstance(status, str) and status else "completed",
+            content=content,
+            calls=parsed_calls,
+            key=key,
+        ),
         model=model if isinstance(model, str) else None,
         reasoning=redact("".join(reasoning_parts), key) or None,
         reasoning_details=details or None,
@@ -312,11 +316,15 @@ async def read_responses_sse(
     if not completed:
         raise LLMError("provider response incomplete")
     content_out.finish()
+    content = redact("".join(content_parts), key) or None
+    calls = slots_to_calls(slots, id_key="call_id")
     return ChatReply(
-        content=redact("".join(content_parts), key) or None,
-        tool_calls=slots_to_calls(slots, id_key="call_id"),
+        content=content,
+        tool_calls=calls,
         usage=usage,
-        finish_reason=status or "completed",
+        finish_reason=resolve_finish_reason(
+            status or "completed", content=content, calls=calls, key=key
+        ),
         model=model,
         reasoning=reasoning.text(),
         reasoning_details=details or None,

@@ -10,9 +10,14 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from thyca.app.turn_options import resolve_bot_cfg, resolve_bot_provider
-from thyca.bots.card import BotModel
-from thyca.bots.registry import RegistryError
-from thyca.bots.settings import SettingsError, validate_model_id, validate_thinking
+from thyca.bots.card import BotLimits, BotModel
+from thyca.bots.registry import _LIMITS_UNSET, RegistryError
+from thyca.bots.settings import (
+    SettingsError,
+    validate_limits,
+    validate_model_id,
+    validate_thinking,
+)
 from thyca.configs import REASONING_EFFORTS
 
 if TYPE_CHECKING:
@@ -30,15 +35,28 @@ def _configured_model(card) -> BotModel:
     return BotModel(id="default", thinking=None)
 
 
+def _configured_limits(card) -> dict[str, int | None]:
+    if card.limits is not None:
+        return card.limits.to_dict()
+    return BotLimits().to_dict()
+
+
 def _resolve_effective(cfg: Config, card, configured: BotModel) -> dict:
-    """Resolved model/provider/effort a turn with these settings would use."""
+    """Resolved model/provider/effort/limits a turn with these settings would use."""
 
     resolved_cfg = resolve_bot_cfg(cfg, card)
     provider = resolve_bot_provider(resolved_cfg, card)
+    eff_limits = resolved_cfg.effective_limits()
     return {
         "model": resolved_cfg.defaultModel,
         "provider": resolved_cfg.provider_id_for(resolved_cfg.defaultModel),
         "thinking": provider.reasoningEffort,
+        "limits": {
+            "loopMax": eff_limits.loopMax,
+            "hotTailKB": eff_limits.hotTailKB,
+            "contextTokens": eff_limits.contextTokens,
+            "softTimeoutS": eff_limits.softTimeoutS,
+        },
     }
 
 
@@ -54,6 +72,7 @@ def get_bot_settings(bots: BotRegistry, cfg: Config, bot_id: str) -> dict:
     return {
         "bot_id": bot_id,
         "model": {"id": configured.id, "thinking": configured.thinking},
+        "limits": _configured_limits(card),
         "effective": _resolve_effective(cfg, card, configured),
     }
 
@@ -61,13 +80,13 @@ def get_bot_settings(bots: BotRegistry, cfg: Config, bot_id: str) -> dict:
 def update_bot_settings(
     bots: BotRegistry, cfg: Config, bot_id: str, payload: dict
 ) -> dict:
-    """Full-replacement update of one bot's model settings."""
-    model = _clean_payload(payload)
+    """Full-replacement update of one bot's model and optional limits settings."""
+    model, limits = _clean_payload(payload)
     _check_against_config(cfg, model)
     if not bots.exists(bot_id):
         raise RegistryError(f"unknown or invalid bot: {bot_id} (unknown bot)")
     try:
-        card = bots.update_settings(bot_id, model)
+        card = bots.update_settings(bot_id, model, limits=limits)
     except RegistryError:
         raise SettingsError("bot settings unavailable") from None
     except SettingsError as exc:
@@ -76,12 +95,13 @@ def update_bot_settings(
     return {
         "bot_id": bot_id,
         "model": {"id": configured.id, "thinking": configured.thinking},
+        "limits": _configured_limits(card),
         "effective": _resolve_effective(cfg, card, configured),
     }
 
 
-def _clean_payload(payload: object) -> BotModel:
-    if not isinstance(payload, dict) or set(payload) != {"model"}:
+def _clean_payload(payload: object) -> tuple[BotModel, BotLimits | object | None]:
+    if not isinstance(payload, dict) or "model" not in payload or not set(payload) <= {"model", "limits"}:
         raise BotSettingsError("invalid body")
     raw = payload["model"]
     if not isinstance(raw, dict) or "id" not in raw:
@@ -97,7 +117,13 @@ def _clean_payload(payload: object) -> BotModel:
         thinking = validate_thinking(raw.get("thinking"))
     except SettingsError:
         raise BotSettingsError("invalid thinking") from None
-    return BotModel(id=model_id, thinking=thinking)
+    limits: BotLimits | object | None = _LIMITS_UNSET
+    if "limits" in payload:
+        try:
+            limits = validate_limits(payload["limits"])
+        except SettingsError:
+            raise BotSettingsError("invalid limits") from None
+    return BotModel(id=model_id, thinking=thinking), limits
 
 
 def check_model_against_config(cfg: Config, model: BotModel) -> None:

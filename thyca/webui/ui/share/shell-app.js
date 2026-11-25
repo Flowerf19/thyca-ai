@@ -47,7 +47,7 @@ function openMobile() {
   const c = $('#team-shared-create');
   const onChat = !document.body?.dataset?.activePage || document.body.dataset.activePage === 'chat';
   if (c && onChat) c.focus();
-  else ($$('#chat-sidebar .bot-select')[0] || $('#open-settings'))?.focus?.();
+  else $$('#chat-sidebar .bot-select')[0]?.focus?.();
 }
 function closeMobile() {
   const wasOpen = $('#chat-sidebar').classList.contains('mobile-open');

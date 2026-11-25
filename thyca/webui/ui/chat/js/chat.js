@@ -405,7 +405,11 @@ function handleStreamEvent(token, ev) {
       }
       break;
     case 'llm.started':
-      if (own) { token.phase = 'thinking'; $('.message-byline time', token.node).textContent = 'đang suy nghĩ'; }
+      if (own) {
+        if (token.mdBuf) token.needRoundBreak = true;
+        token.phase = 'thinking';
+        $('.message-byline time', token.node).textContent = 'đang suy nghĩ';
+      }
       setState(botId, 'thinking');
       break;
     case 'llm.thinking':
@@ -445,8 +449,11 @@ function handleStreamEvent(token, ev) {
     case 'llm.content': {
       setState(botId, 'writing'); notifyText(botId, ev.delta || '');
       if (!own) break;
+      const delta = ev.delta || '';
+      const sep = token.needRoundBreak && delta ? '\n\n' : '';
+      if (sep) token.needRoundBreak = false;
       token.phase = 'writing';
-      token.mdBuf = (token.mdBuf || '') + (ev.delta || '');
+      token.mdBuf = (token.mdBuf || '') + sep + delta;
       if (token.conversationId === currentConversation) {
         $('.message-byline time', token.node).textContent = 'đang viết';
         let p = $('.stream-text', liveCopy);
@@ -455,7 +462,7 @@ function handleStreamEvent(token, ev) {
           token.caret = document.createElement('span'); token.caret.className = 'streaming-caret';
           p.append(token.caret); liveCopy.replaceChildren(p);
         }
-        p.insertBefore(document.createTextNode(ev.delta || ''), token.caret);
+        p.insertBefore(document.createTextNode(sep + delta), token.caret);
         toBottom();
       }
       break;

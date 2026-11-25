@@ -14,12 +14,14 @@ from thyca.configs import Config, ModelCfg, ProviderCfg, ProviderEntry
 from thyca.configs.providers import resolve
 from thyca.core.protocol import RESULT_CAP_BYTES, Message, ToolCall
 from thyca.llms._http import BaseConnect, iter_sse_data, parse_json_bytes
-from thyca.llms.llm_base import ChatReply, LLMError, normalize_usage
+from thyca.llms._shared import ToolSpec, iter_tool_specs
+from thyca.llms.llm_base import ChatReply, LLMError, normalize_finish_reason, normalize_usage
 from thyca.llms.openai_chat import (
     OpenAIChat,
     _chat_url,
     _to_openai_message,
     parse_chat_bytes,
+    parse_chat_payload,
     slots_to_calls,
 )
 
@@ -959,3 +961,56 @@ async def test_f27_array_delta_content_is_error() -> None:
     connect = OpenAIChat(_provider(), client=_client(handler))
     with pytest.raises(LLMError, match="provider content must be string or null"):
         await connect.chat([Message(role="user", content="x")])
+
+
+def test_canonical_finish_reason_and_tool_spec_helpers() -> None:
+    assert normalize_finish_reason("STOP") == "stop"
+    assert normalize_finish_reason("STOP", has_tool_calls=True) == "tool_calls"
+    assert normalize_finish_reason("completed") == "stop"
+    assert normalize_finish_reason("completed", has_tool_calls=True) == "tool_calls"
+    assert normalize_finish_reason("end_turn") == "stop"
+    assert normalize_finish_reason("tool_use") == "tool_calls"
+    assert normalize_finish_reason("function_call") == "tool_calls"
+    assert normalize_finish_reason("MAX_TOKENS") == "length"
+    assert normalize_finish_reason("max_tokens") == "length"
+    assert normalize_finish_reason("content_filter") == "blocked"
+    assert normalize_finish_reason("refusal") == "blocked"
+    assert normalize_finish_reason("SAFETY") == "blocked"
+    assert normalize_finish_reason("MALFORMED_FUNCTION_CALL") == "malformed_tool"
+
+    specs = iter_tool_specs(
+        [
+            {
+                "type": "function",
+                "function": {
+                    "name": "bash",
+                    "description": "run shell",
+                    "parameters": {"type": "object"},
+                },
+            },
+            {"name": "read", "parameters": {}},
+            {"name": ""},
+            "invalid",
+        ]
+    )
+    assert specs == [
+        ToolSpec(name="bash", description="run shell", parameters={"type": "object"}),
+        ToolSpec(name="read", description="", parameters=None),
+    ]
+
+    with pytest.raises(LLMError, match="content_filter"):
+        parse_chat_payload(
+            {"choices": [{"message": {"role": "assistant", "content": None}, "finish_reason": "content_filter"}]},
+            "sk",
+        )
+    with pytest.raises(LLMError, match="length"):
+        parse_chat_payload(
+            {"choices": [{"message": {"role": "assistant", "content": ""}, "finish_reason": "length"}]},
+            "sk",
+        )
+    partial = parse_chat_payload(
+        {"choices": [{"message": {"role": "assistant", "content": "cut"}, "finish_reason": "length"}]},
+        "sk",
+    )
+    assert partial.finish_reason == "length"
+    assert partial.content == "cut"

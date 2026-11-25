@@ -376,10 +376,6 @@ def test_root_spa_retains_all_workspaces_and_restores_history(
     if (window.__spaMode === 'legacy-check') {
       const page = ThycaRouter.currentPage();
       await wait(() => { const view = document.querySelector(`[data-page-workspace="${page}"]`); return !!view && !view.hidden; });
-      // Removed page: a legacy settings URL lands on chat with the shared dialog open.
-      if ((window.__spaLandingPath || '').replace(/\/index\.html$/, '').replace(/\/$/, '') === '/ui/settings') {
-        await wait(() => !!document.querySelector('#settings-dialog')?.open, 'legacy settings URL opened the shared dialog');
-      }
       finish({ legacy: true, route: ThycaRouter.currentRoute(), state: history.state?.thycaSpa, href: location.href, frames: document.querySelectorAll('iframe').length,
         dialogOpen: !!document.querySelector('#settings-dialog')?.open });
       return;
@@ -561,65 +557,29 @@ def test_root_spa_retains_all_workspaces_and_restores_history(
         return pages;
       };
       const setOrnaments = async on => {
-        // The preference lives in the shared Settings dialog now (no page).
-        document.querySelector('#open-settings').click();
-        await wait(() => !!document.querySelector('#settings-dialog')?.open, 'background audit opened settings');
         const want = on ? 'on' : 'off';
-        const end = Date.now() + 12000;
-        let last = '';
-        while (Date.now() < end) {
-          const box = document.querySelector('#pref-ornaments');
-          if (!box) throw new Error('ornament preference control missing');
-          box.checked = on;
-          box.dispatchEvent(new Event('change', { bubbles: true }));
-          await new Promise(r => setTimeout(r, 300));
-          const stored = (() => { try { return localStorage.getItem('thyca.ui.preferences'); } catch { return null; } })();
-          last = `hook=${document.documentElement.dataset.ornaments} box=${box.checked} stored=${stored}`;
-          if (document.documentElement.dataset.ornaments === want) return;
-        }
-        throw new Error('ornament toggle stalled: ' + last);
+        applyPrefs({ ...readPrefs(), ornaments: on });
+        await wait(() => document.documentElement.dataset.ornaments === want, 'ornament toggle applied');
       };
       if (!sessionStorage.getItem('thyca-bg-phase')) {
-        // Phase 1: default on-state everywhere, then switch the saved
-        // preference off and prove the artwork hides across routes.
         const onPages = await auditAllPages();
         await setOrnaments(false);
-        await wait(() => getComputedStyle(document.querySelector('.notebook-shell'), '::before').backgroundImage === 'none', 'artwork hid in dialog');
+        await wait(() => getComputedStyle(document.querySelector('.notebook-shell'), '::before').backgroundImage === 'none', 'artwork hid');
         const offSettings = auditBackground();
         await ThycaRouter.navigate('chat');
         await wait(() => ThycaRouter.currentPage() === 'chat' && !!document.querySelector('[data-page-workspace="chat"]:not([hidden])'), 'background audit returned to chat');
-        const offChat = auditBackground();  // same saved preference, other route
+        const offChat = auditBackground();
         sessionStorage.setItem('thyca-bg-phase', JSON.stringify({ onPages, offSettings, offChat,
           errors: window.__scriptErrors || [], rejections: window.__promiseErrors || [] }));
         sessionStorage.setItem('thyca-bg-reload', '1');
         location.reload();
-        return;  // harness keeps waiting; the script re-runs after reload
+        return;
       }
-      // Phase 2 (after reload): the saved off-state must hydrate without
-      // touching the control, then switching back on restores the artwork.
       const phase1 = JSON.parse(sessionStorage.getItem('thyca-bg-phase'));
       const reloadedPages = await auditAllPages();
-      const offBox = document.querySelector('#pref-ornaments');  // hydrated control state
-      const offBoxUnchecked = offBox ? offBox.checked === false : null;  // capture eagerly: later toggles re-check it
+      const offBoxUnchecked = readPrefs().ornaments === false;
       await setOrnaments(true);
-      {
-        const end = Date.now() + 12000;
-        let last = '';
-        while (Date.now() < end) {
-          const shell = document.querySelector('.notebook-shell');
-          const art = getComputedStyle(shell, '::before').backgroundImage;
-          const boxes = [...document.querySelectorAll('#pref-ornaments')];
-          const stored = (() => { try { return localStorage.getItem('thyca.ui.preferences'); } catch { return null; } })();
-          const view = document.querySelector('[data-page-workspace]:not([hidden])');
-          last = `hook=${document.documentElement.dataset.ornaments} boxes=${boxes.length} box=${boxes[0] && boxes[0].checked} stored=${stored} wsHook=${view && view.dataset.ornaments} art=${art.slice(0, 80)}`;
-          if (art.includes('thyca-bg-paper.png')) break;
-          await setOrnaments(true);  // re-assert: a late settings remount can replay saved-off prefs once
-          await new Promise(r => setTimeout(r, 200));
-        }
-        if (!getComputedStyle(document.querySelector('.notebook-shell'), '::before').backgroundImage.includes('thyca-bg-paper.png')) {
-          throw new Error('artwork restore stalled: ' + last);
-        }
-      }
+      await wait(() => getComputedStyle(document.querySelector('.notebook-shell'), '::before').backgroundImage.includes('thyca-bg-paper.png'), 'artwork restored');
       await openDrawer();  // final screenshot shows the paper-backed drawer where narrow
       sessionStorage.removeItem('thyca-bg-phase'); sessionStorage.removeItem('thyca-bg-reload');
       finish({ backgroundAudit: true, route: ThycaRouter.currentRoute(), href: location.href,
@@ -788,24 +748,18 @@ def test_root_spa_retains_all_workspaces_and_restores_history(
     await wait(() => ThycaRouter.currentPage() === 'profile' && !document.querySelector('[data-page-workspace="profile"]').hidden);
     const profileRoot = document.querySelector('#profile-root');
     const geometry = profileGeometry();
-    if (geometry.insets.length !== 2 || Math.abs(geometry.insets[0] - geometry.insets[1]) > 1 || geometry.insets[0] < 12 || geometry.cardCount !== 1 || geometry.overflow || document.querySelector('#profile-root #bot-model-card') || document.querySelector('#profile-root #bot-settings-form')) throw new Error('desktop Profile geometry mismatch: ' + JSON.stringify(geometry));
+    if (geometry.insets.length !== 2 || Math.abs(geometry.insets[0] - geometry.insets[1]) > 1 || geometry.insets[0] < 12 || geometry.cardCount !== 1 || geometry.overflow || !document.querySelector('#profile-root #bot-settings-form')) throw new Error('desktop Profile geometry mismatch: ' + JSON.stringify(geometry));
     const savedProfile = { page: 'profile', search: '?bot=coder', hash: '' };
-    document.querySelector('#open-settings').click();
-    await wait(() => !!document.querySelector('#settings-dialog')?.open && document.querySelector('#settings-bot')?.value === 'coder' && document.querySelector('#bot-model')?.value === 'model-a' && document.querySelector('#bot-thinking')?.value === 'medium');
+    await wait(() => document.querySelector('#bot-model')?.value === 'model-a' && document.querySelector('#bot-thinking')?.value === 'medium');
     document.querySelector('#bot-model').value = 'model-b'; document.querySelector('#bot-model').dispatchEvent(new Event('change'));
     document.querySelector('#bot-thinking').value = 'high';
-    document.querySelector('#settings-dialog .dialog-close').click();
-    await wait(() => !document.querySelector('#settings-dialog').open);
     document.querySelector('[data-page-link="memories"]').click();
     await wait(() => ThycaRouter.currentPage() === 'memories' && !document.querySelector('[data-page-workspace="memories"]').hidden);
     if (document.activeElement !== document.querySelector('[data-page-workspace="memories"] h1')) throw new Error('navigation did not focus the new page heading');
     document.querySelector('[data-page-link="profile"]').click();
     await wait(() => ThycaRouter.currentPage() === 'profile' && !document.querySelector('[data-page-workspace="profile"]').hidden);
     if (document.querySelector('#profile-root') !== profileRoot || JSON.stringify(ThycaRouter.currentRoute()) !== JSON.stringify(savedProfile)) throw new Error('Profile destination route/workspace was not retained');
-    document.querySelector('#open-settings').click();
-    await wait(() => !!document.querySelector('#settings-dialog')?.open && document.querySelector('#bot-model')?.value === 'model-b' && document.querySelector('#bot-thinking')?.value === 'high');
-    document.querySelector('#settings-dialog .dialog-close').click();
-    await wait(() => !document.querySelector('#settings-dialog').open);
+    await wait(() => document.querySelector('#bot-model')?.value === 'model-b' && document.querySelector('#bot-thinking')?.value === 'high');
     const historyLength = history.length;
     document.querySelector('[data-page-link="profile"]').click(); await new Promise(resolve => setTimeout(resolve, 100));
     if (history.length !== historyLength) throw new Error('same-page header navigation added history');
@@ -813,46 +767,34 @@ def test_root_spa_retains_all_workspaces_and_restores_history(
     await wait(() => ThycaRouter.currentPage() === 'memories' && !document.querySelector('[data-page-workspace="memories"]').hidden);
     history.forward();
     await wait(() => ThycaRouter.currentPage() === 'profile' && ThycaRouter.currentRoute().search === '?bot=coder' && !document.querySelector('[data-page-workspace="profile"]').hidden);
-    document.querySelector('#open-settings').click();
-    await wait(() => !!document.querySelector('#settings-dialog')?.open && document.querySelector('#bot-model')?.value === 'model-b' && document.querySelector('#bot-thinking')?.value === 'high');
+    await wait(() => document.querySelector('#bot-model')?.value === 'model-b' && document.querySelector('#bot-thinking')?.value === 'high');
     await fetch('/api/test/delay-settings');
     document.querySelector('#save-bot-settings').click();
-    await wait(() => document.querySelector('#save-bot-settings').disabled, 'Settings Save disabled while bot settings request is pending');
+    await wait(() => document.querySelector('#save-bot-settings').disabled, 'Profile Save disabled while bot settings request is pending');
     if (!document.querySelector('#save-bot-settings').disabled) {
       const pendingState = await fetch(window.__spaControlBase + '/state').then(response => response.json());
-      throw new Error('Settings bot Save remained enabled during pending POST: ' + JSON.stringify({ disabled: document.querySelector('#save-bot-settings').disabled, hint: document.querySelector('#bot-settings-hint').textContent, settingsStarted: pendingState.settingsStarted, settingsPosts: pendingState.settingsPosts, settingsDelay: pendingState.settingsDelay }));
+      throw new Error('Profile bot Save remained enabled during pending POST: ' + JSON.stringify({ disabled: document.querySelector('#save-bot-settings').disabled, hint: document.querySelector('#bot-settings-hint').textContent, settingsStarted: pendingState.settingsStarted, settingsPosts: pendingState.settingsPosts, settingsDelay: pendingState.settingsDelay }));
     }
     document.querySelector('#bot-settings-form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
     await new Promise(resolve => setTimeout(resolve, 100));
     if ((await waitForApiState(state => state.settingsPosts >= 1)).settingsPosts !== 1) throw new Error('duplicate bot settings POST');
-    document.querySelector('#settings-dialog .dialog-close').click();
-    await wait(() => !document.querySelector('#settings-dialog').open);
     document.querySelector('[data-page-link="memories"]').click();
     await wait(() => ThycaRouter.currentPage() === 'memories' && !document.querySelector('[data-page-workspace="memories"]').hidden);
     document.querySelector('[data-page-link="profile"]').click();
     await wait(() => ThycaRouter.currentPage() === 'profile' && !document.querySelector('[data-page-workspace="profile"]').hidden);
-    document.querySelector('#open-settings').click();
-    await wait(() => !!document.querySelector('#settings-dialog')?.open && document.querySelector('#bot-model')?.value === 'model-b' && document.querySelector('#bot-thinking')?.value === 'high');
+    await wait(() => document.querySelector('#bot-model')?.value === 'model-b' && document.querySelector('#bot-thinking')?.value === 'high');
     await fetch(window.__spaControlBase + '/release-settings');
     await wait(() => document.querySelector('#bot-settings-hint').textContent.includes('Đã lưu.'));
     if ((await waitForApiState(state => state.settingsPosts >= 1)).settingsPosts !== 1) throw new Error('duplicate bot settings POST');
     if (!document.querySelector('#profile-root .chip')?.textContent.includes('model: model-b · suy nghĩ high')) throw new Error('saved Profile model chip did not update');
     const coderSaved = { model: document.querySelector('#bot-model').value, thinking: document.querySelector('#bot-thinking').value };
-    const settingsBotSel = document.querySelector('#settings-bot');
-    settingsBotSel.value = 'thyca'; settingsBotSel.dispatchEvent(new Event('change'));
-    await wait(() => document.querySelector('#settings-bot')?.value === 'thyca' && document.querySelector('#bot-model')?.value === 'model-a' && document.querySelector('#bot-thinking')?.value === 'low');
+    await ThycaRouter.navigate('profile', { search: '?bot=thyca' });
+    await wait(() => ThycaRouter.currentRoute().search === '?bot=thyca' && document.querySelector('#bot-model')?.value === 'model-a' && document.querySelector('#bot-thinking')?.value === 'low');
     if (coderSaved.model !== 'model-b' || coderSaved.thinking !== 'high') throw new Error('Coder settings were not kept distinct from Thyca');
     document.querySelector('#bot-model').value = 'model-b'; document.querySelector('#bot-model').dispatchEvent(new Event('change'));
     document.querySelector('#bot-thinking').value = 'max';
-    document.querySelector('#settings-dialog .dialog-close').click();
-    await wait(() => !document.querySelector('#settings-dialog').open);
-    await ThycaRouter.navigate('memories'); await ThycaRouter.navigate('profile');
-    document.querySelector('#open-settings').click();
-    await wait(() => !!document.querySelector('#settings-dialog')?.open);
-    document.querySelector('#settings-bot').value = 'thyca'; document.querySelector('#settings-bot').dispatchEvent(new Event('change'));
+    await ThycaRouter.navigate('memories'); await ThycaRouter.navigate('profile', { search: '?bot=thyca' });
     await wait(() => document.querySelector('#bot-model')?.value === 'model-b' && document.querySelector('#bot-thinking')?.value === 'max');
-    document.querySelector('#settings-dialog .dialog-close').click();
-    await wait(() => !document.querySelector('#settings-dialog').open);
     document.querySelector('#profile-shared').click();
     await wait(() => ThycaRouter.currentRoute().search === '' && document.querySelector('[data-edit="USER.md"]'));
     if (document.querySelectorAll('#team-bot-list .bot-card[data-selected="true"]').length) throw new Error('shared Profile failed to clear bot selection');
@@ -885,10 +827,7 @@ def test_root_spa_retains_all_workspaces_and_restores_history(
     if (document.activeElement !== document.querySelector('[data-edit="USER.md"]')) throw new Error('canonical inline editor did not restore focus');
     await ThycaRouter.navigate('profile', { search: '?bot=coder' });
     await wait(() => ThycaRouter.currentRoute().search === '?bot=coder' && !!document.querySelector('#profile-root .chip')?.textContent.includes('model: model-b'));
-    document.querySelector('#open-settings').click();
-    await wait(() => !!document.querySelector('#settings-dialog')?.open && document.querySelector('#bot-model')?.value === 'model-b');
-    document.querySelector('#settings-dialog .dialog-close').click();
-    await wait(() => !document.querySelector('#settings-dialog').open);
+    await wait(() => document.querySelector('#bot-model')?.value === 'model-b');
     const stableApiBefore = (await fetch(window.__spaControlBase + '/state').then(response => response.json())).apiCounts;
     for (let cycle = 0; cycle < 2; cycle++) {
       for (const page of ['memories', 'profile', 'provider', 'dashboard', 'chat']) await ThycaRouter.navigate(page);
@@ -1464,7 +1403,7 @@ def test_root_spa_retains_all_workspaces_and_restores_history(
         ),
         (
             "/ui/settings/index.html?spaMode=legacy-check#dm/thyca/2",
-            {"page": "chat", "search": "?bot=thyca", "hash": ""},
+            {"page": "profile", "search": "", "hash": ""},
         ),
     )
     for index, (legacy, expected) in enumerate(legacy_cases):
@@ -1479,7 +1418,7 @@ def test_root_spa_retains_all_workspaces_and_restores_history(
         assert legacy_result["state"] == expected and legacy_result["href"].endswith("/")
         assert legacy_result["frames"] == 0
         if "/ui/settings" in legacy:
-            assert legacy_result["dialogOpen"] is True, legacy_result
+            assert legacy_result["dialogOpen"] is False, legacy_result
         browser_results["legacy"].append(legacy_result)
     invalid_dates = _cdp_browser_result(
         browser,
@@ -2030,7 +1969,7 @@ def test_first_run_setup_gate_in_real_spa(tmp_path: Path) -> None:
             and "POST /api/conversations" not in required["apiRequests"]
         )
         assert (
-            required["dialogOpenedAfterSetup"] is True
+            required["dialogOpenedAfterSetup"] is False
         )
         ready = _cdp_browser_result(
             chrome,
@@ -2154,10 +2093,6 @@ SETUP_GATE_RESULT_SCRIPT = r"""
       document.querySelector('#save-use').click();
       await wait(()=>ThycaRouter.setupState()==='ready' && ThycaRouter.currentRoute().page==='profile');
       await wait(()=>document.querySelector('[data-page-workspace="profile"]:not([hidden])'));
-      // The pre-migration {page:'settings'} history entry pushed above kept
-      // its marker through the setup gate, so onboarding completion opens
-      // the shared Settings dialog over the destination page.
-      await wait(()=>!!document.querySelector('#settings-dialog')?.open,'legacy settings history reopened after setup');
       const afterState=await fetch('/api/test/state').then(r=>r.json());
       const result={passed:true,beforeSave:before,afterEscape,afterResize,afterOpen,finalRoute:ThycaRouter.currentRoute(),statePage:history.state?.thycaSpa?.page,verification:afterState.verification,saveCount:afterState.saveCount,dmHits:afterState.dmHits,apiRequests:afterState.apiRequests,providerStatePage:apiState,dialogOpenedAfterSetup:!!document.querySelector('#settings-dialog')?.open};
       result.scriptErrors=window.__scriptErrors; result.unhandledRejections=window.__promiseErrors; document.body.dataset.spaTestResult=JSON.stringify(result); return;
@@ -2215,18 +2150,13 @@ STARTUP_SETTINGS_MARKER_SCRIPT = r"""
   const wait = async (predicate, label) => { const end=Date.now()+15000; while(Date.now()<end){if(await predicate())return;await new Promise(r=>setTimeout(r,50));} throw new Error('startup marker audit timeout@'+label); };
   try {
     await fetch('/api/test/reset');
-    // A legacy /ui/settings URL must open the dialog on arrival...
-    await wait(()=>window.ThycaRouter?.setupState()==='ready' && window.ThycaRouter.currentPage()==='chat','startup-ready');
-    await wait(()=>!!document.querySelector('#settings-dialog')?.open,'startup-dialog');
-    // ...and the rewritten startup entry must retain the marker, so going
-    // away and back reopens Settings instead of landing on plain chat.
-    document.querySelector('#settings-dialog .dialog-close').click();
-    await wait(()=>!document.querySelector('#settings-dialog').open,'startup-dialog-closed');
+    await wait(()=>window.ThycaRouter?.setupState()==='ready' && window.ThycaRouter.currentPage()==='profile','startup-ready-profile');
+    await wait(()=>!!document.querySelector('[data-page-workspace="profile"]:not([hidden])'),'startup-profile-visible');
     await ThycaRouter.navigate('memories');
     await wait(()=>ThycaRouter.currentPage()==='memories'&&!!document.querySelector('[data-page-workspace="memories"]:not([hidden])'),'startup-away');
     history.back();
-    await wait(()=>!!document.querySelector('#settings-dialog')?.open,'startup-back-reopens');
-    const result={passed:true,dialogStillOpen:document.querySelector('#settings-dialog').open};
+    await wait(()=>ThycaRouter.currentPage()==='profile'&&!!document.querySelector('[data-page-workspace="profile"]:not([hidden])'),'startup-back-profile');
+    const result={passed:true,dialogStillOpen:!!document.querySelector('#settings-dialog')?.open,page:ThycaRouter.currentPage()};
     result.scriptErrors=window.__scriptErrors; result.unhandledRejections=window.__promiseErrors;
     document.body.dataset.spaTestResult=JSON.stringify(result); return;
   } catch(error) { document.body.dataset.spaTestResult=JSON.stringify({error:String(error),route:ThycaRouter?.currentRoute(),scriptErrors:window.__scriptErrors,unhandledRejections:window.__promiseErrors}); }
@@ -2236,134 +2166,45 @@ STARTUP_SETTINGS_MARKER_SCRIPT = r"""
 
 SETTINGS_DIALOG_AUDIT_SCRIPT = r"""
 (async () => {
-  const wait = async (predicate, label) => { const end=Date.now()+15000; while(Date.now()<end){if(await predicate())return;await new Promise(r=>setTimeout(r,50));} throw new Error('settings dialog audit timeout@'+label); };
+  const wait = async (predicate, label) => { const end=Date.now()+15000; while(Date.now()<end){if(await predicate())return;await new Promise(r=>setTimeout(r,50));} throw new Error('profile settings audit timeout@'+label); };
   try {
     await fetch('/api/test/reset');
     await wait(()=>window.ThycaRouter?.setupState()==='ready' && window.ThycaRouter.currentPage()==='chat','ready-chat');
-    // A pre-migration {page:'settings'} history entry reopens the dialog,
-    // and so does a repeated back/forward visit to the same entry.
+    if (document.querySelector('#open-settings') || document.querySelector('#settings-dialog')) throw new Error('deleted settings dialog elements still present');
     history.pushState({thycaSpa:{page:'settings',search:'',hash:''}},'','/');
     dispatchEvent(new PopStateEvent('popstate',{state:history.state}));
-    await wait(()=>!!document.querySelector('#settings-dialog')?.open,'history-settings-first');
-    document.querySelector('#settings-dialog .dialog-close').click();
-    await wait(()=>!document.querySelector('#settings-dialog').open,'history-dialog-closed');
+    await wait(()=>ThycaRouter.currentPage()==='profile' && !!document.querySelector('[data-page-workspace="profile"]:not([hidden])'),'history-settings-routes-profile');
+    await ThycaRouter.navigate('profile', { search: '?bot=thyca' });
+    await wait(()=>!!document.querySelector('#bot-settings-form') && !!document.querySelector('#bot-advanced'),'profile-settings-rendered');
+    if (document.querySelector('#bot-advanced').open) throw new Error('advanced limits should start collapsed');
+    if (document.querySelector('#config-form')) throw new Error('global config-form should not exist');
+    document.querySelector('#bot-advanced').open = true;
+    document.querySelector('#bot-limit-contextTokens').value='16000';
+    document.querySelector('#bot-limit-contextTokens').dispatchEvent(new Event('input',{bubbles:true}));
+    document.querySelector('#save-bot-settings').click();
+    await wait(()=>document.querySelector('#bot-settings-hint').textContent.includes('32000'),'range-rejected');
+    document.querySelector('#bot-limit-contextTokens').value='128000';
+    document.querySelector('#bot-limit-contextTokens').dispatchEvent(new Event('input',{bubbles:true}));
+    document.querySelector('#bot-limit-loopMax').value='50';
+    document.querySelector('#bot-limit-loopMax').dispatchEvent(new Event('input',{bubbles:true}));
     await ThycaRouter.navigate('memories');
-    await wait(()=>ThycaRouter.currentPage()==='memories'&&!!document.querySelector('[data-page-workspace="memories"]:not([hidden])'),'history-away');
-    history.back();
-    await wait(()=>!!document.querySelector('#settings-dialog')?.open,'history-settings-repeat');
-    document.querySelector('#settings-dialog .dialog-close').click();
-    await wait(()=>!document.querySelector('#settings-dialog').open,'history-dialog-closed-again');
-    // Same entry, same route: popstate lands on the already-current route,
-    // so navigate() takes its early return — the pending dialog must still open.
-    dispatchEvent(new PopStateEvent('popstate',{state:history.state}));
-    await wait(()=>!!document.querySelector('#settings-dialog')?.open,'history-settings-same-route');
-    document.querySelector('#settings-dialog .dialog-close').click();
-    await wait(()=>!document.querySelector('#settings-dialog').open,'history-dialog-closed-same-route');
-    document.querySelector('#open-settings').click();
-    await wait(()=>!!document.querySelector('#settings-dialog')?.open,'dialog-open');
-    await wait(()=>document.querySelectorAll('#config-fields [data-section]').length===4,'limits-fields-rendered');
-    const names=[...document.querySelectorAll('#config-fields [data-section]')].map(el=>el.dataset.section+'.'+el.dataset.name);
-    const loopMaxEl=()=>document.querySelector('#setcfg-limits-loopMax');
-    if (names.join(',')!=='limits.loopMax,limits.hotTailKB,limits.contextTokens,limits.softTimeoutS') throw new Error('unexpected limits fields: '+names.join(','));
-    if (!loopMaxEl() || loopMaxEl().value!=='80') throw new Error('loopMax did not hydrate the saved value');
-    // Text-size preference also zooms the modal contents within viewport bounds.
-    // (zoom scales rendering, not computed font-size, so compare rects.)
-    const title='#settings-dialog .card-title';
-    const hh=()=>document.querySelector(title).getBoundingClientRect().height;
-    const before=hh();
-    const scale=document.querySelector('#pref-type-scale'); scale.value='large'; scale.dispatchEvent(new Event('change',{bubbles:true}));
-    await wait(()=>hh()>before,'dialog-zoom');
-    const rect=document.querySelector('#settings-dialog').getBoundingClientRect();
-    if (!(rect.left>=0 && rect.top>=0 && rect.right<=innerWidth+1 && rect.bottom<=innerHeight+1)) throw new Error('zoomed dialog escapes the viewport: '+JSON.stringify(rect));
-    scale.value='medium'; scale.dispatchEvent(new Event('change',{bubbles:true}));
-    await wait(()=>hh()===before,'dialog-zoom-restore');
-    // Concurrent edit to an untouched field merges instead of being overwritten.
-    const saveIdle=async label=>{await wait(()=>!document.querySelector('#save-config').disabled,'save-idle-'+label);};
-    await fetch('/api/test/mutate');
-    document.querySelector('#setcfg-limits-hotTailKB').value='5';
-    await saveIdle('merge');
-    document.querySelector('#save-config').click();
-    await wait(()=>{const s=document.querySelector('#settings-form-status');return s&&!s.hidden&&s.textContent.includes('Đã lưu');},'merge-saved');
-    const merged=await fetch('/api/test/state').then(r=>r.json());
-    // Armed conflict surfaces inside the modal with the draft kept.
-    await fetch('/api/test/conflict');
-    loopMaxEl().value='91';
-    await saveIdle('conflict');
-    document.querySelector('#save-config').click();
-    await wait(()=>{const s=document.querySelector('#settings-form-status');return s&&!s.hidden&&s.textContent.includes('thay đổi ở nơi khác');},'conflict-visible');
-    if (!document.querySelector('#settings-dialog').open) throw new Error('conflict closed the dialog');
-    if (loopMaxEl().value!=='91') throw new Error('conflict discarded the draft');
-    // Close + reopen keeps the draft over the newer server values.
-    await fetch('/api/test/calm');
-    document.querySelector('#settings-dialog .dialog-close').click();
-    await wait(()=>!document.querySelector('#settings-dialog').open,'dialog-closed');
-    document.querySelector('#open-settings').click();
-    await wait(()=>!!document.querySelector('#settings-dialog')?.open,'dialog-reopened');
-    if (document.querySelector('#setcfg-limits-loopMax').value!=='91') throw new Error('reopen lost the loopMax draft');
-    if (document.querySelector('#setcfg-limits-hotTailKB').value!=='5') throw new Error('reopen lost the saved hotTailKB');
-    const statusCleared=!document.querySelector('#settings-form-status').hidden;
-    await saveIdle('retry');
-    document.querySelector('#save-config').click();
-    await wait(()=>{const s=document.querySelector('#settings-form-status');return s&&!s.hidden&&s.className.includes('is-ok');},'retry-saved');
-    const after=await fetch('/api/test/state').then(r=>r.json());
-    // Same-field concurrent edit: the server moved loopMax after our
-    // baseline, so saving our value surfaces a conflict instead of
-    // overwriting. Resubmitting unchanged is informed consent and posts.
-    await fetch('/api/test/mutate');
-    loopMaxEl().value='20';
-    await saveIdle('same-field');
-    document.querySelector('#save-config').click();
-    await wait(()=>{const s=document.querySelector('#settings-form-status');return s&&!s.hidden&&s.textContent.includes('Xung đột')&&s.textContent.includes('999');},'same-field-conflict');
-    if (!document.querySelector('#settings-dialog').open) throw new Error('same-field conflict closed the dialog');
-    if (loopMaxEl().value!=='20') throw new Error('same-field conflict discarded the draft');
-    const postsBefore=await fetch('/api/test/state').then(r=>r.json());
-    await saveIdle('consent');
-    document.querySelector('#save-config').click();
-    await wait(()=>{const s=document.querySelector('#settings-form-status');return s&&!s.hidden&&s.className.includes('is-ok');},'consent-saved');
-    // Revert to the original base across close/reopen: edit, close, let
-    // another tab change the server, reopen (draft restored over the fresh
-    // paint), revert to the original value, save (conflict), resubmit.
-    loopMaxEl().value='21';
-    document.querySelector('#settings-dialog .dialog-close').click();
-    await wait(()=>!document.querySelector('#settings-dialog').open,'revert-closed');
-    await fetch('/api/test/mutate');
-    document.querySelector('#open-settings').click();
-    await wait(()=>!!document.querySelector('#settings-dialog')?.open,'revert-reopened');
-    // The reopen load paints fresh values then re-applies the draft in one
-    // task; the baseline assignment proves it finished, so setting a value
-    // afterwards cannot race the paint.
-    await wait(()=>{try{return settingsBaseline.limits.loopMax===999;}catch(e){return false;}},'revert-baseline');
-    if (loopMaxEl().value!=='21') throw new Error('reopen lost the revert draft');
-    loopMaxEl().value='20';
-    await saveIdle('revert');
-    document.querySelector('#save-config').click();
-    await wait(()=>{const s=document.querySelector('#settings-form-status');return s&&!s.hidden&&s.textContent.includes('Xung đột')&&s.textContent.includes('999')&&s.textContent.includes('20');},'revert-conflict');
-    await saveIdle('revert-consent');
-    document.querySelector('#save-config').click();
-    await wait(()=>{const s=document.querySelector('#settings-form-status');return s&&!s.hidden&&s.className.includes('is-ok');},'revert-saved');
-    // Clearing a numeric keeps the raw empty draft across close/reopen
-    // and a config reload; submit-time validation still blocks the write.
-    loopMaxEl().value='';
-    document.querySelector('#settings-dialog .dialog-close').click();
-    await wait(()=>!document.querySelector('#settings-dialog').open,'empty-closed');
-    document.querySelector('#open-settings').click();
-    await wait(()=>!!document.querySelector('#settings-dialog')?.open,'empty-reopened');
-    // The reopen load paints fresh values then re-applies the draft; an
-    // awaited load settles any interleave, so the check below only passes
-    // if the empty draft survived the render.
-    await loadSettingsConfig();
-    if (loopMaxEl().value!=='') throw new Error('reopen lost the empty loopMax draft');
-    await loadSettingsConfig();
-    if (loopMaxEl().value!=='') throw new Error('config reload lost the empty loopMax draft');
-    await saveIdle('empty');
-    document.querySelector('#save-config').click();
-    await wait(()=>{const s=document.querySelector('#settings-form-status');return s&&!s.hidden&&s.textContent.includes('cần một con số');},'empty-validated');
-    const emptyState=await fetch('/api/test/state').then(r=>r.json());
-    if (emptyState.posts.length!==4) throw new Error('empty submit wrote: '+JSON.stringify(emptyState.posts));
+    await wait(()=>ThycaRouter.currentPage()==='memories','nav-away');
+    await ThycaRouter.navigate('profile', { search: '?bot=thyca' });
+    await wait(()=>document.querySelector('#bot-limit-contextTokens')?.value==='128000','draft-restored');
+    document.querySelector('#save-bot-settings').click();
+    await wait(()=>document.querySelector('#bot-settings-hint').textContent==='Đã lưu.','custom-saved');
+    const afterSave=await fetch('/api/test/state').then(r=>r.json());
+    document.querySelector('#bot-advanced').open = true;
+    document.querySelector('#bot-limits-reset').click();
+    document.querySelector('#save-bot-settings').click();
+    await wait(()=>document.querySelector('#bot-settings-hint').textContent==='Đã lưu.','reset-saved');
     const final=await fetch('/api/test/state').then(r=>r.json());
-    const result={passed:true,mergedPosts:merged.posts,finalValues:final.values.limits,statusClearedAfterReopen:statusCleared,
-      sameFieldBlockedPosts:postsBefore.posts.length,finalPosts:final.posts.length,
-      dialogStillOpen:document.querySelector('#settings-dialog').open};
+    document.querySelector('#open-studio').click();
+    await wait(()=>!!document.querySelector('#expressions-dialog')?.open,'studio-opened');
+    document.querySelector('#expressions-dialog .dialog-close').click();
+    await wait(()=>!document.querySelector('#expressions-dialog').open,'studio-closed');
+    const result={passed:true,afterSaveLimits:afterSave.botLimits,finalLimits:final.botLimits,
+      finalPosts:final.posts.length,dialogStillOpen:!!document.querySelector('#settings-dialog')?.open};
     result.scriptErrors=window.__scriptErrors; result.unhandledRejections=window.__promiseErrors;
     document.body.dataset.spaTestResult=JSON.stringify(result); return;
   } catch(error) { document.body.dataset.spaTestResult=JSON.stringify({error:String(error),route:ThycaRouter?.currentRoute(),scriptErrors:window.__scriptErrors,unhandledRejections:window.__promiseErrors}); }
@@ -2376,16 +2217,17 @@ SETTINGS_DIALOG_AUDIT_SCRIPT = r"""
     reason="Chromium/Chrome is required for the Settings dialog browser audit",
 )
 def test_settings_dialog_modal_feedback_scale_and_merge(tmp_path: Path) -> None:
-    """Real browser: Settings conflict/merge feedback inside the modal, dialog
-    text-scale zoom within the viewport, and draft survival across reopen."""
+    """Real browser: compacted Settings modal, text-scale zoom within the
+    viewport, hidden-by-default per-bot limits, range validation, draft
+    survival across reopen, and reset to default."""
 
     class Handler(BaseHTTPRequestHandler):
         values: ClassVar[dict] = {
-            "providers": {},
-            "models": {},
-            "defaultProvider": "",
-            "defaultModel": "",
-            "limits": {"loopMax": 80, "hotTailKB": 4, "contextTokens": 100000, "softTimeoutS": 20},
+            "providers": {"default": {}},
+            "models": {"m1": {"provider": "default"}},
+            "defaultProvider": "default",
+            "defaultModel": "m1",
+            "limits": {"loopMax": 200, "hotTailKB": 4, "contextTokens": 272000, "softTimeoutS": 60},
         }
         schema: ClassVar[dict] = {
             "sections": [
@@ -2399,6 +2241,7 @@ def test_settings_dialog_modal_feedback_scale_and_merge(tmp_path: Path) -> None:
                             "type": "number",
                             "min": 1,
                             "max": 200,
+                            "default": 200,
                         },
                         {
                             "key": "limits.hotTailKB",
@@ -2406,13 +2249,15 @@ def test_settings_dialog_modal_feedback_scale_and_merge(tmp_path: Path) -> None:
                             "type": "number",
                             "min": 1,
                             "max": 64,
+                            "default": 4,
                         },
                         {
                             "key": "limits.contextTokens",
                             "label": "Trần ngữ cảnh gửi lên model (tokens)",
                             "type": "number",
-                            "min": 1000,
-                            "max": 2000000,
+                            "min": 32000,
+                            "max": 1000000,
+                            "default": 272000,
                         },
                         {
                             "key": "limits.softTimeoutS",
@@ -2420,14 +2265,19 @@ def test_settings_dialog_modal_feedback_scale_and_merge(tmp_path: Path) -> None:
                             "type": "number",
                             "min": 1,
                             "max": 300,
+                            "default": 60,
                         },
                     ],
                 }
             ]
         }
-        revision = "r0"
+        bot_limits: ClassVar[dict[str, int | None]] = {
+            "loopMax": None,
+            "hotTailKB": None,
+            "contextTokens": None,
+            "softTimeoutS": None,
+        }
         posts: ClassVar[list[dict]] = []
-        conflict_armed = False
 
         def log_message(self, *_args) -> None:
             pass
@@ -2442,40 +2292,19 @@ def test_settings_dialog_modal_feedback_scale_and_merge(tmp_path: Path) -> None:
 
         def do_GET(self) -> None:
             path = urlsplit(self.path).path
-            if path == "/api/test/mutate":
-                Handler.values["limits"]["loopMax"] = 999
-                Handler.revision = "r9"
-                self._json({"ok": True})
-                return
-            if path == "/api/test/conflict":
-                Handler.conflict_armed = True
-                self._json({"ok": True})
-                return
-            if path == "/api/test/calm":
-                Handler.conflict_armed = False
-                self._json({"ok": True})
-                return
             if path == "/api/test/reset":
-                Handler.values = {
-                    "providers": {},
-                    "models": {},
-                    "defaultProvider": "",
-                    "defaultModel": "",
-                    "limits": {
-                        "loopMax": 80,
-                        "hotTailKB": 4,
-                        "contextTokens": 100000,
-                        "softTimeoutS": 20,
-                    },
+                Handler.bot_limits = {
+                    "loopMax": None,
+                    "hotTailKB": None,
+                    "contextTokens": None,
+                    "softTimeoutS": None,
                 }
-                Handler.revision = "r0"
                 Handler.posts = []
-                Handler.conflict_armed = False
                 self._json({"ok": True})
                 return
             if path == "/api/test/state":
                 self._json(
-                    {"revision": Handler.revision, "values": Handler.values, "posts": Handler.posts}
+                    {"botLimits": Handler.bot_limits, "posts": Handler.posts}
                 )
                 return
             if path.startswith("/api/"):
@@ -2487,7 +2316,7 @@ def test_settings_dialog_modal_feedback_scale_and_merge(tmp_path: Path) -> None:
                         {
                             "values": Handler.values,
                             "schema": Handler.schema,
-                            "revision": Handler.revision,
+                            "revision": "r0",
                         }
                     )
                     return
@@ -2498,6 +2327,33 @@ def test_settings_dialog_modal_feedback_scale_and_merge(tmp_path: Path) -> None:
                                 {"id": "thyca", "name": "Thyca", "role": "assistant"},
                                 {"id": "coder", "name": "Coder", "role": "coding"},
                             ]
+                        }
+                    )
+                    return
+                if path in ("/api/bots/thyca/settings", "/api/bots/coder/settings"):
+                    bot_id = path.split("/")[3]
+                    lim = Handler.bot_limits if bot_id == "thyca" else {
+                        "loopMax": None,
+                        "hotTailKB": None,
+                        "contextTokens": None,
+                        "softTimeoutS": None,
+                    }
+                    self._json(
+                        {
+                            "bot_id": bot_id,
+                            "model": {"id": "default", "thinking": None},
+                            "limits": lim,
+                            "effective": {
+                                "model": "m1",
+                                "provider": "default",
+                                "thinking": "high",
+                                "limits": {
+                                    "loopMax": lim["loopMax"] or 200,
+                                    "hotTailKB": lim["hotTailKB"] or 4,
+                                    "contextTokens": lim["contextTokens"] or 272000,
+                                    "softTimeoutS": lim["softTimeoutS"] or 60,
+                                },
+                            },
                         }
                     )
                     return
@@ -2537,17 +2393,42 @@ def test_settings_dialog_modal_feedback_scale_and_merge(tmp_path: Path) -> None:
             path = urlsplit(self.path).path
             length = int(self.headers.get("Content-Length", "0"))
             payload = json.loads(self.rfile.read(length) or b"{}")
-            if path == "/api/config":
-                if Handler.conflict_armed or payload.get("baseRevision") != Handler.revision:
-                    self._json(
-                        {"code": "config_changed", "error": "cấu hình đã thay đổi ở nơi khác"}, 409
-                    )
-                    return
-                values = {key: value for key, value in payload.items() if key != "baseRevision"}
-                Handler.values = values
-                Handler.revision = f"r{len(Handler.posts) + 2}"
+            if path == "/api/bots/thyca/settings":
                 Handler.posts.append(payload)
-                self._json({"ok": True, "ready": True})
+                raw_lim = payload.get("limits")
+                if raw_lim is None:
+                    Handler.bot_limits = {
+                        "loopMax": None,
+                        "hotTailKB": None,
+                        "contextTokens": None,
+                        "softTimeoutS": None,
+                    }
+                else:
+                    Handler.bot_limits = {
+                        "loopMax": raw_lim.get("loopMax"),
+                        "hotTailKB": raw_lim.get("hotTailKB"),
+                        "contextTokens": raw_lim.get("contextTokens"),
+                        "softTimeoutS": raw_lim.get("softTimeoutS"),
+                    }
+                lim = Handler.bot_limits
+                self._json(
+                    {
+                        "bot_id": "thyca",
+                        "model": payload.get("model", {"id": "default", "thinking": None}),
+                        "limits": lim,
+                        "effective": {
+                            "model": "m1",
+                            "provider": "default",
+                            "thinking": "high",
+                            "limits": {
+                                "loopMax": lim["loopMax"] or 200,
+                                "hotTailKB": lim["hotTailKB"] or 4,
+                                "contextTokens": lim["contextTokens"] or 272000,
+                                "softTimeoutS": lim["softTimeoutS"] or 60,
+                            },
+                        },
+                    }
+                )
                 return
             self._json({"ok": True})
 
@@ -2565,21 +2446,20 @@ def test_settings_dialog_modal_feedback_scale_and_merge(tmp_path: Path) -> None:
             tmp_path / "settings-audit",
         )
         assert desktop.get("passed") is True, desktop
-        merge = next(post for post in desktop["mergedPosts"] if post.get("baseRevision") == "r9")
-        assert merge["limits"] == {
-            "loopMax": 999,
-            "hotTailKB": 5,
-            "contextTokens": 100000,
-            "softTimeoutS": 20,
+        assert desktop["afterSaveLimits"] == {
+            "loopMax": 50,
+            "hotTailKB": None,
+            "contextTokens": 128000,
+            "softTimeoutS": None,
         }
-        assert desktop["finalValues"] == {
-            "loopMax": 20,
-            "hotTailKB": 5,
-            "contextTokens": 100000,
-            "softTimeoutS": 20,
+        assert desktop["finalLimits"] == {
+            "loopMax": None,
+            "hotTailKB": None,
+            "contextTokens": None,
+            "softTimeoutS": None,
         }
-        assert desktop["sameFieldBlockedPosts"] == 2 and desktop["finalPosts"] == 4
-        assert desktop["dialogStillOpen"] is True
+        assert desktop["finalPosts"] == 2
+        assert desktop["dialogStillOpen"] is False
         assert desktop["scriptErrors"] == [] and desktop["unhandledRejections"] == []
         mobile = _cdp_browser_result(
             chrome,
@@ -2599,7 +2479,8 @@ def test_settings_dialog_modal_feedback_scale_and_merge(tmp_path: Path) -> None:
             tmp_path / "settings-startup-marker",
         )
         assert startup.get("passed") is True, startup
-        assert startup["dialogStillOpen"] is True
+        assert startup["dialogStillOpen"] is False
+        assert startup["page"] == "profile"
         assert startup["scriptErrors"] == [] and startup["unhandledRejections"] == []
     finally:
         server.shutdown()

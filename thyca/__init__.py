@@ -1,3 +1,3 @@
 """Thyca — personal terminal harness."""
 
-__version__ = "0.88.0.dev3"
+__version__ = "0.88.0.dev4"

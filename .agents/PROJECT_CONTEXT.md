@@ -4,7 +4,7 @@ Mục tiêu của file này là mô tả trạng thái thật tại HEAD. Mã ng
 
 ## Runtime hiện tại
 
-- Phiên bản: `0.88.0.dev3`. Đồng bộ ở `pyproject.toml`, `thyca/__init__.py`, `uv.lock`, `README.md` và `.agents/`.
+- Phiên bản: `0.88.0.dev4`. Đồng bộ ở `pyproject.toml`, `thyca/__init__.py`, `uv.lock`, `README.md` và `.agents/`.
 - Điểm vào CLI nằm ở `thyca/app/cli.py`. Máy chủ WebUI vòng lặp nội bộ (loopback) nằm ở `thyca/serve/`.
 - WebUI là một SPA gốc duy nhất. File vào là `thyca/webui/ui/chat/index.html` tại `/`.
 - Sáu đường workspace cũ vẫn mở đúng màn. Đường Trace cũ được chuẩn hóa vào màn Sử dụng (Usage).
@@ -59,11 +59,11 @@ Mục tiêu của file này là mô tả trạng thái thật tại HEAD. Mã ng
 
 ### Cài đặt model theo bot
 
-- File `bots/<id>/settings.json` sở hữu `{"model": {"id", "thinking"}}`.
+- File `bots/<id>/settings.json` sở hữu `{"model": {"id", "thinking"}}` và tùy chọn `"limits": {"loopMax", "hotTailKB", "contextTokens", "softTimeoutS"}` (trần ngữ cảnh `32000–1000000`, mặc định `272000`).
 - File `TWIN.md` giữ danh tính, persona và chính sách. Ghi canonical không còn khóa `model` trong `TWIN.md`.
 - Lúc đọc, hệ thống nạp thẻ từ settings nếu có. Nếu không có, hệ thống quay về model thẻ cũ mà không ghi chuyển đổi.
 - Settings hỏng làm bot bị đánh dấu không hợp lệ.
-- Hộp thoại Cài đặt dùng chung (`#settings-dialog`, mục “Bot của bạn” theo `#settings-bot`) là UI model/mức suy luận theo bot duy nhất ngoài admin tools; trang Hồ sơ (`?bot=<id>`) chỉ hiển thị hồ sơ và `TWIN.md` chỉ đọc của bot.
+- Trang Hồ sơ từng bot (`?bot=<id>`, `#bot-settings-form` kèm mục `<details id="bot-advanced">` "Nâng cao") là UI cấu hình model, mức suy luận và giới hạn chạy theo bot duy nhất ngoài admin tools; hộp thoại Cài đặt cũ đã bị gỡ và `/ui/settings` định tuyến về Hồ sơ.
 - Không có `?bot` thì trang Hồ sơ hiện các file canonical dùng chung. Mỗi bot (kể cả Thyca) có tab riêng.
 - Thứ tự lúc chạy lượt: ghi đè model/mức suy luận cho lượt đó, rồi cài đặt đã lưu của bot, rồi mặc định toàn cục. Mức suy luận được kiểm tra theo tập hợp của chính model hiệu lực.
 - Bên nhận A2A tự resolve thẻ của mình. Chỉ mức suy luận ghi đè tường minh mới được chuyển tiếp.

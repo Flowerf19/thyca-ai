@@ -4,7 +4,7 @@ Shared workflow policies (Inverted Trust Pyramid, permissions, clean cutover, co
 
 ## Release status — explicit user decision
 
-- Thyca hiện là **development**, phiên bản `0.88.0.dev3` (số `0.88.0` do user xác nhận, không tự sửa thành số khác).
+- Thyca hiện là **development**, phiên bản `0.88.0.dev4` (số `0.88.0` do user xác nhận, không tự sửa thành số khác).
 - Giữ hậu tố `.devN` theo chuẩn Python; không tự bỏ `dev`, chuyển sang beta/RC/stable, hoặc coi bản dev là release chính thức. Chỉ thay giai đoạn phát hành khi user yêu cầu rõ ràng.
 - Khi đổi version, đồng bộ `pyproject.toml`, `thyca/__init__.py`, `uv.lock`, `README.md`, và `.agents/` (được kiểm tra tự động bởi `scripts/checks/check-tier1.sh`).
 

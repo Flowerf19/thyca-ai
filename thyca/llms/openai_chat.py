@@ -10,7 +10,7 @@ import httpx
 from thyca.core.protocol import Message
 
 from ._http import BaseConnect, iter_sse_data, parse_json_bytes, redact
-from ._shared import parse_tool_calls, slots_to_calls
+from ._shared import parse_tool_calls, resolve_finish_reason, slots_to_calls
 from .llm_base import ChatReply, LLMError, normalize_usage
 from .streaming import ContentOut, ReasoningOut
 
@@ -223,11 +223,15 @@ def parse_chat_payload(raw: dict, key: str) -> ChatReply:
     reasoning = _reasoning_text(message)
     details = _ReasoningDetailsOut(key)
     details.add(message.get("reasoning_details"))
+    cleaned_content = redact(content, key) if isinstance(content, str) else content
+    calls = parse_tool_calls(message.get("tool_calls"))
     return ChatReply(
-        content=redact(content, key) if isinstance(content, str) else content,
-        tool_calls=parse_tool_calls(message.get("tool_calls")),
+        content=cleaned_content,
+        tool_calls=calls,
         usage=usage,
-        finish_reason=finish,
+        finish_reason=resolve_finish_reason(
+            finish, content=cleaned_content or None, calls=calls, key=key
+        ),
         model=model,
         reasoning=redact(reasoning, key) or None,
         reasoning_details=details.items(),
@@ -295,11 +299,14 @@ async def read_sse_reply(
         raise LLMError("provider response incomplete")
     content_out.finish()
     content: str | None = redact("".join(content_parts), key) if saw_content_str else None
+    calls = slots_to_calls(slots)
     return ChatReply(
         content=content,
-        tool_calls=slots_to_calls(slots),
+        tool_calls=calls,
         usage=usage,
-        finish_reason=finish,
+        finish_reason=resolve_finish_reason(
+            finish, content=content or None, calls=calls, key=key
+        ),
         model=model,
         reasoning=reasoning.text(),
         reasoning_details=details.items(),

@@ -209,7 +209,7 @@ def test_model_max_tokens_save_prefill_and_clear(node: str) -> None:
         await verifyQuick(); chooseModel('max/model');
         const emptyShows = $('#m-max').value;
         const markup = $('.workspace').innerHTML;
-        const steps = markup.includes('id="m-context" type="number" min="1000" max="2000000" step="16000"') &&
+        const steps = markup.includes('id="m-context" type="number" min="32000" max="1000000" step="16000"') &&
                         markup.includes('id="m-max" type="number" min="1" max="2000000" step="16000"');
         $('#m-max').value='8000';
         const saved = await submitEditor(null);

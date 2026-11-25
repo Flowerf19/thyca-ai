@@ -5,7 +5,7 @@ ThycaRouter.register('provider', { title: 'Provider', stylesheet: '/ui/provider/
   let selectedBot = '';
 
 const PROVIDER_ID_RE = /^[A-Za-z0-9_-]+$/;
-const FALLBACK_LIMITS = { loopMax: [1, 200], hotTailKB: [1, 64], contextTokens: [1000, 2000000], maxTokens: [1, 2000000] };
+const FALLBACK_LIMITS = { loopMax: [1, 200], hotTailKB: [1, 64], contextTokens: [32000, 1000000], maxTokens: [1, 2000000] };
 const CHOOSE_MODEL = '__choose__';
 const ADVANCED_FIELDS = new Set(['#m-in', '#m-cache', '#m-out', '#m-context', '#m-max']);
 const OFFICIAL_URLS = {

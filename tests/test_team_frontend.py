@@ -40,7 +40,6 @@ STUDIO_JS = SHARE / "avatars" / "studio.js"
 SHELL_APP_JS = SHARE / "shell-app.js"
 CHAT_JS = CHAT_DIR / "js" / "chat.js"
 APP_JS = CHAT_DIR / "js" / "app.js"
-SETTINGS_DIALOG_JS = UI / "share" / "settings-dialog.js"
 PROVIDER_JS = UI / "provider" / "js" / "provider.js"
 MEMORIES_JS = UI / "memories" / "js" / "memories.js"
 DASHBOARD_JS = UI / "dashboard" / "js" / "dashboard.js"
@@ -440,7 +439,6 @@ _BUNDLES = {
     "shell": (UTIL_JS, DATA_JS, SHELL_JS, AVATARS_JS, IDLE_JS, SIDEBAR_JS, STUDIO_JS, SHELL_APP_JS),
     "chat": (UTIL_JS, DATA_JS, CHAT_DATA_JS, AVATARS_JS, IDLE_JS, SIDEBAR_JS, STUDIO_JS, SHELL_APP_JS, CHAT_JS),
     "app": (UTIL_JS, DATA_JS, CHAT_DATA_JS, AVATARS_JS, IDLE_JS, SIDEBAR_JS, STUDIO_JS, SHELL_APP_JS, CHAT_JS, APP_JS),
-    "dialog": (UTIL_JS, DATA_JS, SHELL_JS, AVATARS_JS, IDLE_JS, SIDEBAR_JS, STUDIO_JS, SHELL_APP_JS, SETTINGS_DIALOG_JS),
     "provider": (UTIL_JS, DATA_JS, SHELL_JS, AVATARS_JS, IDLE_JS, SIDEBAR_JS, STUDIO_JS, SHELL_APP_JS, PROVIDER_JS),
     "memories": (UTIL_JS, DATA_JS, SHELL_JS, AVATARS_JS, IDLE_JS, SIDEBAR_JS, STUDIO_JS, SHELL_APP_JS, MEMORIES_JS),
     "dashboard": (UTIL_JS, DATA_JS, SHELL_JS, AVATARS_JS, IDLE_JS, SIDEBAR_JS, STUDIO_JS, SHELL_APP_JS, TRACE_JS, DASHBOARD_JS),
@@ -1909,7 +1907,6 @@ def test_expression_dialog_shape_markup_consistent(node: str) -> None:
     for text in (html, shell):
         assert 'id="shape-picker"' in text
         assert "Hình dạng" in text
-        assert "màu và hình dáng" in text
     assert html.count('id="shape-picker"') == 1
     assert shell.count('id="shape-picker"') == 1
     assert "màu, hình dạng" in html and "màu, hình dạng" in shell
@@ -2177,7 +2174,8 @@ def test_shell_markup_header_sidebar_and_dialogs(node: str) -> None:
     assert 'class="sessions-heading"' in side and '>Đội<' in side
     assert 'class="bot-count"' in side
     assert 'class="session-list" id="team-bot-list"' in side
-    assert 'id="open-settings"' in side and 'Cài đặt' in side
+    assert 'id="open-settings"' not in side
+    assert 'id="settings-dialog"' not in dlg
     assert 'id="open-customize"' not in side and 'id="motion-toggle"' not in side
     assert 'class="splitter"' in side
     assert 'id="team-shared-create"' not in side
@@ -2422,6 +2420,33 @@ def test_stream_events_drive_live_calls_and_stream_text(node: str) -> None:
     assert out["byline"] == "đang viết"
     assert out["stream"] == "Chữ đang chảy"
     assert out["tokenTools"] == ["bash", "bash", "bash"]
+
+
+def test_stream_events_insert_paragraph_break_between_llm_rounds(node: str) -> None:
+    out = _run(node, _CHAT_SEED + """
+        const list = $('#message-list');
+        const node = document.createElement('article');
+        node.innerHTML = '<header class="message-byline"><span>Coder</span><time>x</time></header><div class="live-copy"><p class="live-message">…</p></div>';
+        list.appendChild(node);
+        const token = { botId: 'coder', conversationId: 'dm:coder', node, timers: [], tools: [], start: Date.now(), phase: 'waiting' };
+        runs.set('dm:coder', token);
+        for (const ev of [
+            { type: 'llm.started' },
+            { type: 'llm.content', delta: 'Đang kiểm tra...' },
+            { type: 'llm.finished' },
+            { type: 'tool.started', name: 'bash', call_id: 'c1' },
+            { type: 'tool.finished', name: 'bash', call_id: 'c1' },
+            { type: 'llm.started' },
+            { type: 'llm.content', delta: 'Xong rồi.' },
+        ]) handleStreamEvent(token, ev);
+        return {
+            mdBuf: token.mdBuf,
+            needRoundBreak: !!token.needRoundBreak,
+        };
+    """, via="chat")
+    assert out["mdBuf"] == "Đang kiểm tra...\n\nXong rồi."
+    assert out["needRoundBreak"] is False
+
 
 def test_turn_terminal_events_cancel_and_fail(node: str) -> None:
     """turn.cancelled leaves an interruption note + 'đã dừng' byline and lands
@@ -2855,700 +2880,6 @@ def test_prototype_adapter_and_demo_button(node: str) -> None:
     assert out["stopIsStopRun"] is True
 
 
-def test_settings_dialog_renders_bot_prefs_and_status(node: str) -> None:
-    """The shared Settings dialog shows the bot shortcut (shared seal),
-    machine-only prefs (defaults applied without writing) and on-demand
-    backend status — no page, no roster card."""
-    out = _run(node, r"""
-        bots.length = 0;
-        bots.push(...roster([{ id: 'a', name: 'Alpha', role: 'R' }], 0));
-        installFetch((url) => {
-            if (url === '/api/config/status') return { ready: true, version: '1.2.3' };
-            return {};
-        });
-        await tick();
-        const opened = openSettingsDialog();
-        await tick();                                         // status fetch resolves
-        return {
-            opened,
-            open: $('#settings-dialog').open,
-            botOptions: $('#settings-bot').innerHTML,
-            seal: $('#settings-bot-seal').innerHTML,
-            studio: typeof $('#open-studio').onclick,
-            ready: $('#status-ready').textContent,
-            readyCls: $('#status-ready').className,
-            version: $('#status-version').textContent,
-            pref: {
-                typeScale: $('#pref-type-scale').value,
-                reduceMotion: $('#pref-reduce-motion').checked,
-                ornaments: $('#pref-ornaments').checked,
-                hook: document.documentElement.dataset.ornaments,
-                savedAtOpen: localStorage.getItem('thyca.ui.preferences'),
-            },
-        };
-    """, via="dialog")
-    assert out["opened"] is True and out["open"] is True
-    assert "Alpha" in out["botOptions"] and 'class="seal-avatar' in out["seal"]
-    assert "Alpha" in out["seal"]
-    assert out["studio"] == "function"
-    assert out["ready"] == "Sẵn sàng" and out["readyCls"] == "status-line s-ok"
-    assert out["version"] == "1.2.3"
-    assert out["pref"]["typeScale"] == "medium"
-    assert out["pref"]["reduceMotion"] is False
-    assert out["pref"]["ornaments"] is True
-    assert out["pref"]["hook"] == "on"
-    assert out["pref"]["savedAtOpen"] is None
-
-
-def test_settings_prefs_persist_on_change_only(node: str) -> None:
-    """Changing a dialog pref control applies it (dataset + body.motion-paused)
-    and writes thyca.ui.preferences; #pref-reset returns defaults and persists."""
-    out = _run(node, """
-        installFetch((url) => url === '/api/bots' ? { bots: [] }
-            : url === '/api/conversations' ? { conversations: [] }
-            : url === '/api/config/status' ? { ready: false } : {});
-        await tick();
-        openSettingsDialog();
-        await tick();
-        const sel = $('#pref-type-scale');
-        sel.value = 'large';
-        sel.dispatch('change', { target: sel });
-        const after = {
-            saved: JSON.parse(localStorage.getItem('thyca.ui.preferences')),
-            scale: document.documentElement.dataset.typeScale,
-        };
-        $('#pref-reduce-motion').checked = true;
-        $('#pref-reduce-motion').dispatch('change', { target: $('#pref-reduce-motion') });
-        const motion = document.body.classList.contains('motion-paused');
-        $('#pref-reset').onclick();
-        return { after, motion,
-                 reset: { saved: JSON.parse(localStorage.getItem('thyca.ui.preferences')),
-                          scale: document.documentElement.dataset.typeScale,
-                          toast: $('#toast').textContent } };
-    """, via="dialog")
-    assert out["after"]["scale"] == "large"
-    assert out["after"]["saved"]["typeScale"] == "large"
-    assert out["motion"] is True
-    assert out["reset"]["scale"] == "medium"
-    assert out["reset"]["saved"] == {"typeScale": "medium", "reduceMotion": False, "ornaments": True}
-    assert "mặc định" in out["reset"]["toast"]
-
-
-def test_settings_dialog_studio_shortcut_keeps_bot_customization(node: str) -> None:
-    """The dialog's studio button opens the shared expression studio for
-    the dialog's selected bot (the retained Custom-bot customization path)."""
-    out = _run(node, r"""
-        bots.length = 0;
-        bots.push(...roster([{ id: 'a', name: 'Alpha' }, { id: 'b', name: 'Beta' }], 0));
-        installFetch((url) => url === '/api/bots' ? { bots: [] }
-            : url === '/api/conversations' ? { conversations: [] }
-            : url === '/api/config/status' ? { ready: true, version: 'x' } : {});
-        await tick();
-        openSettingsDialog();
-        await tick();
-        document.querySelector('#settings-bot').value = 'b';
-        document.querySelector('#open-studio').click();
-        return { expressionsOpen: document.querySelector('#expressions-dialog').open,
-                 studioBot: document.querySelector('#expression-bot').value };
-    """, via="dialog")
-    assert out["expressionsOpen"] is True
-    assert out["studioBot"] == "b"
-
-
-def test_settings_form_posts_merged_values(node: str) -> None:
-    """The config form renders schema fields (hidden/secret skipped) and POSTs
-    the whole values object back with edited fields merged in."""
-    out = _run(node, """
-        const posted = [];
-        installFetch((url, opts) => {
-            if (url === '/api/bots') return { bots: [] };
-            if (url === '/api/conversations') return { conversations: [] };
-            if (url === '/api/config/status') return { ready: true, version: 'x' };
-            if (url === '/api/config' && opts.method === 'POST') { posted.push(JSON.parse(opts.body)); return {}; }
-            if (url === '/api/config') return {
-                values: { limits: { maxLoops: 4 }, provider: { model: 'm1', apiKey: 'keep' } },
-                schema: { sections: [
-                    { key: 'limits', label: 'Giới hạn', fields: [
-                        { key: 'limits.maxLoops', label: 'Vòng tối đa', type: 'number', min: 1, max: 9 },
-                        { key: 'limits.secret', label: 'Ẩn', secret: true },
-                    ] },
-                    { key: 'provider', label: 'P', fields: [{ key: 'provider.model', label: 'M', hidden: true }] },
-                ] },
-            };
-            return {};
-        });
-        await tick(); await loadSettingsConfig();
-        const fields = $('#config-fields').innerHTML;
-        const input = document.createElement('input');
-        input.type = 'number'; input.dataset.section = 'limits'; input.dataset.name = 'maxLoops';
-        input.dataset.label = 'Vòng tối đa';
-        Object.defineProperty(input, 'valueAsNumber', { get: () => 7 });
-        const form = $('#config-form');
-        form.appendChild(input);
-        await submitSettingsConfig(form);
-        return { fields, posted };
-    """, via="dialog")
-    fields = out["fields"]
-    assert 'data-section="limits"' in fields and 'data-name="maxLoops"' in fields
-    assert "Vòng tối đa" in fields and 'min="1"' in fields and 'max="9"' in fields
-    assert 'data-name="secret"' not in fields
-    assert 'data-name="model"' not in fields
-    assert out["posted"] == [{"limits": {"maxLoops": 7}, "provider": {"model": "m1", "apiKey": "keep"}}]
-
-
-def test_settings_save_merges_limit_patch_onto_fresh_provider_config(node: str) -> None:
-    out = _run(node, """
-        const server = { values: { providers: { alpha: { baseUrl: 'https://a.invalid', apiKey: '' } },
-                                  models: { old: { provider: 'alpha' } }, defaultProvider: 'alpha', defaultModel: 'old',
-                                  limits: { loopMax: 80, hotTailKB: 4 }, timeline: { retentionDays: 30 },
-                                  pricing: { old: { input: 1 } } },
-                       schema: { sections: [ { key: 'limits', label: 'L', fields: [
-                         { key: 'limits.loopMax', label: 'Vòng', type: 'number', min: 1, max: 200 },
-                       ] } ] } };
-        const posted = []; let gets = 0;
-        installFetch((url, opts) => {
-            if (url === '/api/bots') return { bots: [] };
-            if (url === '/api/conversations') return { conversations: [] };
-            if (url === '/api/config/status') return { ready: true };
-            if (url === '/api/config' && opts.method === 'POST') { posted.push(JSON.parse(opts.body)); return {}; }
-            if (url === '/api/config') { gets++; return server; }
-            return {};
-        });
-        await tick(); await loadSettingsConfig();
-        server.values.providers.fresh = { baseUrl: 'https://fresh.invalid', apiKey: '' };
-        server.values.models.freshModel = { provider: 'fresh', input: 0.1, cache: 0.01, output: 0.2 };
-        server.values.defaultModel = 'freshModel';
-        server.values.pricing.freshModel = { input: 0.1, cache: 0.01, output: 0.2 };
-        const input = document.createElement('input'); input.type = 'number'; input.dataset.section = 'limits'; input.dataset.name = 'loopMax'; input.dataset.label = 'Vòng';
-        Object.defineProperty(input, 'valueAsNumber', { get: () => 91 }); $('#config-form').appendChild(input);
-        await submitSettingsConfig($('#config-form'));
-        return { gets, posted, buttonDisabled: $('#save-config').disabled };
-    """, via="dialog")
-    assert out["gets"] == 3 and len(out["posted"]) == 1
-    posted = out["posted"][0]
-    assert posted["limits"] == {"loopMax": 91, "hotTailKB": 4}
-    assert posted["providers"]["fresh"]["baseUrl"] == "https://fresh.invalid"
-    assert posted["models"]["freshModel"]["provider"] == "fresh" and posted["defaultModel"] == "freshModel"
-    assert posted["pricing"]["freshModel"] == {"input": 0.1, "cache": 0.01, "output": 0.2}
-    assert posted["timeline"] == {"retentionDays": 30}
-
-
-def test_settings_fresh_read_failure_never_posts_stale_config(node: str) -> None:
-    """A dirty form whose submit-time fresh read fails never POSTs; the
-    failure surfaces in the dialog and the draft stays for retry."""
-    out = _run(node, """
-        let gets = 0; const posts = [];
-        installFetch((url, opts) => {
-            if (url === '/api/bots') return { bots: [] };
-            if (url === '/api/conversations') return { conversations: [] };
-            if (url === '/api/config/status') return { ready: true };
-            if (url === '/api/config' && opts.method === 'POST') { posts.push(JSON.parse(opts.body)); return {}; }
-            if (url === '/api/config') { gets++; return gets === 1 ? { values: { limits: { loopMax: 80 } }, schema: { sections: [] } } : new Error('fresh read failed'); }
-            return {};
-        });
-        await tick(); await loadSettingsConfig();
-        const input = document.createElement('input'); input.type = 'number'; input.dataset.section = 'limits'; input.dataset.name = 'loopMax'; input.dataset.label = 'Vòng';
-        Object.defineProperty(input, 'valueAsNumber', { get: () => 91 }); $('#config-form').appendChild(input);
-        await submitSettingsConfig($('#config-form'));
-        return { gets, posts, saving: settingsSaving, disabled: $('#save-config').disabled,
-                 status: $('#settings-form-status').textContent, statusShown: !$('#settings-form-status').hidden,
-                 role: $('#settings-form-status').getAttribute('role'), kept: input.parentNode === $('#config-form') };
-    """, via="dialog")
-    assert out["gets"] == 2 and out["posts"] == []
-    assert out["saving"] is False and out["disabled"] is False
-    assert "Không lưu được" in out["status"] and out["statusShown"] is True and out["role"] == "status"
-    assert out["kept"] == 1
-
-
-def test_settings_save_sends_base_revision_when_server_reports_it(node: str) -> None:
-    out = _run(node, """
-        const server = { revision: 'r1',
-                       values: { providers: { alpha: { baseUrl: 'https://a.invalid', apiKey: '' } },
-                                  models: {}, defaultProvider: 'alpha', defaultModel: '',
-                                  limits: { loopMax: 80, hotTailKB: 4 } },
-                       schema: { sections: [ { key: 'limits', label: 'L', fields: [
-                         { key: 'limits.loopMax', label: 'Vòng', type: 'number', min: 1, max: 200 },
-                       ] } ] } };
-        const posted = [];
-        installFetch((url, opts) => {
-            if (url === '/api/bots') return { bots: [] };
-            if (url === '/api/conversations') return { conversations: [] };
-            if (url === '/api/config/status') return { ready: true };
-            if (url === '/api/config' && opts.method === 'POST') { posted.push(JSON.parse(opts.body)); return {}; }
-            if (url === '/api/config') return server;
-            return {};
-        });
-        await tick(); await loadSettingsConfig();
-        const input = document.createElement('input'); input.type = 'number'; input.dataset.section = 'limits'; input.dataset.name = 'loopMax'; input.dataset.label = 'Vòng';
-        Object.defineProperty(input, 'valueAsNumber', { get: () => 91 }); $('#config-form').appendChild(input);
-        await submitSettingsConfig($('#config-form'));
-        return { posted, toast: $('#toast').textContent };
-    """, via="dialog")
-    assert len(out["posted"]) == 1
-    assert out["posted"][0]["baseRevision"] == "r1"
-    assert out["posted"][0]["limits"]["loopMax"] == 91
-    assert "Đã lưu" in out["toast"]
-
-
-def test_settings_save_conflict_preserves_draft_for_retry(node: str) -> None:
-    out = _run(node, """
-        const server = { revision: 'r1',
-                       values: { providers: { alpha: { baseUrl: 'https://a.invalid', apiKey: '' } },
-                                  models: {}, defaultProvider: 'alpha', defaultModel: '',
-                                  limits: { loopMax: 80, hotTailKB: 4 } },
-                       schema: { sections: [ { key: 'limits', label: 'L', fields: [
-                         { key: 'limits.loopMax', label: 'Vòng', type: 'number', min: 1, max: 200 },
-                       ] } ] } };
-        const posted = [];
-        installFetch((url, opts) => {
-            if (url === '/api/bots') return { bots: [] };
-            if (url === '/api/conversations') return { conversations: [] };
-            if (url === '/api/config/status') return { ready: true };
-            if (url === '/api/config' && opts.method === 'POST') {
-                const conflict = new Error('cấu hình đã thay đổi ở nơi khác; tải lại rồi thử lại');
-                conflict.status = 409; conflict.data = { code: 'config_changed' };
-                throw conflict;
-            }
-            if (url === '/api/config') return server;
-            return {};
-        });
-        await tick(); await loadSettingsConfig();
-        const input = document.createElement('input'); input.type = 'number'; input.dataset.section = 'limits'; input.dataset.name = 'loopMax'; input.dataset.label = 'Vòng';
-        Object.defineProperty(input, 'valueAsNumber', { get: () => 91 }); $('#config-form').appendChild(input);
-        await submitSettingsConfig($('#config-form'));
-        return { posted, toast: $('#toast').textContent,
-                 kept: input.parentNode === $('#config-form'),
-                 base: settingsConfigValues.limits.loopMax };
-    """, via="dialog")
-    assert out["posted"] == []
-    assert "thay đổi ở nơi khác" in out["toast"]
-    assert out["kept"] == 1 and out["base"] == 80
-
-
-def test_settings_concurrent_edit_to_untouched_field_is_not_overwritten(node: str) -> None:
-    """Dirty fields merge onto the fresh read: another tab's change to an
-    untouched field survives our save (no silent overwrite, no conflict)."""
-    out = _run(node, """
-        const server = { revision: 'r0',
-                       values: { providers: {}, models: {}, defaultProvider: '', defaultModel: '',
-                                  limits: { loopMax: 80, hotTailKB: 4 } },
-                       schema: { sections: [ { key: 'limits', label: 'L', fields: [
-                         { key: 'limits.loopMax', label: 'Vòng', type: 'number', min: 1, max: 200 },
-                         { key: 'limits.hotTailKB', label: 'Nóng', type: 'number', min: 1, max: 64 },
-                       ] } ] } };
-        const posted = [];
-        installFetch((url, opts) => {
-            if (url === '/api/bots') return { bots: [] };
-            if (url === '/api/conversations') return { conversations: [] };
-            if (url === '/api/config/status') return { ready: true };
-            if (url === '/api/config' && opts.method === 'POST') {
-                const body = JSON.parse(opts.body);
-                if (body.baseRevision !== server.revision) {
-                    const conflict = new Error('changed elsewhere');
-                    conflict.status = 409; conflict.data = { code: 'config_changed' };
-                    throw conflict;
-                }
-                posted.push(body);
-                server.values = body; server.revision = 'r2';
-                return { ok: true, ready: true };
-            }
-            if (url === '/api/config') return server;
-            return {};
-        });
-        await tick(); await loadSettingsConfig();
-        // Another tab changes loopMax (untouched here) after our dialog loaded.
-        server.values = structuredClone(server.values);
-        server.values.limits.loopMax = 999; server.revision = 'r1';
-        const input = document.createElement('input'); input.type = 'number'; input.dataset.section = 'limits'; input.dataset.name = 'hotTailKB'; input.dataset.label = 'Nóng';
-        Object.defineProperty(input, 'valueAsNumber', { get: () => 5 }); $('#config-form').appendChild(input);
-        await submitSettingsConfig($('#config-form'));
-        return { posted, toast: $('#toast').textContent,
-                 status: $('#settings-form-status').textContent, statusOk: $('#settings-form-status').className };
-    """, via="dialog")
-    assert len(out["posted"]) == 1
-    body = out["posted"][0]
-    assert body["baseRevision"] == "r1"
-    assert body["limits"] == {"loopMax": 999, "hotTailKB": 5}
-    assert "Đã lưu" in out["toast"] and "Đã lưu" in out["status"] and "is-ok" in out["statusOk"]
-
-
-def test_settings_conflict_surfaces_inside_dialog_and_retry_succeeds(node: str) -> None:
-    """A 409 names the conflict inside the modal (role=status, kept draft);
-    after reopening onto the newer server state the retry succeeds, and a
-    further submit with no new edits posts nothing."""
-    out = _run(node, """
-        let armed = true;
-        const server = { revision: 'r1', values: { limits: { loopMax: 80 } }, schema: { sections: [] } };
-        const attempts = [];
-        installFetch((url, opts) => {
-            if (url === '/api/bots') return { bots: [] };
-            if (url === '/api/conversations') return { conversations: [] };
-            if (url === '/api/config/status') return { ready: true };
-            if (url === '/api/config' && opts.method === 'POST') {
-                attempts.push(JSON.parse(opts.body));
-                if (armed) {
-                    const conflict = new Error('cấu hình đã thay đổi ở nơi khác; tải lại rồi thử lại');
-                    conflict.status = 409; conflict.data = { code: 'config_changed' };
-                    throw conflict;
-                }
-                const { baseRevision, ...applied } = attempts[attempts.length - 1];
-                server.values = applied;   // the real server persists the write; the refresh then sees it
-                return { ok: true, ready: true };
-            }
-            if (url === '/api/config') return server;
-            return {};
-        });
-        await tick(); await loadSettingsConfig();
-        const input = document.createElement('input'); input.type = 'number'; input.dataset.section = 'limits'; input.dataset.name = 'loopMax'; input.dataset.label = 'Vòng';
-        Object.defineProperty(input, 'valueAsNumber', { get: () => 91 }); $('#config-form').appendChild(input);
-        await submitSettingsConfig($('#config-form'));
-        const conflicted = { status: $('#settings-form-status').textContent,
-                             shown: !$('#settings-form-status').hidden,
-                             cls: $('#settings-form-status').className,
-                             role: $('#settings-form-status').getAttribute('role'),
-                             kept: input.parentNode === $('#config-form'),
-                             base: settingsConfigValues.limits.loopMax };
-        armed = false;
-        await submitSettingsConfig($('#config-form'));
-        const retried = { status: $('#settings-form-status').textContent, cls: $('#settings-form-status').className,
-                          base: settingsBaseline.limits.loopMax, attempts: attempts.length };
-        await submitSettingsConfig($('#config-form'));   // nothing new: no further POST
-        return { conflicted, retried, attempts: attempts.length };
-    """, via="dialog")
-    assert "thay đổi ở nơi khác" in out["conflicted"]["status"]
-    assert out["conflicted"]["shown"] is True and out["conflicted"]["role"] == "status"
-    assert "is-error" in out["conflicted"]["cls"]
-    assert out["conflicted"]["kept"] == 1 and out["conflicted"]["base"] == 80
-    assert out["retried"]["status"] == "Đã lưu cài đặt." and "is-ok" in out["retried"]["cls"]
-    assert out["retried"]["base"] == 91 and out["retried"]["attempts"] == 2
-    assert out["attempts"] == 2
-
-
-def test_settings_same_field_concurrent_edit_surfaces_conflict(node: str) -> None:
-    """A same-field concurrent change surfaces an in-dialog conflict naming
-    the server value instead of overwriting it; resubmitting unchanged is
-    informed consent, and matching the server saves cleanly."""
-    out = _run(node, """
-        const server = { revision: 'r0', values: { limits: { loopMax: 10 } }, schema: { sections: [] } };
-        const posts = [];
-        installFetch((url, opts) => {
-            if (url === '/api/bots') return { bots: [] };
-            if (url === '/api/conversations') return { conversations: [] };
-            if (url === '/api/config/status') return { ready: true };
-            if (url === '/api/config' && opts.method === 'POST') {
-                const body = JSON.parse(opts.body);
-                if (body.baseRevision !== server.revision) {
-                    const conflict = new Error('changed elsewhere');
-                    conflict.status = 409; conflict.data = { code: 'config_changed' };
-                    throw conflict;
-                }
-                posts.push(body);
-                const { baseRevision, ...applied } = body;
-                server.values = applied;
-                return { ok: true, ready: true };
-            }
-            if (url === '/api/config') return server;
-            return {};
-        });
-        await tick(); await loadSettingsConfig();
-        const input = document.createElement('input'); input.type = 'number'; input.dataset.section = 'limits'; input.dataset.name = 'loopMax'; input.dataset.label = 'Vòng';
-        input.value = '20'; $('#config-form').appendChild(input);
-        server.values = { limits: { loopMax: 30 } }; server.revision = 'r1';   // another tab saves first
-        await submitSettingsConfig($('#config-form'));
-        const clashed = { posts: posts.length, status: $('#settings-form-status').textContent,
-                          shown: !$('#settings-form-status').hidden, cls: $('#settings-form-status').className,
-                          kept: input.value, base: settingsConfigValues.limits.loopMax };
-        await submitSettingsConfig($('#config-form'));                        // unchanged resubmit: consent
-        const forced = { posts: posts.length, first: posts[0] && posts[0].limits };
-        input.value = '30';                                                 // match the server: clean save
-        await submitSettingsConfig($('#config-form'));
-        return { clashed, forced, posts: posts.length, final: server.values.limits };
-    """, via="dialog")
-    assert out["clashed"]["posts"] == 0
-    assert "«Vòng»" in out["clashed"]["status"] and "30" in out["clashed"]["status"]
-    assert out["clashed"]["shown"] is True and "is-error" in out["clashed"]["cls"]
-    assert out["clashed"]["kept"] == "20" and out["clashed"]["base"] == 10
-    assert out["forced"]["posts"] == 1 and out["forced"]["first"] == {"loopMax": 20}
-    assert out["posts"] == 2 and out["final"] == {"loopMax": 30}
-
-
-def test_settings_conflict_consent_requires_same_draft(node: str) -> None:
-    """Consent is bound to the warned (server, draft) pair: editing the
-    draft after a warning must warn anew instead of silently overwriting."""
-    out = _run(node, """
-        const server = { revision: 'r0', values: { limits: { loopMax: 10 } }, schema: { sections: [] } };
-        const posts = [];
-        installFetch((url, opts) => {
-            if (url === '/api/bots') return { bots: [] };
-            if (url === '/api/conversations') return { conversations: [] };
-            if (url === '/api/config/status') return { ready: true };
-            if (url === '/api/config' && opts.method === 'POST') {
-                const body = JSON.parse(opts.body);
-                posts.push(body);
-                const { baseRevision, ...applied } = body;
-                server.values = applied;
-                return { ok: true, ready: true };
-            }
-            if (url === '/api/config') return server;
-            return {};
-        });
-        await tick(); await loadSettingsConfig();
-        const input = document.createElement('input'); input.type = 'number'; input.dataset.section = 'limits'; input.dataset.name = 'loopMax'; input.dataset.label = 'Vòng';
-        input.value = '20'; $('#config-form').appendChild(input);
-        server.values = { limits: { loopMax: 30 } }; server.revision = 'r1';
-        await submitSettingsConfig($('#config-form'));              // warns (draft 20 vs server 30)
-        input.value = '40';                                          // draft changes after the warning
-        await submitSettingsConfig($('#config-form'));              // must warn anew, not post
-        const rewarned = { posts: posts.length, status: $('#settings-form-status').textContent };
-        await submitSettingsConfig($('#config-form'));              // unchanged retry: consent
-        return { rewarned, posts: posts.length, final: server.values.limits };
-    """, via="dialog")
-    assert out["rewarned"]["posts"] == 0
-    assert "Xung đột" in out["rewarned"]["status"] and "40" in out["rewarned"]["status"]
-    assert out["posts"] == 1 and out["final"] == {"loopMax": 40}
-
-
-def test_settings_revert_to_original_base_still_saves_after_reopen(node: str) -> None:
-    """Reverting to the original base is a deliberate change against the
-    freshly rendered server value: it must be retained across close/reopen,
-    submitted (with a conflict warning), and posted on informed consent."""
-    out = _run(node, """
-        const server = { revision: 'r0', values: { limits: { loopMax: 10, hotTailKB: 10 } }, schema: { sections: [] } };
-        const posted = [];
-        installFetch((url, opts) => {
-            if (url === '/api/bots') return { bots: [] };
-            if (url === '/api/conversations') return { conversations: [] };
-            if (url === '/api/config/status') return { ready: true };
-            if (url === '/api/config' && opts.method === 'POST') { posted.push(JSON.parse(opts.body)); return { ok: true, ready: true }; }
-            if (url === '/api/config') return server;
-            return {};
-        });
-        await tick(); await loadSettingsConfig();
-        await openSettingsDialog(); await tick();
-        const input = document.createElement('input'); input.type = 'number'; input.dataset.section = 'limits'; input.dataset.name = 'loopMax'; input.dataset.label = 'Vòng';
-        input.value = '20'; $('#config-form').appendChild(input);
-        const hot = document.createElement('input'); hot.type = 'number'; hot.dataset.section = 'limits'; hot.dataset.name = 'hotTailKB'; hot.dataset.label = 'Nóng';
-        hot.value = '11'; $('#config-form').appendChild(hot);
-        document.querySelector('#settings-dialog').dispatch('close');
-        const closeDraft = JSON.parse(JSON.stringify(settingsDraft));
-        // Another tab saves loopMax=30 while the dialog is closed.
-        server.values = { limits: { loopMax: 30, hotTailKB: 10 } }; server.revision = 'r1';
-        await openSettingsDialog(); await tick();
-        // Emulate the browser render swap, then the internal re-apply step.
-        $('#config-form').removeChild(input); $('#config-form').removeChild(hot);
-        const freshLoop = document.createElement('input'); freshLoop.type = 'number'; freshLoop.dataset.section = 'limits'; freshLoop.dataset.name = 'loopMax'; freshLoop.dataset.label = 'Vòng';
-        freshLoop.value = '30'; $('#config-form').appendChild(freshLoop);
-        const freshHot = document.createElement('input'); freshHot.type = 'number'; freshHot.dataset.section = 'limits'; freshHot.dataset.name = 'hotTailKB'; freshHot.dataset.label = 'Nóng';
-        freshHot.value = '10'; $('#config-form').appendChild(freshHot);
-        applySettingsDraft(settingsDraft);
-        const restored = { loopMax: freshLoop.value, hotTailKB: freshHot.value };
-        // Revert loopMax back to its original base: still a deliberate change
-        // against the freshly rendered server value (30).
-        freshLoop.value = '10';
-        await submitSettingsConfig($('#config-form'));
-        const clashed = { posts: posted.length, status: $('#settings-form-status').textContent,
-                          kept: freshLoop.value, draft: JSON.parse(JSON.stringify(settingsDraft)) };
-        // Closing keeps the deliberate revert; reopening restores it.
-        document.querySelector('#settings-dialog').dispatch('close');
-        await openSettingsDialog(); await tick();
-        $('#config-form').removeChild(freshLoop); $('#config-form').removeChild(freshHot);
-        const loop2 = document.createElement('input'); loop2.type = 'number'; loop2.dataset.section = 'limits'; loop2.dataset.name = 'loopMax'; loop2.dataset.label = 'Vòng';
-        loop2.value = '30'; $('#config-form').appendChild(loop2);
-        const hot2 = document.createElement('input'); hot2.type = 'number'; hot2.dataset.section = 'limits'; hot2.dataset.name = 'hotTailKB'; hot2.dataset.label = 'Nóng';
-        hot2.value = '10'; $('#config-form').appendChild(hot2);
-        applySettingsDraft(settingsDraft);
-        const reopened = { loopMax: loop2.value, hotTailKB: hot2.value };
-        await submitSettingsConfig($('#config-form'));
-        return { closeDraft, restored, clashed, reopened, posted };
-    """, via="dialog")
-    assert out["closeDraft"] == {"limits": {"loopMax": {"value": "20", "base": 10}, "hotTailKB": {"value": "11", "base": 10}}}
-    assert out["restored"] == {"loopMax": "20", "hotTailKB": "11"}
-    assert out["clashed"]["posts"] == 0
-    assert "Xung đột" in out["clashed"]["status"] and "30" in out["clashed"]["status"]
-    assert out["clashed"]["kept"] == "10"
-    assert out["clashed"]["draft"] == {"limits": {"loopMax": {"value": "20", "base": 10}, "hotTailKB": {"value": "11", "base": 10}}}
-    assert out["reopened"] == {"loopMax": "10", "hotTailKB": "11"}
-    assert len(out["posted"]) == 1
-    assert out["posted"][0]["limits"] == {"loopMax": 10, "hotTailKB": 11}
-
-
-def test_settings_reopen_stores_only_dirty_fields_with_original_baselines(node: str) -> None:
-    """Closing without edits stores no draft, so a reopen cannot turn a
-    stale untouched value into an edit; the other tab's value survives."""
-    out = _run(node, """
-        const server = { revision: 'r0', values: { limits: { loopMax: 10, hotTailKB: 10 } }, schema: { sections: [] } };
-        const posted = [];
-        installFetch((url, opts) => {
-            if (url === '/api/bots') return { bots: [] };
-            if (url === '/api/conversations') return { conversations: [] };
-            if (url === '/api/config/status') return { ready: true };
-            if (url === '/api/config' && opts.method === 'POST') { posted.push(JSON.parse(opts.body)); return { ok: true, ready: true }; }
-            if (url === '/api/config') return server;
-            return {};
-        });
-        await tick(); await loadSettingsConfig();
-        const a = document.createElement('input'); a.type = 'number'; a.dataset.section = 'limits'; a.dataset.name = 'loopMax'; a.dataset.label = 'A'; a.value = '10';
-        const b = document.createElement('input'); b.type = 'number'; b.dataset.section = 'limits'; b.dataset.name = 'hotTailKB'; b.dataset.label = 'B'; b.value = '10';
-        $('#config-form').appendChild(a); $('#config-form').appendChild(b);
-        await openSettingsDialog(); await tick();
-        a.value = '11';
-        document.querySelector('#settings-dialog').dispatch('close');
-        const closeDraft = settingsDraft;
-        // The other tab moves hotTailKB while the dialog is closed.
-        server.values = { limits: { loopMax: 10, hotTailKB: 30 } }; server.revision = 'r1';
-        await openSettingsDialog(); await tick();
-        // Emulate the browser render swap (fresh paint replaces the controls),
-        // then the internal draft re-apply step.
-        $('#config-form').removeChild(a); $('#config-form').removeChild(b);
-        const a2 = document.createElement('input'); a2.type = 'number'; a2.dataset.section = 'limits'; a2.dataset.name = 'loopMax'; a2.dataset.label = 'A'; a2.value = '10';
-        const b2 = document.createElement('input'); b2.type = 'number'; b2.dataset.section = 'limits'; b2.dataset.name = 'hotTailKB'; b2.dataset.label = 'B'; b2.value = '30';
-        $('#config-form').appendChild(a2); $('#config-form').appendChild(b2);
-        applySettingsDraft(settingsDraft);
-        const restored = { a: a2.value, b: b2.value };
-        await submitSettingsConfig($('#config-form'));
-        return { closeDraft, restored, posted };
-    """, via="dialog")
-    assert out["closeDraft"] == {"limits": {"loopMax": {"value": "11", "base": 10}}}
-    assert out["restored"] == {"a": "11", "b": "30"}
-    assert len(out["posted"]) == 1
-    assert out["posted"][0]["limits"] == {"loopMax": 11, "hotTailKB": 30}
-    assert out["posted"][0].get("baseRevision") == "r1"
-
-
-def test_settings_failed_reopen_keeps_draft_for_next_load(node: str) -> None:
-    """Failure destroys the rendered controls; closing then must not wipe
-    the retained draft, and the next successful reopen restores it onto the
-    newly rendered controls (verified on the fresh node, not a detached one)."""
-    out = _run(node, """
-        const server = { revision: 'r0', values: { limits: { loopMax: 80 } }, schema: { sections: [] } };
-        let failNext = false;
-        installFetch((url, opts) => {
-            if (url === '/api/bots') return { bots: [] };
-            if (url === '/api/conversations') return { conversations: [] };
-            if (url === '/api/config/status') return { ready: true };
-            if (url === '/api/config' && opts.method !== 'POST') {
-                if (failNext) throw new Error('server down');
-                return server;
-            }
-            return {};
-        });
-        await tick(); await loadSettingsConfig();
-        await openSettingsDialog(); await tick();   // binds the close listener
-        // Appended to #config-form: form-scoped discovery (the browser nests
-        // the rendered fields there; the fake DOM does not parse innerHTML).
-        const input = document.createElement('input'); input.type = 'number'; input.dataset.section = 'limits'; input.dataset.name = 'loopMax'; input.dataset.label = 'Vòng';
-        input.value = '91'; $('#config-form').appendChild(input);
-        document.querySelector('#settings-dialog').dispatch('close');
-        const afterClose = JSON.parse(JSON.stringify(settingsDraft));
-        failNext = true;
-        await openSettingsDialog();
-        // Emulate the browser failure render (destroys the rendered controls).
-        $('#config-form').removeChild(input);
-        const fieldsGone = document.querySelectorAll('#config-form [data-section]').length;
-        document.querySelector('#settings-dialog').dispatch('close');   // no controls left: must keep draft
-        const keptThroughClose = settingsDraft ? JSON.parse(JSON.stringify(settingsDraft)) : settingsDraft;
-        failNext = false;
-        await openSettingsDialog();
-        // Emulate the browser render swap, then the internal re-apply step.
-        const fresh = document.createElement('input'); fresh.type = 'number'; fresh.dataset.section = 'limits'; fresh.dataset.name = 'loopMax'; fresh.dataset.label = 'Vòng';
-        fresh.value = '80'; $('#config-form').appendChild(fresh);
-        applySettingsDraft(settingsDraft);
-        return { afterClose, fieldsGone, keptThroughClose, restored: fresh.value, base: settingsBaseline.limits.loopMax };
-    """, via="dialog")
-    assert out["afterClose"] == {"limits": {"loopMax": {"value": "91", "base": 80}}}
-    assert out["fieldsGone"] == 0
-    assert out["keptThroughClose"] == {"limits": {"loopMax": {"value": "91", "base": 80}}}
-    assert out["restored"] == "91" and out["base"] == 80
-
-
-def test_settings_inflight_typing_and_reopen_keep_draft(node: str) -> None:
-    """Edits typed while a config load is in flight win over the response,
-    and closing/reopening the dialog preserves the draft."""
-    out = _run(node, """
-        const server = { revision: 'r0', values: { limits: { loopMax: 80 } }, schema: { sections: [] } };
-        let release = null;
-        installFetch((url, opts) => {
-            if (url === '/api/bots') return { bots: [] };
-            if (url === '/api/conversations') return { conversations: [] };
-            if (url === '/api/config/status') return { ready: true };
-            if (url === '/api/config' && opts.method !== 'POST') return new Promise(res => { release = () => res(server); });
-            return {};
-        });
-        await tick();
-        const first = loadSettingsConfig();
-        const input = document.createElement('input'); input.type = 'number'; input.dataset.section = 'limits'; input.dataset.name = 'loopMax'; input.dataset.label = 'Vòng';
-        input.value = '80'; $('#config-form').appendChild(input);
-        input.value = '91';                    // typed while the first read is in flight
-        release(); await first;
-        const inflight = input.value;
-        document.querySelector('#settings-dialog').dispatch('close');
-        const drafted = settingsDraft && settingsDraft.limits && settingsDraft.limits.loopMax;
-        await openSettingsDialog();            // same server values; draft must win
-        return { inflight, drafted, reopened: input.value };
-    """, via="dialog")
-    assert out["inflight"] == "91"
-    assert out["drafted"] == {"value": "91"}
-    assert out["reopened"] == "91"
-
-
-def test_settings_empty_numeric_draft_survives_close_reopen_and_load(node: str) -> None:
-    """Clearing a numeric limit keeps the raw empty draft across
-    close/reopen and a pending load (instead of repainting the server
-    value); submit still validates and never writes the invalid value."""
-    out = _run(node, """
-        const server = { revision: 'r0', values: { limits: { loopMax: 10, hotTailKB: 10 } }, schema: { sections: [] } };
-        const posted = [];
-        let hold = false, releaseLoad = null;
-        installFetch((url, opts) => {
-            if (url === '/api/bots') return { bots: [] };
-            if (url === '/api/conversations') return { conversations: [] };
-            if (url === '/api/config/status') return { ready: true };
-            if (url === '/api/config' && opts.method === 'POST') { posted.push(JSON.parse(opts.body)); return { ok: true, ready: true }; }
-            if (url === '/api/config' && opts.method !== 'POST') {
-                if (hold) return new Promise(res => { releaseLoad = () => res(server); });
-                return server;
-            }
-            return {};
-        });
-        await tick(); await loadSettingsConfig();
-        await openSettingsDialog(); await tick();
-        // A cleared number input has no numeric value, like a real browser.
-        let num = NaN;
-        const input = document.createElement('input'); input.type = 'number'; input.dataset.section = 'limits'; input.dataset.name = 'loopMax'; input.dataset.label = 'Vòng';
-        Object.defineProperty(input, 'valueAsNumber', { get: () => num, configurable: true });
-        input.value = ''; $('#config-form').appendChild(input);
-        document.querySelector('#settings-dialog').dispatch('close');
-        const closeDraft = JSON.parse(JSON.stringify(settingsDraft));
-        // Another tab moves the value while the dialog is closed.
-        server.values = { limits: { loopMax: 30, hotTailKB: 10 } }; server.revision = 'r1';
-        await openSettingsDialog(); await tick();
-        // Emulate the browser render swap, then the internal re-apply step.
-        $('#config-form').removeChild(input);
-        const fresh = document.createElement('input'); fresh.type = 'number'; fresh.dataset.section = 'limits'; fresh.dataset.name = 'loopMax'; fresh.dataset.label = 'Vòng';
-        Object.defineProperty(fresh, 'valueAsNumber', { get: () => num, configurable: true });
-        fresh.value = '30'; $('#config-form').appendChild(fresh);
-        applySettingsDraft(settingsDraft);
-        const restored = fresh.value;
-        // A pending load finishing must keep the empty edit too.
-        hold = true;
-        const pending = loadSettingsConfig();
-        await tick();
-        releaseLoad(); await pending;
-        hold = false;
-        const afterLoad = { value: fresh.value,
-                            draft: settingsDraft && settingsDraft.limits ? settingsDraft.limits.loopMax : null };
-        // Submit validates the empty field and writes nothing.
-        await submitSettingsConfig($('#config-form'));
-        return { closeDraft, restored, afterLoad, posts: posted.length,
-                 status: $('#settings-form-status').textContent };
-    """, via="dialog")
-    assert out["closeDraft"] == {"limits": {"loopMax": {"value": "", "base": 10}}}
-    assert out["restored"] == ""
-    assert out["afterLoad"] == {"value": "", "draft": {"value": "", "base": 10}}
-    assert out["posts"] == 0
-    assert "cần một con số" in out["status"]
-
-
 def test_memory_scope_echo_guard_and_request_token(node: str) -> None:
     """loadStats drops mismatched scope echoes as an error and ignores stale
     answers once a newer request started."""
@@ -3801,9 +3132,11 @@ def test_index_html_scripts_defs_and_static_markup() -> None:
     assert 'id="wax' not in html
     assert 'id="g-' not in html
     assert 'id="composer-model"' not in html and 'id="thinking-effort"' not in html
+    assert 'id="open-settings"' not in html and 'id="settings-dialog"' not in html
+    assert 'settings-dialog.js"' not in html
     for sel in ('class="notebook-shell chat-shell"', 'class="site-header"',
                 'id="team-nav-title"', 'id="team-bot-list"', 'id="rail-avatar-list"',
-                'id="mobile-overlay"', 'id="open-settings"',
+                'id="mobile-overlay"',
                 'class="splitter"', 'id="chat-title"', 'id="conversation-eyebrow"',
                 'id="conversation-scroll"', 'id="message-list"', 'id="to-bottom"',
                 'id="composer"', 'id="message"', 'id="composer-label-text"',
@@ -3811,7 +3144,6 @@ def test_index_html_scripts_defs_and_static_markup() -> None:
                 'id="stop-button"', 'id="mention-popup"', 'id="attach-file"',
                 'id="file-input"', 'id="file-chip"', 'id="remove-file"',
                 'id="run-demo"', 'id="toast"', 'id="announcer"',
-                'id="settings-dialog"', 'id="settings-body"',
                 'id="bot-drawer"', 'id="bot-drawer-body"', 'id="group-dialog"',
                 'id="group-form"', 'id="group-options"', 'id="expressions-dialog"',
                 'id="expression-bot"', 'id="bot-color"', 'id="shape-picker"', 'id="expression-grid"',
@@ -3824,7 +3156,7 @@ def test_index_html_scripts_defs_and_static_markup() -> None:
         'src="../share/util.js"', 'src="../share/markdown.js"', 'src="../share/data.js"',
         'src="js/data.js"', 'src="../share/avatars/avatars.js"', 'src="../share/avatars/idle.js"',
         'src="../share/sidebar.js"', 'src="../share/avatars/studio.js"',
-        'src="../share/shell-app.js"', 'src="../share/settings-dialog.js"',
+        'src="../share/shell-app.js"',
         'src="js/chat.js"', 'src="js/app.js"',
     ]
     positions = [html.index(src) for src in order]
@@ -3845,21 +3177,19 @@ def test_avatar_display_copy_uses_ink_drop() -> None:
     assert "Một huy chương, nhiều tâm trạng." not in shell
     assert 'aria-label="Xưởng biểu cảm"' in html
     assert 'aria-label="Xưởng biểu cảm"' in shell
-    assert "nhân vật" in html and "nhân vật" in shell
     assert "giọt mực" not in html and "giọt mực" not in shell
     for text in (html, shell):
         assert "con dấu" not in text and "vành dấu" not in text
     assert "wax" not in shell.lower()
 
 
-def test_settings_dialog_uses_shared_avatar_engine() -> None:
-    """The Settings dialog reuses the shared avatar() seal for its bot
-    shortcut and keeps preferences localStorage-only (no API calls)."""
-    js = SETTINGS_DIALOG_JS.read_text()
-    assert "avatar(b)" in js
-    assert "thyca.ui.preferences" not in js
-    assert "getJson" not in js.split("function collectSettingsPrefs", 1)[1].split("let settingsConfigValues", 1)[0]
-    assert "import(" not in js
+def test_profile_and_shell_use_shared_avatar_and_local_prefs() -> None:
+    """Profile reuses the shared avatar() engine for bot dossiers and shell.js
+    keeps UI preferences localStorage-only (no API calls)."""
+    profile_js = PROFILE_JS.read_text()
+    assert "avatar(b)" in profile_js
+    assert "thyca.ui.preferences" not in profile_js
+    assert "import(" not in profile_js
     shell = SHELL_JS.read_text()
     assert "thyca.ui.preferences" in shell
     prefs_block = shell.split("function applyPrefs", 1)[1].split("function emitShell", 1)[0]
@@ -4308,12 +3638,9 @@ def test_wordmark_is_static_and_team_title_clears(node: str) -> None:
             railListExists: !!railList,
         };
 
-        // Non-chat mobile drawer skips #team-shared-create focus and falls back to #chat-sidebar .bot-select / #open-settings.
         const focusLog = [];
         const createBtn = $('#team-shared-create');
         if (createBtn) createBtn.focus = () => focusLog.push('create');
-        const settingsBtn = $('#open-settings');
-        settingsBtn.focus = () => focusLog.push('settings');
         menuBtn.focus = () => focusLog.push('menu');
         document.body.dataset.activePage = 'memories';
         openMobile();
@@ -4342,68 +3669,12 @@ def test_wordmark_is_static_and_team_title_clears(node: str) -> None:
     assert out["narrowClosed"]["mobileOpen"] is False and out["narrowClosed"]["inert"] is True
     assert out["lockState"] == {"railListInert": True, "railListExists": True}
     assert out["unlockedState"] == {"railListInert": False, "railListExists": True}
-    assert out["nonChatMenuFocus"] == ["settings", "menu"]
+    assert out["nonChatMenuFocus"] == ["menu"]
     assert out["chatDispatches"] == []
     assert [call[:2] for call in out["dashDispatches"]] == [["selectBot", ""], ["selectBot", ""]]
     base_css = (SHARE / "base.css").read_text(encoding="utf-8")
     assert ".wordmark::after" not in base_css
     assert "thyca</button>" not in (SHARE / "shell.js").read_text(encoding="utf-8")
-
-
-def test_settings_dialog_syncs_default_model_context_tokens(node: str) -> None:
-    """#settings-dialog displays models[defaultModel].contextTokens when set,
-    compares concurrent server state against the same effective field, and updates
-    both limits.contextTokens and models[defaultModel].contextTokens when saved."""
-    out = _run(node, r"""
-        const server = {
-            revision: 'rev-1',
-            values: {
-                providers: { alpha: { baseUrl: 'https://a.invalid', apiKey: '' } },
-                models: { m1: { provider: 'alpha', contextTokens: 195000 } },
-                defaultProvider: 'alpha',
-                defaultModel: 'm1',
-                limits: { loopMax: 80, hotTailKB: 4, contextTokens: 272000 },
-            },
-            schema: { sections: [{ key: 'limits', label: 'Limits', fields: [
-                { key: 'limits.contextTokens', label: 'Ngữ cảnh tối đa', type: 'number', min: 1000, max: 2000000 },
-            ] }] },
-        };
-        const posted = [];
-        installFetch((url, opts) => {
-            if (url === '/api/bots') return { bots: [] };
-            if (url === '/api/conversations') return { conversations: [] };
-            if (url === '/api/config/status') return { ready: true };
-            if (url === '/api/config' && opts.method === 'POST') {
-                const body = JSON.parse(opts.body);
-                posted.push(body);
-                delete body.baseRevision;
-                server.values = body;
-                server.revision = 'rev-2';
-                return {};
-            }
-            if (url === '/api/config') return server;
-            return {};
-        });
-        await tick();
-        await loadSettingsConfig();
-        const fieldsHtml = $('#config-fields').innerHTML;
-        const input = document.createElement('input');
-        input.id = 'setcfg-limits-contextTokens';
-        input.type = 'number';
-        input.dataset.section = 'limits';
-        input.dataset.name = 'contextTokens';
-        input.dataset.label = 'Ngữ cảnh tối đa';
-        Object.defineProperty(input, 'valueAsNumber', { get: () => 205000 });
-        $('#config-form').appendChild(input);
-        await submitSettingsConfig($('#config-form'));
-        return { fieldsHtml, posted, formStatus: $('#settings-form-status').textContent };
-    """, via="dialog")
-    assert 'value="195000"' in out["fieldsHtml"]
-    assert 'value="272000"' not in out["fieldsHtml"]
-    assert out["formStatus"] == "Đã lưu cài đặt."
-    assert len(out["posted"]) == 1
-    assert out["posted"][0]["limits"]["contextTokens"] == 205000
-    assert out["posted"][0]["models"]["m1"]["contextTokens"] == 205000
 
 
 def test_provider_syncs_external_config_saved(node: str) -> None:

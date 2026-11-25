@@ -11,12 +11,60 @@ bridges that one-key difference so the validation below runs once.
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from typing import Any
 
 from thyca.core.protocol import ToolCall
 
-from ._http import redact
-from .llm_base import LLMError
+from ._http import cap, redact
+from .llm_base import LLMError, normalize_finish_reason
+
+
+@dataclass(frozen=True)
+class ToolSpec:
+    name: str
+    description: str
+    parameters: dict[str, Any] | None
+
+
+def iter_tool_specs(tools: list) -> list[ToolSpec]:
+    """Extract canonical ``ToolSpec`` entries from OpenAI-style or flat tool dicts."""
+    specs: list[ToolSpec] = []
+    for spec in tools:
+        if not isinstance(spec, dict):
+            continue
+        fn = spec.get("function")
+        src = fn if isinstance(fn, dict) else spec
+        name = src.get("name")
+        if not isinstance(name, str) or not name:
+            continue
+        raw_desc = src.get("description")
+        desc = raw_desc if isinstance(raw_desc, str) else ""
+        raw_params = src.get("parameters")
+        params = raw_params if isinstance(raw_params, dict) and raw_params else None
+        specs.append(ToolSpec(name=name, description=desc, parameters=params))
+    return specs
+
+
+def resolve_finish_reason(
+    raw: object,
+    *,
+    content: str | None,
+    calls: list[ToolCall],
+    key: str = "",
+    detail: str = "",
+) -> str:
+    """Normalize a finish reason and raise ``LLMError`` on abnormal empty/malformed stops."""
+    raw_text = raw.strip() if isinstance(raw, str) else ""
+    reason = normalize_finish_reason(raw_text, has_tool_calls=bool(calls))
+    cleaned_detail = redact(cap(detail), key) if detail else ""
+    suffix = f": {cleaned_detail}" if cleaned_detail else ""
+    label = raw_text or reason
+    if reason == "malformed_tool" and not calls:
+        raise LLMError(f"provider error: {label}{suffix}")
+    if reason in ("blocked", "length") and not content and not calls:
+        raise LLMError(f"provider error: {label}{suffix}")
+    return reason
 
 
 def parse_tool_calls(raw: object) -> list[ToolCall]:

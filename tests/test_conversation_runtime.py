@@ -153,11 +153,11 @@ def test_concurrent_append(tmp_path: Path) -> None:
 
 
 def test_estimate_deterministic_and_compaction_boundary(tmp_path: Path) -> None:
-    manager = _canonical_manager(tmp_path, LimitsCfg(contextTokens=1000))
+    manager = _canonical_manager(tmp_path, LimitsCfg(contextTokens=32000))
     conversation = manager.current
     for i in range(8):
-        manager.append(msg("user", "u" * 300 + str(i)))
-        manager.append(msg("assistant", "a" * 300), actor="thyca")
+        manager.append(msg("user", "u" * 10000 + str(i)))
+        manager.append(msg("assistant", "a" * 10000), actor="thyca")
     assert estimate_tokens(msg("user", "same")) == estimate_tokens(msg("user", "same"))
     assert manager.compact_if_needed()
     loaded = _canonical_manager(tmp_path).load(conversation.conversation_id)
@@ -172,19 +172,19 @@ def test_estimate_deterministic_and_compaction_boundary(tmp_path: Path) -> None:
     assert loaded.messages[0].meta["omitted_chars"] > 0
     assert all(m.role != "tool" or m.tool_call_id for m in loaded.messages)
     tail_tokens = sum(estimate_tokens(m) for m in loaded.messages[1:])
-    assert tail_tokens <= int(1000 * 0.6) or len(_user_assistant_turns(loaded.messages[1:])) == 1
+    assert tail_tokens <= int(32000 * 0.6) or len(_user_assistant_turns(loaded.messages[1:])) == 1
 
 
 def test_compact_overhead_triggers_when_transcript_alone_fits(tmp_path: Path) -> None:
-    manager = _runtime_manager(tmp_path, LimitsCfg(contextTokens=2000))
+    manager = _runtime_manager(tmp_path, LimitsCfg(contextTokens=32000))
     manager.create()
     for i in range(4):
-        manager.append(msg("user", "u" * 300 + str(i)))
-        manager.append(msg("assistant", "a" * 300), actor="thyca")
+        manager.append(msg("user", "u" * 8000 + str(i)))
+        manager.append(msg("assistant", "a" * 8000), actor="thyca")
     transcript = sum(estimate_tokens(m) for m in manager.current.messages)
-    assert transcript <= 2000
+    assert transcript <= 32000
     assert not manager.compact_if_needed()
-    assert manager.compact_if_needed(pending_user_tokens=2000 - transcript + 1)
+    assert manager.compact_if_needed(pending_user_tokens=32000 - transcript + 1)
 
 
 def test_compact_tail_budget_subtracts_overhead_and_marker() -> None:
@@ -221,10 +221,10 @@ def _user_assistant_turns(messages: list[Message]) -> list[list[Message]]:
 
 
 def test_single_oversize_turn_kept(tmp_path: Path) -> None:
-    manager = _runtime_manager(tmp_path, LimitsCfg(contextTokens=1000))
+    manager = _runtime_manager(tmp_path, LimitsCfg(contextTokens=32000))
     conversation = manager.create()
-    manager.append(msg("user", "u" * 8000))
-    manager.append(msg("assistant", "a" * 8000), actor="thyca")
+    manager.append(msg("user", "u" * 80000))
+    manager.append(msg("assistant", "a" * 80000), actor="thyca")
     assert not manager.compact_if_needed()
     roles = [item.role for item in conversation.messages]
     assert roles == ["user", "assistant"]
@@ -279,21 +279,21 @@ def test_calibration_factor_median_clamp_and_model_filter() -> None:
 
 
 def test_calibration_makes_auto_compact_fire_earlier(tmp_path: Path) -> None:
-    manager = _runtime_manager(tmp_path, LimitsCfg(contextTokens=1000))
+    manager = _runtime_manager(tmp_path, LimitsCfg(contextTokens=32000))
     manager.create()
     for i in range(3):
-        manager.append(msg("user", "u" * 300 + str(i)))
-        manager.append(msg("assistant", "a" * 300), actor="thyca")
+        manager.append(msg("user", "u" * 10000 + str(i)))
+        manager.append(msg("assistant", "a" * 10000), actor="thyca")
     assert not manager.compact_if_needed()
     assert manager.compact_if_needed(calibration=2.5)
 
 
 def test_manual_compact_forces_below_threshold(tmp_path: Path) -> None:
-    manager = _runtime_manager(tmp_path, LimitsCfg(contextTokens=1000))
+    manager = _runtime_manager(tmp_path, LimitsCfg(contextTokens=32000))
     conversation = manager.create()
     for i in range(4):
-        manager.append(msg("user", "u" * 300 + str(i)))
-        manager.append(msg("assistant", "a" * 300), actor="thyca")
+        manager.append(msg("user", "u" * 12000 + str(i)))
+        manager.append(msg("assistant", "a" * 12000), actor="thyca")
     assert not manager.compact_if_needed()
     result = manager.compact_manual()
     assert result["compacted"] is True
@@ -306,7 +306,7 @@ def test_manual_compact_forces_below_threshold(tmp_path: Path) -> None:
 
 
 def test_manual_compact_noop_when_already_fits(tmp_path: Path) -> None:
-    manager = _runtime_manager(tmp_path, LimitsCfg(contextTokens=1000))
+    manager = _runtime_manager(tmp_path, LimitsCfg(contextTokens=32000))
     conversation = manager.create()
     manager.append(msg("user", "hi"))
     manager.append(msg("assistant", "hello"), actor="thyca")
@@ -317,11 +317,11 @@ def test_manual_compact_noop_when_already_fits(tmp_path: Path) -> None:
 
 
 def test_manual_compact_keeps_incomplete_tail(tmp_path: Path) -> None:
-    manager = _runtime_manager(tmp_path, LimitsCfg(contextTokens=1000))
+    manager = _runtime_manager(tmp_path, LimitsCfg(contextTokens=32000))
     manager.create()
     for i in range(4):
-        manager.append(msg("user", "u" * 300 + str(i)))
-        manager.append(msg("assistant", "a" * 300), actor="thyca")
+        manager.append(msg("user", "u" * 12000 + str(i)))
+        manager.append(msg("assistant", "a" * 12000), actor="thyca")
     manager.append(msg("user", "pending-question"))
     result = manager.compact_manual()
     assert result["compacted"] is True
@@ -329,13 +329,13 @@ def test_manual_compact_keeps_incomplete_tail(tmp_path: Path) -> None:
 
 
 def test_compaction_keeps_complete_tool_round(tmp_path: Path) -> None:
-    manager = _canonical_manager(tmp_path, LimitsCfg(contextTokens=1000))
+    manager = _canonical_manager(tmp_path, LimitsCfg(contextTokens=32000))
     conversation = manager.current
     for i in range(6):
-        manager.append(msg("user", "u" * 200 + str(i)))
+        manager.append(msg("user", "u" * 8000 + str(i)))
         manager.append(msg("assistant", None, tool_calls=[ToolCall(f"c{i}", "echo", {"i": i})]), actor="thyca")
-        manager.append(msg("tool", "r" * 200, tool_call_id=f"c{i}"))
-        manager.append(msg("assistant", "a" * 200), actor="thyca")
+        manager.append(msg("tool", "r" * 8000, tool_call_id=f"c{i}"))
+        manager.append(msg("assistant", "a" * 8000), actor="thyca")
     assert manager.compact_if_needed()
     tail = conversation.messages[1:]
     pending: set[str] = set()
@@ -349,14 +349,14 @@ def test_compaction_keeps_complete_tool_round(tmp_path: Path) -> None:
 
 
 def test_concurrent_append_and_compact(tmp_path: Path) -> None:
-    manager = _runtime_manager(tmp_path, LimitsCfg(contextTokens=1000))
+    manager = _runtime_manager(tmp_path, LimitsCfg(contextTokens=32000))
     manager.create()
     errors: list[Exception] = []
 
     def work(i: int) -> None:
         try:
-            manager.append(msg("user", "x" * 200 + str(i)))
-            manager.append(msg("assistant", "y" * 200), actor="thyca")
+            manager.append(msg("user", "x" * 7000 + str(i)))
+            manager.append(msg("assistant", "y" * 7000), actor="thyca")
             manager.compact_if_needed()
         except Exception as exc:
             errors.append(exc)
@@ -374,11 +374,11 @@ def test_concurrent_append_and_compact(tmp_path: Path) -> None:
 
 
 def test_compaction_keeps_messages_after_title_removal(tmp_path: Path) -> None:
-    manager = _runtime_manager(tmp_path, LimitsCfg(contextTokens=1000))
+    manager = _runtime_manager(tmp_path, LimitsCfg(contextTokens=32000))
     conversation = manager.create()
     for i in range(8):
-        manager.append(msg("user", "u" * 300 + str(i)))
-        manager.append(msg("assistant", "a" * 300), actor="thyca")
+        manager.append(msg("user", "u" * 10000 + str(i)))
+        manager.append(msg("assistant", "a" * 10000), actor="thyca")
     assert manager.compact_if_needed()
     loaded = manager.load(conversation.conversation_id)
     assert loaded.messages[0].role == "system"
@@ -883,11 +883,11 @@ def test_t1_clip_excerpt_tail_and_surrogate_safety() -> None:
 
 
 def test_t1_recompact_carries_prior_excerpt_and_counts(tmp_path: Path) -> None:
-    manager = _canonical_manager(tmp_path, LimitsCfg(contextTokens=1000))
+    manager = _canonical_manager(tmp_path, LimitsCfg(contextTokens=32000))
     conversation = manager.current
     for i in range(8):
-        manager.append(msg("user", f"gen1-TURN{i}-" + "u" * 300))
-        manager.append(msg("assistant", f"gen1-REPLY{i}-" + "a" * 300), actor="thyca")
+        manager.append(msg("user", f"gen1-TURN{i}-" + "u" * 10000))
+        manager.append(msg("assistant", f"gen1-REPLY{i}-" + "a" * 10000), actor="thyca")
     assert manager.compact_if_needed()
     marker1 = manager.current.messages[0]
     assert marker1.role == "system"
@@ -896,8 +896,8 @@ def test_t1_recompact_carries_prior_excerpt_and_counts(tmp_path: Path) -> None:
     assert meta1["omitted_messages"] > 0
 
     for i in range(6):
-        manager.append(msg("user", f"gen2-TURN{i}-" + "v" * 300))
-        manager.append(msg("assistant", f"gen2-REPLY{i}-" + "b" * 300), actor="thyca")
+        manager.append(msg("user", f"gen2-TURN{i}-" + "v" * 9900 + f"-gen2-TURN{i}"))
+        manager.append(msg("assistant", f"gen2-REPLY{i}-" + "b" * 9900 + f"-gen2-REPLY{i}"), actor="thyca")
     before = len(manager.current.messages)
     assert manager.compact_if_needed()
     compacted = manager.current.messages
@@ -919,8 +919,8 @@ def test_t1_recompact_carries_prior_excerpt_and_counts(tmp_path: Path) -> None:
     assert reloaded.messages[0].meta == meta2
 
     for i in range(6):
-        manager.append(msg("user", f"gen3-TURN{i}-" + "w" * 300))
-        manager.append(msg("assistant", f"gen3-REPLY{i}-" + "c" * 300), actor="thyca")
+        manager.append(msg("user", f"gen3-TURN{i}-" + "w" * 9900 + f"-gen3-TURN{i}"))
+        manager.append(msg("assistant", f"gen3-REPLY{i}-" + "c" * 9900 + f"-gen3-REPLY{i}"), actor="thyca")
     assert manager.compact_if_needed()
     excerpt3 = _marker_excerpt(manager.current.messages[0])
     assert len(excerpt3) <= 1000

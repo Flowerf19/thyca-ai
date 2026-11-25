@@ -154,9 +154,9 @@ in the composer never rewrites the saved file. A bot reached via
 ## 8. Các mục khác (đụng tới thì đọc)
 
 - **Giới hạn chung** (`limits`): `loopMax` 1–200 (số vòng agent mỗi lượt),
-  `hotTailKB` 1–64 (nhớ nóng đưa vào prompt), `contextTokens` 1000–2000000
-  (trần ngữ cảnh), `softTimeoutS` 1–300 (giây chờ tool trước khi chuyển nền).
-  Từng model có thể khai riêng 3 mục đầu đè lên; `softTimeoutS` chỉ có ở chung.
+  `hotTailKB` 1–64 (nhớ nóng đưa vào prompt), `contextTokens` 32000–1000000
+  (trần ngữ cảnh, mặc định 272000), `softTimeoutS` 1–300 (giây chờ tool trước khi chuyển nền).
+  Từng model có thể khai riêng 3 mục đầu đè lên; từng bot cũng có thể ghi đè riêng cả 4 mục trong `bots/<id>/settings.json`.
 - **Giá token** (`models[...].input/cache/output`, USD/1M token): chỉ để tính
   chi phí hiển thị. Điền thì điền đủ cả 3, bỏ trống thì Thyca dùng bảng giá
   có sẵn. Đừng bịa giá — tra trang pricing của provider.

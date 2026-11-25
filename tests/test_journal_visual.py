@@ -21,8 +21,11 @@ def _read(rel: str) -> str:
 
 def test_load_more_is_owned_by_dashboard() -> None:
     src = _read("dashboard/js/dashboard.js")
-    assert 'class="quiet-button" id="trace-more"' in src
-    assert "Tải thêm" in src
+    assert "template#tpl-dashboard" in src
+    html = _read("chat/index.html")
+    tpl = html.split('<template id="tpl-dashboard">', 1)[1].split("</template>", 1)[0]
+    assert 'class="quiet-button" id="trace-more"' in tpl
+    assert "Tải thêm" in tpl
     renderer = _read("trace/js/trace.js")
     assert 'id="trace-more"' not in renderer and "ThycaRouter.register" not in renderer
     shell_css = _read("share/app-shell.css")

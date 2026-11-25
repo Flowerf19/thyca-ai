@@ -538,11 +538,11 @@ def test_persist_user_false_does_not_append_user(tmp_path: Path) -> None:
 
 def test_over_cap_turn_sends_compacted_history(tmp_path: Path) -> None:
 
-    manager = _canonical_manager(tmp_path, LimitsCfg(contextTokens=1000))
+    manager = _canonical_manager(tmp_path, LimitsCfg(contextTokens=32000))
     conversation = manager.current
     for i in range(10):
-        manager.append(Message(role="user", content=f"old-{i}-" + "x" * 500))
-        manager.append(Message(role="assistant", content=f"reply-{i}-" + "y" * 500))
+        manager.append(Message(role="user", content=f"old-{i}-" + "x" * 8000))
+        manager.append(Message(role="assistant", content=f"reply-{i}-" + "y" * 8000))
     llm = FakeLLM([ChatReply(content="ok")])
 
     assert asyncio.run(_loop(manager, llm, FakeDispatcher({})).run("new question")) == "ok"

@@ -130,7 +130,7 @@ async def test_stream_full_turn() -> None:
     assert reply.content == "hi"
     assert reply.reasoning == "thinking hard"
     assert reply.model == "demo-model-echo"
-    assert reply.finish_reason == "completed"
+    assert reply.finish_reason == "tool_calls"
     assert [(c.id, c.name, c.arguments) for c in reply.tool_calls] == [
         ("c1", "bash", {"q": "hi"}),
         ("c2", "read", {}),
@@ -535,7 +535,7 @@ def test_f25_failed_or_incomplete_status_without_error_raises() -> None:
         with pytest.raises(LLMError, match=f"provider response {status}"):
             parse_responses_payload({"output": [], "status": status}, "sk")
     ok = parse_responses_payload({"output": [], "status": "completed"}, "sk")
-    assert ok.finish_reason == "completed"
+    assert ok.finish_reason == "stop"
 
 
 async def test_f25_failed_completed_event_raises() -> None:

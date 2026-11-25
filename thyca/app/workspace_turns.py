@@ -125,7 +125,7 @@ class WorkspaceTurnService:
         app._gateway.set_soft_timeout_s(
             resolved_cfg.effective_limits().softTimeoutS
         )
-        app._memory.tail_kb = base_cfg.limits.hotTailKB
+        app._memory.tail_kb = resolved_cfg.effective_limits().hotTailKB
         app._memory.timezone_name = base_cfg.timeline.timezone
         app._zone = ZoneInfo(base_cfg.timeline.timezone)
         app._sync_mcp(resolved_cfg)

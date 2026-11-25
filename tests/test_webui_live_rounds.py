@@ -229,7 +229,7 @@ def test_thinking_rounds_do_not_create_calls(rounds: dict) -> None:
 
 
 def test_round_two_shares_the_same_stream_text(rounds: dict) -> None:
-    assert rounds["round3Write"]["streamText"] == "Xin chàoround three reply"
+    assert rounds["round3Write"]["streamText"] == "Xin chào\n\nround three reply"
     assert rounds["round3Write"]["streamNodes"] == 1
     assert rounds["round3Write"]["feed"] == []
 

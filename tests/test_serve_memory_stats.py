@@ -296,7 +296,6 @@ def test_default_webui_has_index() -> None:
         "ui/trace/js/trace.js",
         "ui/provider/js/provider.js",
         "ui/dashboard/js/dashboard.js",
-        "ui/share/settings-dialog.js",
         "ui/share/data.js",
         "ui/share/shell.js",
         "ui/share/shell-app.js",
@@ -395,7 +394,7 @@ def test_index_html_parses() -> None:
     for page in ("dashboard", "memories", "profile", "provider"):
         assert f'src="../{page}/js/{page}.js"' in raw, page
     assert 'src="../trace/js/trace.js"' in raw
-    assert 'src="../share/settings-dialog.js"' in raw
+    assert 'src="../share/settings-dialog.js"' not in raw
     for page in ("dashboard", "memories", "profile", "provider"):
         js = (WEBUI / "ui" / page / "js" / f"{page}.js").read_text(encoding="utf-8")
         assert f"ThycaRouter.register('{page}'" in js, page

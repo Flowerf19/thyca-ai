@@ -233,7 +233,7 @@ async def test_stream_full_turn_thoughts_signatures_calls_and_usage() -> None:
         {"type": "gemini.thought", "thoughtSignature": "sig-t", "text": "plan [redacted]"},
         {"type": "gemini.call_signature", "call_id": "fc_9", "thoughtSignature": "sig-call"},
     ]
-    assert reply.finish_reason == "STOP"
+    assert reply.finish_reason == "tool_calls"
     assert reply.model == "gemini-2.5-flash-001"
     assert reply.usage == {
         "prompt_tokens": 10,
@@ -285,6 +285,14 @@ async def test_two_step_400_fallback_drops_thinking_level_then_thinking_config()
 def test_parse_non_streaming_block_and_error() -> None:
     with pytest.raises(LLMError, match="blocked \\(SAFETY\\)"):
         parse_gemini_payload({"promptFeedback": {"blockReason": "SAFETY"}}, "AIza-secret-key")
+    with pytest.raises(LLMError, match=r"blocked \(SAFETY \[redacted\]\)"):
+        parse_gemini_payload(
+            {
+                "promptFeedback": {"blockReason": "SAFETY AIza-secret-key"},
+                "candidates": [{"content": {"parts": [{"text": "ignored"}]}}],
+            },
+            "AIza-secret-key",
+        )
     with pytest.raises(LLMError, match=r"provider error:.*\[redacted\]"):
         parse_gemini_payload({"error": {"message": "bad AIza-secret-key"}}, "AIza-secret-key")
 
@@ -330,4 +338,129 @@ async def test_incomplete_sse_without_finish_reason_raises() -> None:
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     connect = GoogleGemini(_provider(), client=client)
     with pytest.raises(LLMError, match="incomplete"):
+        await connect.chat([Message(role="user", content="hi")])
+
+
+@pytest.mark.asyncio
+async def test_malformed_function_call_and_blocked_finish_reasons_raise() -> None:
+    with pytest.raises(LLMError, match=r"MALFORMED_FUNCTION_CALL: bad args \[redacted\]"):
+        parse_gemini_payload(
+            {
+                "candidates": [
+                    {
+                        "content": {"role": "model", "parts": []},
+                        "finishReason": "MALFORMED_FUNCTION_CALL",
+                        "finishMessage": "bad args AIza-secret-key",
+                    }
+                ]
+            },
+            "AIza-secret-key",
+        )
+
+    with pytest.raises(LLMError, match="SAFETY"):
+        parse_gemini_payload(
+            {"candidates": [{"content": {"role": "model", "parts": []}, "finishReason": "SAFETY"}]},
+            "AIza-secret-key",
+        )
+
+    with pytest.raises(LLMError, match="MAX_TOKENS"):
+        parse_gemini_payload(
+            {
+                "candidates": [
+                    {"content": {"role": "model", "parts": []}, "finishReason": "MAX_TOKENS"}
+                ]
+            },
+            "AIza-secret-key",
+        )
+
+    partial = parse_gemini_payload(
+        {
+            "candidates": [
+                {
+                    "content": {"role": "model", "parts": [{"text": "partial answer"}]},
+                    "finishReason": "MAX_TOKENS",
+                }
+            ]
+        },
+        "AIza-secret-key",
+    )
+    assert partial.content == "partial answer"
+    assert partial.finish_reason == "length"
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return _sse(
+            {
+                "modelVersion": "gemini-2.5-flash",
+                "candidates": [
+                    {
+                        "content": {"role": "model", "parts": []},
+                        "finishReason": "MALFORMED_FUNCTION_CALL",
+                        "finishMessage": "invalid call AIza-secret-key",
+                    }
+                ],
+            }
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    connect = GoogleGemini(_provider(), client=client)
+    with pytest.raises(LLMError, match=r"MALFORMED_FUNCTION_CALL: invalid call \[redacted\]"):
+        await connect.chat([Message(role="user", content="hi")])
+
+
+def test_standalone_and_empty_text_thought_signatures_round_trip() -> None:
+    reply = parse_gemini_payload(
+        {
+            "candidates": [
+                {
+                    "content": {
+                        "role": "model",
+                        "parts": [
+                            {"text": "", "thoughtSignature": "sig-empty-text"},
+                            {"thoughtSignature": "sig-standalone"},
+                        ],
+                    },
+                    "finishReason": "STOP",
+                }
+            ]
+        },
+        "AIza-secret-key",
+    )
+    assert reply.content is None
+    assert reply.reasoning_details == [
+        {"type": "gemini.text_signature", "thoughtSignature": "sig-empty-text"},
+        {"type": "gemini.thought_signature", "thoughtSignature": "sig-standalone"},
+    ]
+
+    _sys, contents = _to_gemini_contents(
+        [
+            Message(role="user", content="hi"),
+            Message(
+                role="assistant",
+                content=reply.content,
+                reasoning_details=reply.reasoning_details,
+            ),
+        ]
+    )
+    assert contents[1] == {
+        "role": "model",
+        "parts": [
+            {"text": "", "thoughtSignature": "sig-empty-text"},
+            {"thoughtSignature": "sig-standalone"},
+        ],
+    }
+
+
+@pytest.mark.asyncio
+async def test_sse_prompt_feedback_block_raises_even_with_candidates() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return _sse(
+            {
+                "promptFeedback": {"blockReason": "PROHIBITED_CONTENT"},
+                "candidates": [{"content": {"role": "model", "parts": []}}],
+            }
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    connect = GoogleGemini(_provider(), client=client)
+    with pytest.raises(LLMError, match=r"blocked \(PROHIBITED_CONTENT\)"):
         await connect.chat([Message(role="user", content="hi")])

@@ -94,7 +94,7 @@ def test_spa_entry_links_the_shared_stylesheets() -> None:
     for page in ("dashboard", "memories", "profile", "provider"):
         js = (UI / page / "js" / f"{page}.js").read_text(encoding="utf-8")
         assert f"stylesheet: '/ui/{page}/" in js, page
-    assert 'src="../share/settings-dialog.js"' in chat
+    assert 'src="../share/settings-dialog.js"' not in chat
 
 
 def test_shared_paper_background_spans_the_shell() -> None:
@@ -150,8 +150,6 @@ def test_decoration_preference_drives_the_shared_artwork() -> None:
     assert "thyca.ui.preferences" in shell_js
     assert "document.documentElement" in shell_js and 'dataset.ornaments' in shell_js
     assert "function applyPrefs" in shell_js
-    dialog_js = (UI / "share" / "settings-dialog.js").read_text(encoding="utf-8")
-    assert "applyPrefs(collect())" in dialog_js
     assert "view.dataset.ornaments" in shell_js or "workspace.dataset.ornaments" in shell_js
 
 

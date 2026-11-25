@@ -68,10 +68,10 @@ def _seed_history(app: ChatApp, bot_id: str, room_id: str, *, marker: str) -> No
     manager.load(conversation_id)
     for index in range(10):
         manager.append(Message(
-            role="user", content=f"{marker}-{index} " + "u" * 500,
+            role="user", content=f"{marker}-{index} " + "u" * 7000,
             ts=f"2026-08-01T10:{index:02d}:00Z"))
         manager.append(Message(
-            role="assistant", content=f"answer-{index} " + "a" * 500,
+            role="assistant", content=f"answer-{index} " + "a" * 7000,
             ts=f"2026-08-01T10:{index:02d}:30Z"))
 
 
@@ -82,7 +82,7 @@ def _internal_messages(app: ChatApp, bot_id: str, room_id: str):
 
 def test_bot_instance_compacts_with_own_budget_and_overhead(tmp_path: Path) -> None:
     llm = _CaptureLLM()
-    app = _chat(tmp_path, llm, context_tokens=5400)
+    app = _chat(tmp_path, llm, context_tokens=32000)
     try:
         app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
                                  description="Writes code.", persona="PERSONA-CODER"))
@@ -198,7 +198,7 @@ def test_bot_prompt_carries_task_index_counted_in_hot(tmp_path: Path) -> None:
 
 def test_flush_runs_before_compaction_and_recall_fires_once(tmp_path: Path) -> None:
     llm = _CaptureLLM()
-    app = _chat(tmp_path, llm, context_tokens=5400)
+    app = _chat(tmp_path, llm, context_tokens=32000)
     try:
         app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
                                  description="Writes code.", persona="PERSONA-CODER"))
@@ -240,7 +240,7 @@ def test_flush_runs_before_compaction_and_recall_fires_once(tmp_path: Path) -> N
 
 def test_no_flush_when_agent_checkpointed_segment(tmp_path: Path) -> None:
     llm = _CaptureLLM()
-    app = _chat(tmp_path, llm, context_tokens=5400)
+    app = _chat(tmp_path, llm, context_tokens=32000)
     try:
         app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
                                  description="Writes code.", persona="PERSONA-CODER"))
@@ -355,7 +355,7 @@ def test_aggregate_team_profiles_skips_without_input(tmp_path: Path) -> None:
 
 def test_no_flush_when_no_compaction_due(tmp_path: Path) -> None:
     llm = _CaptureLLM()
-    app = _chat(tmp_path, llm, context_tokens=1000)
+    app = _chat(tmp_path, llm, context_tokens=32000)
     try:
         app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
                                  description="Writes code.", persona="PERSONA-CODER"))

@@ -10,7 +10,6 @@ function thycaSidebarMarkup() {
  <div class="sessions-heading"><h2 id="team-nav-title">Đội</h2><span class="bot-count">0 người bạn</span></div>
  <div class="side-scroll"><nav class="session-list" id="team-bot-list" aria-label="Bot trong đội"></nav></div>
  <div class="rail-scroll"><nav class="rail-avatar-list" id="rail-avatar-list" aria-label="Bot trong đội"></nav></div>
- <footer class="sidebar-footer"><button id="open-settings" aria-label="Cài đặt"><svg class="icon"><use href="#i-face"/></svg><span class="settings-label">Cài đặt</span></button></footer>
 </aside>
 <button type="button" class="splitter" aria-label="Thu gọn thanh bot" aria-controls="chat-sidebar" aria-expanded="true" title="Thu gọn/Mở rộng thanh bot">‹</button>`;
 }
@@ -31,58 +30,6 @@ function thycaDialogs() {
 <p class="dialog-note">Mỗi bot giữ màu, hình dạng và nhịp chớp mắt riêng. Biểu cảm theo trạng thái công việc; lúc rảnh có thêm cử chỉ và lời nhắn ngẫu nhiên, có thể tắt riêng.</p></div></dialog>
 <dialog class="screen-dialog" id="bot-drawer" aria-labelledby="bot-drawer-name"><div class="dialog-heading"><div><h2 id="bot-drawer-name">Thông tin bot</h2><p id="bot-drawer-subtitle">Một người bạn trong đội.</p></div><button class="icon-button dialog-close" aria-label="Đóng"><svg class="icon"><use href="#i-close"/></svg></button></div><div class="dialog-body" id="bot-drawer-body"></div></dialog>
 <dialog class="screen-dialog" id="group-dialog" aria-labelledby="group-dialog-title"><div class="dialog-heading"><div><h2 id="group-dialog-title">Một cuộc trò chuyện chung.</h2><p>Chọn những người bạn sẽ cùng tham gia.</p></div><button class="icon-button dialog-close" aria-label="Đóng"><svg class="icon"><use href="#i-close"/></svg></button></div><form class="dialog-body group-form" id="group-form"><label class="group-name-label" for="group-name">Tên nhóm (không bắt buộc, nên 3–5 từ)</label><input type="text" id="group-name" name="group-name" maxlength="80" placeholder="Ví dụ: Đội hỗ trợ Discord" autocomplete="off"><small class="group-name-hint">Tên ngắn 3–5 từ; để trống nhóm sẽ hiện “Hội thoại chung”.</small><div id="group-options"></div><div class="dialog-actions"><button class="primary-action" type="submit">Tạo hội thoại</button></div></form></dialog>
-<dialog class="screen-dialog" id="settings-dialog" aria-labelledby="settings-title"><div class="dialog-heading"><div><h2 id="settings-title">Cài đặt</h2><p>Bot của bạn, giao diện máy này, giới hạn chạy và trạng thái máy chủ — chung cho mọi trang.</p></div><button class="icon-button dialog-close" aria-label="Đóng"><svg class="icon"><use href="#i-close"/></svg></button></div><div class="dialog-body" id="settings-body">
- <section class="paper-card" aria-labelledby="settings-bots-title">
-  <div class="eyebrow">Bot của bạn</div>
-  <h3 class="card-title" id="settings-bots-title">Người bạn đồng hành</h3>
-  <p class="card-copy">Chọn bot ở trên để đổi model / mức suy luận riêng của bot đó (để trống là theo mặc định chung); màu và hình dáng nhân vật chỉnh ở Xưởng biểu cảm bên dưới.</p>
-  <div class="bot-pick"><span id="settings-bot-seal" class="bot-pick-seal"></span>
-   <label class="field" for="settings-bot"><span>Bot</span><select id="settings-bot"></select></label>
-  </div>
-  <div class="form-footer"><button type="button" class="quiet-button" id="open-studio">Xưởng biểu cảm</button></div>
-  <form id="bot-settings-form" class="settings-bot-model-form" novalidate aria-label="Model và mức suy luận của bot">
-   <div id="bot-settings-fields"><p class="empty-note">Đang tải cài đặt bot…</p></div>
-   <div class="form-footer">
-    <button class="primary-action" type="submit" id="save-bot-settings" disabled>Lưu cài đặt bot</button>
-    <span class="form-hint" id="bot-settings-hint"></span>
-   </div>
-  </form>
- </section>
- <section class="paper-card" aria-labelledby="settings-ui-title">
-  <div class="eyebrow">Giao diện · máy này</div>
-  <h3 class="card-title" id="settings-ui-title">Trang trải cho vừa tay</h3>
-  <p class="card-copy">Chỉ lưu trong trình duyệt này (localStorage) — không gửi lên máy chủ.</p>
-  <div class="pref-rows">
-   <label class="field" for="pref-type-scale"><span>Cỡ chữ</span>
-    <select id="pref-type-scale"><option value="small">Nhỏ</option><option value="medium">Vừa</option><option value="large">Lớn</option></select>
-   </label>
-   <label class="checkbox-row" for="pref-reduce-motion"><input type="checkbox" id="pref-reduce-motion"><span>Giảm chuyển động — dừng nhịp thở và cử chỉ rảnh của nhân vật</span></label>
-   <label class="checkbox-row" for="pref-ornaments"><input type="checkbox" id="pref-ornaments"><span>Hiển thị họa tiết trang trí trên trang</span></label>
-  </div>
-  <div class="form-footer"><button type="button" class="quiet-button" id="pref-reset">Về mặc định</button></div>
- </section>
- <section class="paper-card" aria-labelledby="settings-limits-title">
-  <div class="eyebrow">Giới hạn &amp; thời gian chạy</div>
-  <h3 class="card-title" id="settings-limits-title">Nhịp làm việc của đội</h3>
-  <p class="card-copy">Giới hạn toàn cục của máy chủ áp cho mọi lượt chạy (vòng agent, nhớ nóng, ngữ cảnh, thời gian chờ). Provider và model mặc định chỉnh ở trang Provider; model riêng từng bot chỉnh ở mục “Bot của bạn” phía trên.</p>
-  <form id="config-form" novalidate>
-   <div id="config-fields"><p class="empty-note">Đang tải cấu hình…</p></div>
-   <div class="form-footer">
-    <button class="primary-action" type="submit" id="save-config" disabled>Lưu cài đặt</button>
-    <span class="form-hint">Các phần không hiển thị (provider, model, MCP, API key) được giữ nguyên.</span>
-    <p class="form-status" id="settings-form-status" role="status" hidden></p>
-   </div>
-  </form>
- </section>
- <section class="paper-card" aria-labelledby="settings-status-title">
-  <div class="eyebrow">Trạng thái</div>
-  <h3 class="card-title" id="settings-status-title">Máy chủ Thyca</h3>
-  <ul class="meta-list">
-   <li><span>Backend</span><span class="status-line" id="status-ready">Đang kiểm tra…</span></li>
-   <li><span>Phiên bản</span><span id="status-version">…</span></li>
-  </ul>
-  <div class="form-footer"><button type="button" class="quiet-button" id="status-refresh">Kiểm tra lại</button></div>
- </section></div></dialog>
 <div class="toast" role="status" id="toast" hidden></div><div class="sr-only" role="status" aria-live="polite" id="announcer"></div>`;
 }
 

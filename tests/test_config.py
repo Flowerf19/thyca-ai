@@ -323,7 +323,7 @@ def test_model_limits_override_global(tmp_path: Path) -> None:
     raw["providers"] = {"default": {"reasoningEffort": "low"}}
     raw["defaultProvider"] = "default"
     raw["defaultModel"] = "special"
-    raw["limits"] = {"loopMax": 10, "hotTailKB": 4, "contextTokens": 8000}
+    raw["limits"] = {"loopMax": 10, "hotTailKB": 4, "contextTokens": 32000}
     raw["models"] = {
         "special": {
             "input": 0,
@@ -800,7 +800,7 @@ def test_soft_timeout_passes_through_model_overrides(tmp_path: Path) -> None:
     p = tmp_path / "config.json"
     raw = default_config().to_dict()
     raw["limits"] = {
-        "loopMax": 10, "hotTailKB": 4, "contextTokens": 8000, "softTimeoutS": 12,
+        "loopMax": 10, "hotTailKB": 4, "contextTokens": 32000, "softTimeoutS": 12,
     }
     raw["models"] = {"m": {"input": 0, "cache": 0, "output": 0, "loopMax": 50}}
     raw["defaultModel"] = "m"
@@ -866,11 +866,23 @@ def test_x7_atomic_write_is_0600_and_self_cleaning(tmp_path: Path) -> None:
 
 def test_x25_single_range_table() -> None:
     assert LIMIT_RANGES["loopMax"] == (1, 200)
+    assert LIMIT_RANGES["contextTokens"] == (32_000, 1_000_000)
     schema = config_schema()
     limits = {f["key"]: f for f in schema["sections"][1]["fields"]}
     assert (limits["limits.loopMax"]["min"], limits["limits.loopMax"]["max"]) == (1, 200)
+    assert (
+        limits["limits.contextTokens"]["min"],
+        limits["limits.contextTokens"]["max"],
+    ) == (32_000, 1_000_000)
+    assert limits["limits.contextTokens"]["default"] == 272_000
     assert (limits["limits.softTimeoutS"]["min"], limits["limits.softTimeoutS"]["max"]) == (1, 300)
     assert LimitsCfg().loopMax == 200
+    assert LimitsCfg().contextTokens == 272_000
+    for bad in (31_999, 1_000_001):
+        with pytest.raises(ConfigError, match=r"limits\.contextTokens must be 32000\.\.1000000"):
+            LimitsCfg(contextTokens=bad)
+        with pytest.raises(ConfigError, match=r"models\[\]\.contextTokens must be 32000\.\.1000000"):
+            ModelCfg(contextTokens=bad)
 
 
 def test_x25_lock_path_single_home() -> None:

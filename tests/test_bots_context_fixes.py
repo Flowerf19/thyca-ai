@@ -254,15 +254,15 @@ def _seed_idle_bot_transcript(app: ChatApp, room: str):
     manager = ConversationManager(store=store)
     manager.load(internal.conversation_id)
     for index in range(8):
-        manager.append(_msg("user", f"q{index} " + "u" * 400,
+        manager.append(_msg("user", f"q{index} " + "u" * 10000,
                             ts=f"2020-01-01T10:{index:02d}:00Z"))
-        manager.append(_msg("assistant", f"a{index} " + "a" * 400,
+        manager.append(_msg("assistant", f"a{index} " + "a" * 10000,
                             ts=f"2020-01-01T10:{index:02d}:30Z"))
     return internal, store
 
 
 def test_bot_idle_sweep_skips_internal_conversation_of_busy_room(tmp_path: Path) -> None:
-    app = _chat(tmp_path, _LLM(content="[]"), context_tokens=2000)
+    app = _chat(tmp_path, _LLM(content="[]"), context_tokens=32000)
     try:
         app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
                                  description="Writes code.", persona="P"))
@@ -290,7 +290,7 @@ def test_bot_idle_sweep_skips_internal_conversation_of_busy_room(tmp_path: Path)
 def test_bot_idle_sweep_skips_when_workspace_lease_is_already_held(
     tmp_path: Path,
 ) -> None:
-    app = _chat(tmp_path, _LLM(content="[]"), context_tokens=2000)
+    app = _chat(tmp_path, _LLM(content="[]"), context_tokens=32000)
     release = threading.Event()
     acquired = threading.Event()
     try:
@@ -322,7 +322,7 @@ def test_bot_idle_sweep_skips_when_workspace_lease_is_already_held(
 def test_bot_idle_sweep_holds_workspace_lease_through_compaction(
     tmp_path: Path,
 ) -> None:
-    app = _chat(tmp_path, _LLM(), context_tokens=2000)
+    app = _chat(tmp_path, _LLM(), context_tokens=32000)
     flush_entered = threading.Event()
     release_flush = threading.Event()
     sweep_result: list[dict] = []
@@ -387,7 +387,7 @@ def test_flush_prediction_counts_mailbox_wire_and_summary_reserve(
     tmp_path: Path,
 ) -> None:
     llm = _LLM()
-    app = _chat(tmp_path, llm, context_tokens=3000)
+    app = _chat(tmp_path, llm, context_tokens=32000)
     try:
         app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
                                  description="Writes code.", persona="PERSONA-CODER"))
@@ -396,9 +396,9 @@ def test_flush_prediction_counts_mailbox_wire_and_summary_reserve(
         manager = ConversationManager(store=store)
         manager.load(internal.conversation_id)
         for index in range(2):
-            manager.append(_msg("user", f"q{index} " + "u" * 200,
+            manager.append(_msg("user", f"q{index} " + "u" * 28500,
                                 ts=f"2026-08-01T10:{index:02d}:00Z"))
-            manager.append(_msg("assistant", f"a{index} " + "a" * 200,
+            manager.append(_msg("assistant", f"a{index} " + "a" * 28500,
                                 ts=f"2026-08-01T10:{index:02d}:30Z"))
         for _ in range(5):
             app._runtime.send(sender="thyca", recipient="coder", kind="message",
@@ -421,7 +421,7 @@ def test_mailbox_batch_is_frozen_across_flush_and_next_turn(
 ) -> None:
 
     llm = _LLM()
-    app = _chat(tmp_path, llm, context_tokens=30000)
+    app = _chat(tmp_path, llm, context_tokens=32000)
     flush_entered = threading.Event()
     release_flush = threading.Event()
     flush_calls: list[bool] = []
@@ -435,9 +435,9 @@ def test_mailbox_batch_is_frozen_across_flush_and_next_turn(
         manager = ConversationManager(store=store)
         manager.load(internal.conversation_id)
         for index in range(50):
-            manager.append(_msg("user", f"q{index} " + "u" * 1200,
+            manager.append(_msg("user", f"q{index} " + "u" * 1400,
                                 ts=f"2026-08-01T10:{index:02d}:00Z"))
-            manager.append(_msg("assistant", f"a{index} " + "a" * 1200,
+            manager.append(_msg("assistant", f"a{index} " + "a" * 1400,
                                 ts=f"2026-08-01T10:{index:02d}:30Z"))
         for _ in range(5):
             app._runtime.send(sender="thyca", recipient="coder", kind="message",

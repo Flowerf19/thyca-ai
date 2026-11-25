@@ -10,7 +10,7 @@ import httpx
 from thyca.core.protocol import Message, ToolCall
 
 from ._http import BaseConnect, cap, iter_sse_data, parse_json_bytes, redact
-from ._shared import _arguments, slots_to_calls
+from ._shared import _arguments, iter_tool_specs, resolve_finish_reason, slots_to_calls
 from .llm_base import ChatReply, LLMError, normalize_usage
 from .streaming import ContentOut, ReasoningOut
 
@@ -26,24 +26,15 @@ def _messages_url(base_url: str) -> str:
 def _to_anthropic_tools(tools: list) -> list[dict[str, Any]]:
     """Chat-schema tools (the ``Connect`` contract) to Anthropic tool definitions."""
     out: list[dict[str, Any]] = []
-    for spec in tools:
-        if not isinstance(spec, dict):
-            continue
-        fn = spec.get("function")
-        if isinstance(fn, dict):
-            name, desc, params = fn.get("name"), fn.get("description"), fn.get("parameters")
-        else:
-            name, desc, params = spec.get("name"), spec.get("description"), spec.get("parameters")
-        if not isinstance(name, str) or not name:
-            continue
-        if isinstance(params, dict) and params:
-            schema = dict(params)
+    for spec in iter_tool_specs(tools):
+        if spec.parameters:
+            schema = dict(spec.parameters)
             schema.setdefault("type", "object")
         else:
             schema = {"type": "object", "properties": {}}
-        tool: dict[str, Any] = {"name": name, "input_schema": schema}
-        if isinstance(desc, str) and desc:
-            tool["description"] = desc
+        tool: dict[str, Any] = {"name": spec.name, "input_schema": schema}
+        if spec.description:
+            tool["description"] = spec.description
         out.append(tool)
     return out
 
@@ -183,11 +174,12 @@ def parse_anthropic_payload(raw: dict, key: str) -> ChatReply:
     stop_reason = raw.get("stop_reason") or ""
     if not isinstance(stop_reason, str):
         stop_reason = str(stop_reason)
+    content = redact("".join(content_parts), key) or None
     return ChatReply(
-        content=redact("".join(content_parts), key) or None,
+        content=content,
         tool_calls=calls,
         usage=usage,
-        finish_reason=stop_reason,
+        finish_reason=resolve_finish_reason(stop_reason, content=content, calls=calls, key=key),
         model=model if isinstance(model, str) else None,
         reasoning=redact("".join(reasoning_parts), key) or None,
         reasoning_details=details or None,
@@ -322,11 +314,13 @@ async def read_anthropic_sse(
         raise LLMError("provider response incomplete")
     content_out.finish()
     usage = normalize_usage(raw_usage, "anthropic_messages") if raw_usage else None
+    content = redact("".join(content_parts), key) or None
+    calls = slots_to_calls(slots)
     return ChatReply(
-        content=redact("".join(content_parts), key) or None,
-        tool_calls=slots_to_calls(slots),
+        content=content,
+        tool_calls=calls,
         usage=usage,
-        finish_reason=stop_reason,
+        finish_reason=resolve_finish_reason(stop_reason, content=content, calls=calls, key=key),
         model=model,
         reasoning=reasoning.text(),
         reasoning_details=details or None,

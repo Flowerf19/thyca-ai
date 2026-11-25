@@ -22,6 +22,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 MEM_JS = ROOT / "thyca" / "webui" / "ui" / "memories" / "js" / "memories.js"
+INDEX_HTML = ROOT / "thyca" / "webui" / "ui" / "chat" / "index.html"
 
 _HARNESS = r"""
 import fs from 'node:fs';
@@ -56,6 +57,12 @@ document.body = makeEl('body');
 document.documentElement = makeEl('html');
 document.createElement = t => makeEl(t);
 document.createElementNS = (_n, t) => makeEl(t);
+const indexHtml = fs.readFileSync(process.env.INDEX_HTML, 'utf8');
+for (const match of indexHtml.matchAll(/<template id="([^"]+)">([\s\S]*?)<\/template>/g)) {
+  const tpl = makeEl('template');
+  tpl._html = match[2];
+  elementRegistry.set(`template#${match[1]}`, tpl);
+}
 
 const calls = { gets: [], posts: [], toasts: [], confirms: 0, urls: [], teamRenders: 0 };
 const hooks = {
@@ -413,7 +420,7 @@ def _run_scenario(name: str) -> dict:
     result = subprocess.run(
         [node, "--input-type=module", "-e", _HARNESS + setup + _EVAL + body],
         cwd=ROOT, check=True, capture_output=True, text=True, timeout=15,
-        env={**os.environ, "MEM_JS": str(MEM_JS)},
+        env={**os.environ, "MEM_JS": str(MEM_JS), "INDEX_HTML": str(INDEX_HTML)},
     )
     return json.loads(result.stdout)
 
@@ -671,7 +678,7 @@ def test_expiring_kpi_reinforce_and_empty_filter() -> None:
     result = subprocess.run(
         [node, "--input-type=module", "-e", _HARNESS + setup + _EVAL + body],
         cwd=ROOT, check=True, capture_output=True, text=True, timeout=15,
-        env={**os.environ, "MEM_JS": str(MEM_JS)},
+        env={**os.environ, "MEM_JS": str(MEM_JS), "INDEX_HTML": str(INDEX_HTML)},
     )
     out = json.loads(result.stdout)
     assert "Không tìm thấy lá nào" in out["emptySuggestHtml"]

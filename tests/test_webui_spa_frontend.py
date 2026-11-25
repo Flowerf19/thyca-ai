@@ -1395,11 +1395,11 @@ def test_root_spa_retains_all_workspaces_and_restores_history(
         ),
         (
             "/ui/settings/index.html?spaMode=legacy-check",
-            {"page": "chat", "search": "?bot=thyca", "hash": ""},
+            {"page": "profile", "search": "", "hash": ""},
         ),
         (
             "/ui/settings/?spaMode=legacy-check",
-            {"page": "chat", "search": "?bot=thyca", "hash": ""},
+            {"page": "profile", "search": "", "hash": ""},
         ),
         (
             "/ui/settings/index.html?spaMode=legacy-check#dm/thyca/2",

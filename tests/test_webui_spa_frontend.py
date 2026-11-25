@@ -786,7 +786,7 @@ def test_root_spa_retains_all_workspaces_and_restores_history(
     await fetch(window.__spaControlBase + '/release-settings');
     await wait(() => document.querySelector('#bot-settings-hint').textContent.includes('Đã lưu.'));
     if ((await waitForApiState(state => state.settingsPosts >= 1)).settingsPosts !== 1) throw new Error('duplicate bot settings POST');
-    if (!document.querySelector('#profile-root .chip')?.textContent.includes('model: model-b · suy nghĩ high')) throw new Error('saved Profile model chip did not update');
+    if (!document.querySelector('#profile-root .bot-effective')?.textContent.includes('model-b · high')) throw new Error('saved Profile model summary did not update');
     const coderSaved = { model: document.querySelector('#bot-model').value, thinking: document.querySelector('#bot-thinking').value };
     await ThycaRouter.navigate('profile', { search: '?bot=thyca' });
     await wait(() => ThycaRouter.currentRoute().search === '?bot=thyca' && document.querySelector('#bot-model')?.value === 'model-a' && document.querySelector('#bot-thinking')?.value === 'low');
@@ -826,7 +826,7 @@ def test_root_spa_retains_all_workspaces_and_restores_history(
     await wait(() => document.getElementById('file-USER.md')?.textContent.includes('Edited from SPA test'), 'canonical USER.md content refreshed');
     if (document.activeElement !== document.querySelector('[data-edit="USER.md"]')) throw new Error('canonical inline editor did not restore focus');
     await ThycaRouter.navigate('profile', { search: '?bot=coder' });
-    await wait(() => ThycaRouter.currentRoute().search === '?bot=coder' && !!document.querySelector('#profile-root .chip')?.textContent.includes('model: model-b'));
+    await wait(() => ThycaRouter.currentRoute().search === '?bot=coder' && !!document.querySelector('#profile-root .bot-effective')?.textContent.includes('model-b'));
     await wait(() => document.querySelector('#bot-model')?.value === 'model-b');
     const stableApiBefore = (await fetch(window.__spaControlBase + '/state').then(response => response.json())).apiCounts;
     for (let cycle = 0; cycle < 2; cycle++) {

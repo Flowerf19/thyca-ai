@@ -203,16 +203,19 @@ class ConversationCompactor:
         body = messages[leading:]
         turns = self._turns(body)
 
-        budget = int((cap_raw - overhead - _marker_reserve_tokens(body_chars)) * 0.6)
-        kept: list[list[Message]] = []
-        used = 0
-        for turn in reversed(turns):
-            cost = sum(estimate_tokens(msg) for msg in turn)
-            if kept and used + cost > budget:
-                break
-            kept.append(turn)
-            used += cost
-        kept.reverse()
+        if drop_prior:
+            kept = turns[-1:] if turns else []
+        else:
+            budget = int((cap_raw - overhead - _marker_reserve_tokens(body_chars)) * 0.6)
+            kept = []
+            used = 0
+            for turn in reversed(turns):
+                cost = sum(estimate_tokens(msg) for msg in turn)
+                if kept and used + cost > budget:
+                    break
+                kept.append(turn)
+                used += cost
+            kept.reverse()
         tail = [msg for turn in kept for msg in turn]
         omitted = messages[:leading] + body[: len(body) - len(tail)]
         prior_parts: list[str] = []
@@ -248,28 +251,20 @@ class ConversationCompactor:
             or prior_turns > 0
             or prior_chars > 0
         )
-        if len(tail) == len(body):
-            if drop_prior and has_prior_to_drop:
-                return CompactionPlan(
-                    tail=tail,
-                    fresh=[],
-                    prior_parts=[],
-                    total_messages=0,
-                    total_turns=0,
-                    total_chars=0,
-                    drop_prior=True,
-                )
-            return None
         if drop_prior:
+            if len(tail) == len(body) and not has_prior_to_drop:
+                return None
             return CompactionPlan(
                 tail=tail,
-                fresh=fresh,
+                fresh=[],
                 prior_parts=[],
-                total_messages=len(fresh),
-                total_turns=len(turns) - len(kept),
-                total_chars=sum(len(msg.content or "") for msg in fresh),
+                total_messages=0,
+                total_turns=0,
+                total_chars=0,
                 drop_prior=True,
             )
+        if len(tail) == len(body):
+            return None
         return CompactionPlan(
             tail=tail,
             fresh=fresh,

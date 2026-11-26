@@ -227,24 +227,16 @@ def test_drop_prior_clears_stale_marker_without_llm_and_is_idempotent(
     assert again["summary"] is None
 
 
-def test_drop_prior_summarizes_fresh_turns_without_carrying_old_summary(
+def test_drop_prior_clears_prior_turns_even_on_200k_context_without_llm(
     tmp_path: Path,
 ) -> None:
-    manager = _seeded(tmp_path)
-    asyncio.run(
-        compact_with_llm(
-            StubSummarizer(_outcome("ANCIENT_UNRELATED_TOPIC")),
-            manager,
-            model="m",
-            pricing=None,
-            force=True,
-        )
-    )
-    for i in range(4):
-        manager.append(Message(role="user", content=f"new-{i}-" + "n" * 16000))
-        manager.append(Message(role="assistant", content="r" * 16000))
+    manager = _canonical_manager(tmp_path, LimitsCfg(contextTokens=200_000))
+    for i in range(6):
+        manager.append(Message(role="user", content=f"old-topic-{i} " + ("x" * 2000)))
+        manager.append(Message(role="assistant", content=f"old-reply-{i} " + ("y" * 2000)))
+    manager.append(Message(role="user", content="brand new topic dalat"))
 
-    stub = StubSummarizer(_outcome("FRESH_ONLY_SUMMARY"))
+    stub = StubSummarizer(_outcome("SHOULD_NOT_BE_CALLED"))
     result = asyncio.run(
         compact_with_llm(
             stub,
@@ -256,11 +248,23 @@ def test_drop_prior_summarizes_fresh_turns_without_carrying_old_summary(
         )
     )
     assert result["compacted"] is True
-    assert result["summary"] == "llm"
-    assert len(stub.calls) == 1
-    fresh_sent, prior_sent, _ = stub.calls[0]
-    assert fresh_sent
-    assert prior_sent == ""
-    marker = manager.current.messages[0].content or ""
-    assert "FRESH_ONLY_SUMMARY" in marker
-    assert "ANCIENT_UNRELATED_TOPIC" not in marker
+    assert result["summary"] == "cleared"
+    assert stub.calls == []
+    msgs = manager.current.messages
+    assert len(msgs) == 2
+    assert msgs[0].content == PRIOR_CLEARED_MARKER
+    assert msgs[1].content == "brand new topic dalat"
+    assert "old-topic-0" not in "\n".join(m.content or "" for m in msgs)
+
+    again = asyncio.run(
+        compact_with_llm(
+            stub,
+            manager,
+            model="m",
+            pricing=None,
+            force=True,
+            drop_prior=True,
+        )
+    )
+    assert again["compacted"] is False
+    assert again["summary"] is None

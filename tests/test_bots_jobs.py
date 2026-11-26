@@ -339,6 +339,7 @@ def test_extraction_prompt_carries_language_lock_noise_filter_and_delta_rules() 
     )
     assert "Bought washer" in prompt
     assert "TODAY'S NOTES:" in prompt
+    assert "TODAY'S CLOSED TASKS:" in prompt
     assert "2026-11-17#11111111" in prompt
     assert "Fedora Bazzite" in prompt
     assert "KNOWN HABIT LABELS: uong tra, tra loi ngan" in prompt
@@ -346,8 +347,52 @@ def test_extraction_prompt_carries_language_lock_noise_filter_and_delta_rules() 
     assert "LANGUAGE:" in prompt
     assert "TWIN.md" in prompt
     assert "web-search" in prompt
+    assert "recalled/cited from memory" in prompt
     assert "memory_id" in prompt
     assert '"bots":' not in prompt
+
+
+def test_apply_memory_tool_calls_skips_recreating_task_closed_today(tmp_path: Path) -> None:
+    facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
+    tid = facade.new_task_id()
+    sid = facade.remember(
+        "Dựng pipeline backup Postgres lên S3",
+        "Hoàn thành 100%",
+        task=tid,
+        kind="checkpoint",
+        status="done",
+        importance=5,
+        chat="thyca",
+    )
+    today = facade.today_entries(chat="thyca", reader="thyca")
+    prompt = jobs.extraction_prompt("User: đóng task", today_entries=today)
+    assert tid in prompt
+    assert "TODAY'S CLOSED TASKS (ALREADY DONE/CANCELLED" in prompt
+
+    registry = sidecar_memory_tools(facade)
+    out = asyncio.run(
+        jobs.apply_memory_tool_calls(
+            registry,
+            [
+                ToolCall(
+                    id="dup-done",
+                    name="memory_task",
+                    arguments={
+                        "topic": "Dựng pipeline backup Postgres lên S3",
+                        "summary": "Đã hoàn thành backup",
+                        "status": "done",
+                    },
+                )
+            ],
+            bot_id="thyca",
+            open_tasks=[],
+            today_entries=today,
+            chat="thyca",
+        )
+    )
+    assert out["written"] == []
+    assert [t["task_id"] for t in facade.tasks()["tasks"]] == [tid]
+    assert sid in facade.today_entries(chat="thyca", reader="thyca")[0]["memory_id"]
 
 
 def test_transcript_tail_skips_sidecars_and_keeps_room_context() -> None:

@@ -188,6 +188,29 @@ def _today_notes_block(today_entries) -> str:
     return "TODAY'S NOTES:\n" + "\n".join(lines)
 
 
+def _today_closed_tasks_block(today_entries) -> str:
+    """Prompt block listing tasks already closed/cancelled today so sidecar does not recreate them."""
+    lines = []
+    for entry in today_entries or ():
+        if not isinstance(entry, dict) or not entry.get("task"):
+            continue
+        status = entry.get("status")
+        if status not in ("done", "cancelled"):
+            continue
+        tid = entry.get("task")
+        title = str(entry.get("title", "")).strip()
+        body = " ".join(str(entry.get("body", "")).split())
+        if len(body) > 160:
+            body = body[:159].rstrip() + "…"
+        line = f"- {tid} ({status}) — {title}"
+        if body:
+            line += f": {body}"
+        lines.append(line)
+    if not lines:
+        return "TODAY'S CLOSED TASKS: none."
+    return "TODAY'S CLOSED TASKS (ALREADY DONE/CANCELLED — DO NOT RE-CREATE):\n" + "\n".join(lines)
+
+
 def _known_habits_block(known_habits) -> str:
     """Prompt block listing known habit labels so extraction reuses canonical labels."""
     labels = [
@@ -215,21 +238,26 @@ def extraction_prompt(
         "1. LANGUAGE: Write every tool argument (topic, summary, content, habit) in the "
         "exact primary language of the transcript (never translate Vietnamese to English).\n"
         "2. DELTA ONLY: Do NOT re-record facts, habits, or task progress already covered "
-        "in OPEN MEMORY TASKS or TODAY'S NOTES. If RECENT CONTEXT (ALREADY EXTRACTED) is "
-        "shown, use it only to resolve references and extract ONLY from NEW TRANSCRIPT.\n"
+        "in OPEN MEMORY TASKS, TODAY'S CLOSED TASKS, or TODAY'S NOTES. If RECENT CONTEXT "
+        "(ALREADY EXTRACTED) is shown, use it only to resolve references and extract ONLY "
+        "from NEW TRANSCRIPT.\n"
         "3. REVISE IN-PLACE: If the transcript revises a same-day draft or workflow already "
         "in TODAY'S NOTES, call memory_note with that entry's memory_id to update it in-place "
         "instead of creating a duplicate.\n"
         "4. SKIP NOISE: Never save static bot persona/lore (TWIN.md/SOUL.md), team roster, "
-        "default model/runtime configs, bot self-introductions, small talk, or volatile "
-        "web-search/news/benchmark/price dumps. Keep entries concise; group related facts.\n"
+        "default model/runtime configs, bot self-introductions, small talk, volatile "
+        "web-search/news/benchmark/price dumps, or past archived facts that the assistant "
+        "merely recalled/cited from memory to answer a lookup question. Keep entries concise; "
+        "group related facts.\n"
         "5. HABITS: Use memory_note(habit=..., explicit=...) for recurring preferences, "
         "formatting rules (e.g. URL wrapping, plain-text layout), or workflow conventions; "
         "reuse an exact label from KNOWN HABIT LABELS when matching.\n"
         "6. TASKS: Use memory_task with an existing task id from OPEN MEMORY TASKS for "
         "genuine progress, decisions, or done/cancelled closure; omit task only for a new "
-        "multi-step goal. NEVER attach stable facts to an open task.\n\n"
+        "multi-step goal. Never create a new task for work already in TODAY'S CLOSED TASKS. "
+        "NEVER attach stable facts to an open task.\n\n"
         f"{_open_tasks_block(open_tasks)}\n\n"
+        f"{_today_closed_tasks_block(today_entries)}\n\n"
         f"{_today_notes_block(today_entries)}\n\n"
         f"{_known_habits_block(known_habits)}\n\n"
         f"TRANSCRIPT:\n{transcript}"
@@ -242,11 +270,25 @@ async def apply_memory_tool_calls(
     *,
     bot_id: str = "thyca",
     open_tasks=(),
+    today_entries=(),
     chat: str | None = None,
 ) -> dict:
     """Execute sidecar ``memory_note`` / ``memory_task`` tool calls under ``bot_id``."""
     catalog = [entry for entry in (open_tasks or ()) if isinstance(entry, dict)]
     known = {str(entry["task_id"]): entry for entry in catalog if entry.get("task_id")}
+    open_by_title = {
+        " ".join(str(entry.get("title", "")).strip().split()).casefold(): str(entry["task_id"])
+        for entry in catalog
+        if entry.get("task_id") and str(entry.get("title", "")).strip()
+    }
+    closed_today_titles = {
+        " ".join(str(entry.get("title", "")).strip().split()).casefold()
+        for entry in (today_entries or ())
+        if isinstance(entry, dict)
+        and entry.get("task")
+        and entry.get("status") in ("done", "cancelled")
+        and str(entry.get("title", "")).strip()
+    }
     minted: dict[str, str] = {}
     last_written_task: dict[str, str] = {}
     written: list[str] = []
@@ -282,7 +324,17 @@ async def apply_memory_tool_calls(
                     if not isinstance(raw_topic, str) or not raw_topic.strip():
                         continue
                     key = " ".join(raw_topic.strip().split()).casefold()
-                    if key in minted:
+                    if key in closed_today_titles:
+                        continue
+                    if key in open_by_title:
+                        task_id = open_by_title[key]
+                        args["task"] = task_id
+                        target = last_written_task.get(task_id) or known[task_id].get(
+                            "latest_memory_id"
+                        )
+                        if isinstance(target, str) and target.strip():
+                            args["memory_id"] = target.strip()
+                    elif key in minted:
                         task_id = minted[key]
                         args["task"] = task_id
                         target = last_written_task.get(task_id)
@@ -355,5 +407,6 @@ async def extract_memories(
         calls,
         bot_id=bot_id,
         open_tasks=open_tasks,
+        today_entries=today_entries,
         chat=chat,
     )

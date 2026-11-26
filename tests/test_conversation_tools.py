@@ -18,23 +18,29 @@ def test_compact_unavailable_outside_bot_turn() -> None:
 
 
 def test_compact_calls_turn_callback() -> None:
-    async def fake_compact() -> dict:
-        return {"compacted": True, "summary": "llm"}
+    seen: list[bool] = []
+
+    async def fake_compact(*, drop_prior: bool = False) -> dict:
+        seen.append(drop_prior)
+        return {"compacted": True, "summary": "cleared" if drop_prior else "llm"}
 
     ctx = BotTurnContext(sender_id="coder", room_id="room1", compact=fake_compact)
     token = bind_bot_turn_context(ctx)
     try:
         out = asyncio.run(compact_spec().handler({}))
         assert out == "compacted: summary=llm"
+        out2 = asyncio.run(compact_spec().handler({"drop_prior": True}))
+        assert out2 == "compacted: summary=cleared"
+        assert seen == [False, True]
     finally:
         reset_bot_turn_context(token)
 
 
 def test_compact_noop_and_failure_are_honest() -> None:
-    async def noop() -> dict:
+    async def noop(*, drop_prior: bool = False) -> dict:
         return {"compacted": False}
 
-    async def broken() -> dict:
+    async def broken(*, drop_prior: bool = False) -> dict:
         raise RuntimeError("summarizer down")
 
     ctx = BotTurnContext(sender_id="coder", room_id="room1", compact=noop)

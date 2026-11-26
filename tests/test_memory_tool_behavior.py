@@ -24,7 +24,7 @@ from thyca.llms.openai_responses import _to_responses_tools
 from thyca.llms.prompt_manager import PromptManager
 from thyca.memories.active import ActiveMemory
 from thyca.memories.facade import MemoryFacade
-from thyca.memories.ledgers import format_task_catalog
+from thyca.memories.task_ledger import format_task_catalog
 from thyca.tools.gateway import ToolGateway
 from thyca.tools.memory_tools import register_memory_tools
 from thyca.tools.registry import ToolRegistry, ToolSpec

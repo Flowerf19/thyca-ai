@@ -24,9 +24,12 @@ from thyca.core.channel import WindowRef
 from thyca.core.protocol import estimate_tokens as _chars_to_tokens
 from thyca.llms.prompt_manager import PromptManager
 from thyca.memories.active import ActiveSnapshot
-from thyca.memories.facade import format_task_catalog
 from thyca.memories.habits import strip_auto_habits
-from thyca.memories.ledgers import HOT_TASK_MAX_AGE_DAYS, HOT_TASK_PROMPT_LIMIT
+from thyca.memories.task_ledger import (
+    HOT_TASK_MAX_AGE_DAYS,
+    HOT_TASK_PROMPT_LIMIT,
+    format_task_catalog,
+)
 
 
 def overhead_tokens(

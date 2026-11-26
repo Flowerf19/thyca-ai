@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from thyca.conversations.runtime import ConversationManager
+from thyca.conversations.runtime.compaction import PRIOR_CLEARED_MARKER
 from thyca.conversations.runtime.summary import SUMMARY_MAX_CHARS
 from thyca.core.protocol import Message, utc_now_ts
 
@@ -47,12 +48,14 @@ async def compact_with_llm(
     force: bool = False,
     instructions: str | None = None,
     calibration: float = 1.0,
+    drop_prior: bool = False,
 ) -> dict:
     """Compact ``conversations.current``, preferring an LLM summary body.
 
     Returns the manual-compact result shape plus ``summary``:
-    ``"llm"`` when the model body landed, ``"excerpt"`` when the
-    rule-based fallback compacted, ``None`` when nothing compacted.
+    ``"llm"`` when the model body landed, ``"cleared"`` when stale prior
+    compaction context was dropped without needing a summary, ``"excerpt"``
+    when the rule-based fallback compacted, ``None`` when nothing compacted.
     """
     snapshot = list(conversations.current.messages)
     before = len(snapshot)
@@ -65,6 +68,7 @@ async def compact_with_llm(
         force=force,
         calibration=calibration,
         body_chars=SUMMARY_MAX_CHARS,
+        drop_prior=drop_prior,
     )
     if plan is None:
         return {
@@ -73,8 +77,17 @@ async def compact_with_llm(
             "messages_after": before,
             "summary": None,
         }
+    if plan.drop_prior and not plan.fresh:
+        compacted = conversations.compactor.render(plan, "")
+        if conversations.apply_compaction(compacted, expected=snapshot):
+            return {
+                "compacted": True,
+                "messages_before": before,
+                "messages_after": len(conversations.current.messages),
+                "summary": "cleared",
+            }
     outcome: SummaryOutcome | None = None
-    if summarizer is not None:
+    if summarizer is not None and not (plan.drop_prior and not plan.fresh):
         try:
             outcome = await summarizer.summarize(
                 plan.fresh, plan.prior_text, instructions
@@ -105,11 +118,12 @@ async def compact_with_llm(
                 "messages_after": len(conversations.current.messages),
                 "summary": "llm",
             }
-    if force:
+    if force or drop_prior:
         result = conversations.compact_manual(
             hot_tokens=hot_tokens,
             tools_tokens=tools_tokens,
             calibration=calibration,
+            drop_prior=drop_prior,
         )
     else:
         did = conversations.compact_if_needed(
@@ -123,4 +137,12 @@ async def compact_with_llm(
             "messages_before": before,
             "messages_after": len(conversations.current.messages),
         }
-    return {**result, "summary": "excerpt" if result["compacted"] else None}
+    if not result["compacted"]:
+        return {**result, "summary": None}
+    msgs = conversations.current.messages
+    cleared = bool(
+        msgs
+        and msgs[0].role == "system"
+        and (msgs[0].content or "").strip() == PRIOR_CLEARED_MARKER
+    )
+    return {**result, "summary": "cleared" if cleared else "excerpt"}

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import math
 import tempfile
@@ -14,6 +15,7 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from thyca.core.protocol import ToolCall
 from thyca.memories import jobs
 from thyca.memories.chunk import Chunker
 from thyca.memories.facade import MemoryFacade
@@ -29,7 +31,9 @@ from thyca.memories.heading import (
     utc_now,
 )
 from thyca.memories.identity import bind_bot_id, reset_bot_id
-from thyca.memories.ledgers import format_task_catalog, validate_entry_fields
+from thyca.memories.ledger_common import validate_entry_fields
+from thyca.memories.task_ledger import format_task_catalog
+from thyca.tools.memory_tools import sidecar_memory_tools
 
 TZ_NAME = "Asia/Ho_Chi_Minh"
 TZ = ZoneInfo(TZ_NAME)
@@ -626,10 +630,23 @@ def run_ledgers_eval(root: Path) -> dict[str, Any]:
         assert f.tasks(now=d11)["tasks"] == []
         assert any(item["memory_id"] == hid for item in habit_observations(f, now=d11))
 
-    def case_extractor_fenced_json(_d: Path) -> None:
-        raw = '```json\n[{"topic": "OS", "summary": "Fedora Bazzite"}]\n```'
-        parsed = jobs.parse_extraction(raw)
-        assert len(parsed) == 1 and parsed[0].topic == "OS"
+    def case_extractor_tool_calls(d: Path) -> None:
+        f = MemoryFacade(d, timezone_name=TZ_NAME)
+        reg = sidecar_memory_tools(f)
+        out = asyncio.run(
+            jobs.apply_memory_tool_calls(
+                reg,
+                [
+                    ToolCall(
+                        id="c1",
+                        name="memory_note",
+                        arguments={"topic": "OS", "summary": "Fedora Bazzite"},
+                    )
+                ],
+                bot_id="thyca",
+            )
+        )
+        assert len(out["written"]) == 1
 
     cases = [
         ("task_in_place_upsert_multiday", case_task_in_place_upsert_multiday),
@@ -643,7 +660,7 @@ def run_ledgers_eval(root: Path) -> dict[str, Any]:
         ("search_heading_only", case_search_heading_only),
         ("search_vietnamese_d_stroke", case_search_vietnamese_d_stroke),
         ("rollover_auto_reindex", case_rollover_auto_reindex),
-        ("extractor_fenced_json", case_extractor_fenced_json),
+        ("extractor_tool_calls", case_extractor_tool_calls),
     ]
     for name, fn in cases:
         check(name, fn)

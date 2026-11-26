@@ -278,7 +278,7 @@ def test_search_does_not_refresh_and_forget_deletes(tmp_path: Path) -> None:
     )
     assert after.expires_at == before.expires_at
     facade.forget(sid, now=later)
-    assert "thit quay" not in daily.read_text(encoding="utf-8")
+    assert not daily.exists()
     assert facade.search("thit quay", now=later).hits == []
 
 
@@ -290,7 +290,7 @@ def test_expired_deleted_on_reindex(tmp_path: Path) -> None:
     assert "ttl-purge-token-zzzx" in daily.read_text(encoding="utf-8")
     assert TTL_DAYS == {1: 3, 2: 7, 3: 14, 4: 30, 5: 90}
     facade._refresh_index(t0 + timedelta(days=4))
-    assert "ttl-purge-token-zzzx" not in daily.read_text(encoding="utf-8")
+    assert not daily.exists()
     assert facade.search("ttl-purge-token-zzzx", now=t0 + timedelta(days=4)).hits == []
 
 

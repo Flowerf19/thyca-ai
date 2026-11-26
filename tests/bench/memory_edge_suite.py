@@ -358,19 +358,20 @@ def _sim_ghost_idle_sweep_15m_lifecycle(root: Path) -> EdgeCaseResult:
 
     stub = StubExtractorConnect(
         [
-            {
-                "topic": "Tối ưu truy vấn báo cáo doanh thu",
-                "summary": "Đã thêm composite index, chờ chạy EXPLAIN ANALYZE",
-                "content": (
-                    "- done: thêm index (org_id, created_at)\n"
-                    "- processing: chờ đo p95\n"
-                    "- next: chạy EXPLAIN ANALYZE"
-                ),
-                "importance": 3,
-                "bots": [SYSTEM_BOT_ID],
-                "new_task": "Tối ưu truy vấn báo cáo doanh thu",
-                "status": "open",
-            }
+            ToolCall(
+                id="ext-task-1",
+                name="memory_task",
+                arguments={
+                    "topic": "Tối ưu truy vấn báo cáo doanh thu",
+                    "summary": "Đã thêm composite index, chờ chạy EXPLAIN ANALYZE",
+                    "content": (
+                        "- done: thêm index (org_id, created_at)\n"
+                        "- processing: chờ đo p95\n"
+                        "- next: chạy EXPLAIN ANALYZE"
+                    ),
+                    "status": "open",
+                },
+            )
         ]
     )
 

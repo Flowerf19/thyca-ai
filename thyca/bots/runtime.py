@@ -126,7 +126,9 @@ def filtered_tool_schemas(
     ]
 
 
-def _force_compact(connect, conversations, model: str, turn_cfg) -> dict:
+def _force_compact(
+    connect, conversations, model: str, turn_cfg, *, drop_prior: bool = False
+) -> dict:
     """Agent-invoked compaction of the current conversation (TURN-CURATE).
 
     ``LlmSummarizer`` lives under ``thyca.app`` which imports this module,
@@ -141,6 +143,7 @@ def _force_compact(connect, conversations, model: str, turn_cfg) -> dict:
         model=model,
         pricing=turn_cfg.effective_pricing() or None,
         force=True,
+        drop_prior=drop_prior,
     )
 
 
@@ -845,8 +848,8 @@ class BotRuntime:
                     pending_private_id=(
                         _active_pf.pending_id if _active_pf is not None else None
                     ),
-                    compact=lambda: _force_compact(
-                        connect, conversations, model, turn_cfg
+                    compact=lambda *, drop_prior=False: _force_compact(
+                        connect, conversations, model, turn_cfg, drop_prior=drop_prior
                     ),
                 )
             )

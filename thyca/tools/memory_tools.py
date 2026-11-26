@@ -8,6 +8,7 @@ from dataclasses import asdict
 from thyca.memories.archived import DATE_RE
 from thyca.memories.chunk import Chunker
 from thyca.memories.facade import MemoryFacade
+from thyca.memories.habits import sweep_bot_habits
 from thyca.memories.heading import (
     TASK_ID_RE,
     TASK_STATUSES,
@@ -49,6 +50,19 @@ def _daily_key(_args: dict) -> str:
     return "memory:daily"
 
 
+def _sweep_explicit_habit(facade: MemoryFacade) -> None:
+    bot_id = current_bot_id()
+    if not bot_id:
+        return
+    bot_dir = facade.thyca_dir / "bots" / bot_id
+    if not bot_dir.is_dir():
+        return
+    try:
+        sweep_bot_habits(facade, bot_id, bot_dir / "USER.md")
+    except Exception:
+        pass
+
+
 def _is_chunk_id(identifier: str) -> bool:
     parts = identifier.split("#")
     return len(parts) == 3 and parts[2].isdigit()
@@ -81,6 +95,14 @@ def register_memory_tools(
     registry.register(_note_spec(facade))
     registry.register(_task_spec(facade))
     registry.register(_forget_spec(facade))
+
+
+def sidecar_memory_tools(facade: MemoryFacade) -> ToolRegistry:
+    """Minimal write-only registry (memory_note + memory_task) for sidecar extraction."""
+    registry = ToolRegistry()
+    registry.register(_note_spec(facade))
+    registry.register(_task_spec(facade))
+    return registry
 
 
 def _search_spec(facade: MemoryFacade) -> ToolSpec:
@@ -257,6 +279,8 @@ def _note_spec(facade: MemoryFacade) -> ToolSpec:
                 habit=clean_habit,
                 habit_explicit=explicit,
             )
+            if explicit and clean_habit is not None:
+                _sweep_explicit_habit(facade)
             return json.dumps({"memory_id": memory_id.strip(), "updated": True}, ensure_ascii=False)
 
         if not isinstance(topic, str) or not topic.strip():
@@ -274,6 +298,8 @@ def _note_spec(facade: MemoryFacade) -> ToolSpec:
                 habit_explicit=explicit,
                 chat=chat,
             )
+            if explicit:
+                _sweep_explicit_habit(facade)
         else:
             sid = facade.append_other_journal(
                 topic.strip(),
@@ -286,12 +312,15 @@ def _note_spec(facade: MemoryFacade) -> ToolSpec:
     return ToolSpec(
         name="memory_note",
         description=(
-            "Save or edit a daily L2 fact or recurring habit (not multi-step tasks, secrets, "
-            "speculation, or chitchat). Omit memory_id to create/dedupe; pass memory_id only to "
-            "fix an error in an existing entry (when facts change over time, create a new note "
-            "to preserve history). summary is written as the main bullet — omit content unless "
-            "adding extra details (never repeat summary in content). Set habit (and explicit=true "
-            "if user stated it) for recurring style/workflow preferences."
+            "Save or edit a concise daily L2 fact or recurring habit in the conversation's "
+            "primary language (not multi-step tasks, static bot persona/team lore, volatile "
+            "web-search/news/ranking dumps, secrets, speculation, or chitchat). Omit memory_id "
+            "to create/dedupe; pass memory_id to fix an error or revise a same-day draft/workflow "
+            "in-place (when facts change over days, create a new note to preserve history). "
+            "summary is the main one-line bullet — omit content unless adding brief extra bullets "
+            "(never repeat summary or paste long articles). Set habit (and explicit=true when "
+            "user stated it directly) for recurring preferences, formatting rules, or workflow "
+            "conventions."
         ),
         parameters={
             "type": "object",

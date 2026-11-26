@@ -331,10 +331,16 @@ async def test_memory_note_routes_through_ledgers_and_prevents_duplicates(tmp_pa
             id="p1", name="memory_note",
             arguments={"topic": "Repo", "summary": "Repo dung uv cho Python"},
         ))
-        flushed = jobs.apply_extracted(
-            facade,
-            [jobs.ExtractedMemory(topic="Repo", summary="Repo dung uv cho Python")],
-            default_bot="thyca",
+        flushed = await jobs.apply_memory_tool_calls(
+            registry,
+            [
+                ToolCall(
+                    id="sidecar1",
+                    name="memory_note",
+                    arguments={"topic": "Repo", "summary": "Repo dung uv cho Python"},
+                )
+            ],
+            bot_id="thyca",
             chat="dm-thyca",
         )
     finally:

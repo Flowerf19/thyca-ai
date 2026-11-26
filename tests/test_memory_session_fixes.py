@@ -223,10 +223,14 @@ def test_purge_leaves_symlink_daily_alone(tmp_path: Path) -> None:
     link = tmp_path / "memory" / "2026-08-11.md"
     link.symlink_to(target)
     before = target.read_text(encoding="utf-8")
+    today_empty = tmp_path / "memory" / "2026-09-25.md"
+    today_empty.write_text("# 2026-09-25\n", encoding="utf-8")
+    past_empty = tmp_path / "memory" / "2026-08-09.md"
+    past_empty.write_text("# 2026-08-09\n", encoding="utf-8")
     MemoryWriter(tmp_path).purge_expired(datetime(2026, 9, 25))
-    assert "stale leaf" not in (tmp_path / "memory" / "2026-08-10.md").read_text(
-        encoding="utf-8"
-    )
+    assert not (tmp_path / "memory" / "2026-08-10.md").exists()
+    assert not past_empty.exists()
+    assert today_empty.exists()
     assert link.is_symlink()
     assert target.read_text(encoding="utf-8") == before
 

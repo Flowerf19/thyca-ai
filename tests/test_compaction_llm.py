@@ -14,6 +14,7 @@ from thyca.agents.think import Think
 from thyca.bots.timeline import CanonicalConversationStore, WorkspaceTimeline
 from thyca.configs import LimitsCfg
 from thyca.conversations.runtime import ConversationManager
+from thyca.conversations.runtime.compaction import PRIOR_CLEARED_MARKER
 from thyca.core.channel import WindowRef
 from thyca.core.protocol import Message, ToolResult
 from thyca.llms.llm_base import ChatReply
@@ -172,3 +173,94 @@ def test_auto_compact_in_loop_uses_summarizer(tmp_path: Path) -> None:
     stored = _canonical_manager(tmp_path).load(conversation_id).messages
     assert stored[0].role == "system" and "AUTO SUMMARY" in (stored[0].content or "")
     assert any((m.meta or {}).get("kind") == "compaction" for m in stored)
+
+
+def test_drop_prior_clears_stale_marker_without_llm_and_is_idempotent(
+    tmp_path: Path,
+) -> None:
+    manager = _seeded(tmp_path)
+    first = asyncio.run(
+        compact_with_llm(
+            StubSummarizer(_outcome("OLD_STALE_PROJECT_SUMMARY")),
+            manager,
+            model="m",
+            pricing=None,
+            force=True,
+        )
+    )
+    assert first["compacted"] is True
+    assert "OLD_STALE_PROJECT_SUMMARY" in (manager.current.messages[0].content or "")
+
+    manager.append(Message(role="user", content="brand new short topic"))
+    manager.append(Message(role="assistant", content="fresh answer"))
+
+    stub = StubSummarizer(_outcome("SHOULD_NOT_BE_CALLED"))
+    cleared = asyncio.run(
+        compact_with_llm(
+            stub,
+            manager,
+            model="m",
+            pricing=None,
+            force=True,
+            drop_prior=True,
+        )
+    )
+    assert cleared["compacted"] is True
+    assert cleared["summary"] == "cleared"
+    assert stub.calls == []
+    msgs = manager.current.messages
+    assert msgs[0].content == PRIOR_CLEARED_MARKER
+    assert "OLD_STALE_PROJECT_SUMMARY" not in "\n".join(m.content or "" for m in msgs)
+    assert any(m.content == "brand new short topic" for m in msgs)
+
+    again = asyncio.run(
+        compact_with_llm(
+            stub,
+            manager,
+            model="m",
+            pricing=None,
+            force=True,
+            drop_prior=True,
+        )
+    )
+    assert again["compacted"] is False
+    assert again["summary"] is None
+
+
+def test_drop_prior_summarizes_fresh_turns_without_carrying_old_summary(
+    tmp_path: Path,
+) -> None:
+    manager = _seeded(tmp_path)
+    asyncio.run(
+        compact_with_llm(
+            StubSummarizer(_outcome("ANCIENT_UNRELATED_TOPIC")),
+            manager,
+            model="m",
+            pricing=None,
+            force=True,
+        )
+    )
+    for i in range(4):
+        manager.append(Message(role="user", content=f"new-{i}-" + "n" * 16000))
+        manager.append(Message(role="assistant", content="r" * 16000))
+
+    stub = StubSummarizer(_outcome("FRESH_ONLY_SUMMARY"))
+    result = asyncio.run(
+        compact_with_llm(
+            stub,
+            manager,
+            model="m",
+            pricing=None,
+            force=True,
+            drop_prior=True,
+        )
+    )
+    assert result["compacted"] is True
+    assert result["summary"] == "llm"
+    assert len(stub.calls) == 1
+    fresh_sent, prior_sent, _ = stub.calls[0]
+    assert fresh_sent
+    assert prior_sent == ""
+    marker = manager.current.messages[0].content or ""
+    assert "FRESH_ONLY_SUMMARY" in marker
+    assert "ANCIENT_UNRELATED_TOPIC" not in marker

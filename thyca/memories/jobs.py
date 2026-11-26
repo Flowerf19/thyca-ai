@@ -1,46 +1,31 @@
-"""Thyca memory sidecar job (BE-4): extract → dedupe → write / propose.
+"""Thyca memory sidecar job (BE-4): tool-driven delta extraction.
 
-Not a separate bot: a hook surface the app layer calls after a task is
-done and when a session idles. Extraction runs *before* any compaction so
-the transcript is still intact; the caller compacts after this returns.
-The LLM reviewer is injected (provider in prod, stub in tests) — no
-thresholds or keyword rules ship here.
+Not a separate bot: a hook surface the app layer calls before compaction and
+when a session idles. Uses the exact same built-in ``memory_note`` and
+``memory_task`` tool schemas, descriptions, and write handlers as live turns
+(single source of truth, single round, no parallel JSON schema).
 """
 from __future__ import annotations
 
+import hashlib
 import json
-from dataclasses import dataclass
 
-from thyca.core.protocol import Message, parse_ts
-from thyca.memories.heading import (
-    DEFAULT_IMPORTANCE,
-    HABIT_DEFAULT_IMPORTANCE,
-    TASK_DEFAULT_IMPORTANCE,
-    validate_task_meta,
-)
+from thyca.core.protocol import Message, ToolCall, parse_ts
 from thyca.memories.identity import bind_bot_id, reset_bot_id
+from thyca.tools.memory_tools import (
+    bind_chat_conversation,
+    reset_chat_conversation,
+    sidecar_memory_tools,
+)
+from thyca.tools.registry import ToolRegistry
 
 IDLE_SWEEP_SECONDS = 15 * 60
+_CONTEXT_LINE_MAX_CHARS = 400
+_SIDECAR_TOOLS = ("memory_note", "memory_task")
 
 
 class ExtractionError(RuntimeError):
-    """Memory extraction failed (provider error or malformed JSON output)."""
-
-
-@dataclass(frozen=True)
-class ExtractedMemory:
-    topic: str
-    summary: str
-    content: str = ""
-    importance: int | None = None
-    bots: tuple[str, ...] | None = None
-    task: str | None = None
-    new_task: str | None = None
-    cont: str | None = None
-    kind: str | None = None
-    status: str | None = None
-    habit: str | None = None
-    habit_explicit: bool = False
+    """Memory extraction failed (provider error)."""
 
 
 def should_idle_sweep(last_activity_ts: str, now_ts: str, idle_s: int = IDLE_SWEEP_SECONDS) -> bool:
@@ -54,19 +39,106 @@ def should_idle_sweep(last_activity_ts: str, now_ts: str, idle_s: int = IDLE_SWE
     return (now - last).total_seconds() >= idle_s
 
 
-def transcript_tail(messages: list[Message], max_chars: int = 12000) -> str:
-    """Newest-first-capped text of user/assistant rows for extraction."""
-    lines = []
+def _extractable_messages(messages: list[Message]) -> list[Message]:
+    rows: list[Message] = []
     for message in messages:
         if message.role not in ("user", "assistant"):
             continue
         if (message.meta or {}).get("kind") == "compaction":
             continue
-        text = message.content or ""
-        if text.strip():
-            lines.append(f"[{message.role} {message.ts}] {text}")
-    out = "\n".join(lines)
-    return out if len(out) <= max_chars else out[-max_chars:]
+        if (message.content or "").strip():
+            rows.append(message)
+    return rows
+
+
+def _row_cursor(rows: list[Message], idx: int) -> tuple[str, str]:
+    msg = rows[idx]
+    prev = rows[idx - 1] if idx > 0 else None
+    span = str((msg.meta or {}).get("span_id") or "")
+    parts = [
+        prev.role if prev is not None else "",
+        prev.ts or "" if prev is not None else "",
+        prev.content or "" if prev is not None else "",
+        msg.role or "",
+        msg.ts or "",
+        msg.content or "",
+        span,
+    ]
+    digest = hashlib.sha256("\0".join(parts).encode("utf-8")).hexdigest()[:16]
+    return (msg.ts or "", digest)
+
+
+def latest_extraction_cursor(messages: list[Message]) -> tuple[str, str] | None:
+    """Watermark of the newest extractable user/assistant message, or None."""
+    rows = _extractable_messages(messages)
+    return _row_cursor(rows, len(rows) - 1) if rows else None
+
+
+def _split_after_cursor(
+    rows: list[Message], after_cursor: tuple[str, str]
+) -> tuple[list[Message], list[Message]]:
+    for idx in range(len(rows) - 1, -1, -1):
+        if _row_cursor(rows, idx) == after_cursor:
+            return rows[: idx + 1], rows[idx + 1 :]
+    cursor_ts = after_cursor[0]
+    if not cursor_ts:
+        return [], rows
+    try:
+        cursor_dt = parse_ts(cursor_ts)
+    except ValueError:
+        return [], rows
+    cut = -1
+    for idx, msg in enumerate(rows):
+        if not msg.ts:
+            continue
+        try:
+            if parse_ts(msg.ts) <= cursor_dt:
+                cut = idx
+        except ValueError:
+            continue
+    if cut < 0:
+        return [], rows
+    return rows[: cut + 1], rows[cut + 1 :]
+
+
+def transcript_tail(
+    messages: list[Message],
+    max_chars: int = 12000,
+    *,
+    after_cursor: tuple[str, str] | None = None,
+    context_messages: int = 2,
+) -> str:
+    """Newest-first-capped text of user/assistant rows for extraction.
+
+    When ``after_cursor`` is supplied, only messages after that watermark are
+    emitted as extractable delta (empty string when nothing new arrived), with
+    up to ``context_messages`` preceding rows tagged as read-only context.
+    """
+    rows = _extractable_messages(messages)
+    if after_cursor is None:
+        out = "\n".join(f"[{m.role} {m.ts}] {m.content}" for m in rows)
+        return out if len(out) <= max_chars else out[-max_chars:]
+    prior, delta = _split_after_cursor(rows, after_cursor)
+    if not delta:
+        return ""
+    ctx_block = ""
+    if prior and context_messages > 0:
+        ctx_lines: list[str] = []
+        for msg in prior[-context_messages:]:
+            text = (msg.content or "").strip()
+            if len(text) > _CONTEXT_LINE_MAX_CHARS:
+                text = text[: _CONTEXT_LINE_MAX_CHARS - 1].rstrip() + "…"
+            ctx_lines.append(f"[{msg.role} {msg.ts}] {text}")
+        ctx_block = (
+            "RECENT CONTEXT (ALREADY EXTRACTED — DO NOT RE-EXTRACT):\n"
+            + "\n".join(ctx_lines)
+            + "\n\nNEW TRANSCRIPT:\n"
+        )
+    delta_budget = max(512, max_chars - len(ctx_block))
+    delta_text = "\n".join(f"[{m.role} {m.ts}] {m.content}" for m in delta)
+    if len(delta_text) > delta_budget:
+        delta_text = delta_text[-delta_budget:]
+    return ctx_block + delta_text
 
 
 def _open_tasks_block(open_tasks) -> str:
@@ -128,252 +200,160 @@ def _known_habits_block(known_habits) -> str:
     return "KNOWN HABIT LABELS: " + ", ".join(labels)
 
 
-async def extract_from_transcript(connect, model: str, transcript: str,
-                                   open_tasks=(), today_entries=(),
-                                   known_habits=(), *,
-                                   strict: bool = False) -> list[ExtractedMemory]:
-    """Ask the model to list durable delta memories in a strict JSON schema.
-
-    ``open_tasks`` is an iterable of ``facade.tasks(status="open")``
-    dicts so the model reuses task ids instead of opening duplicates.
-    ``today_entries`` lists today's existing habit/other notes so the
-    model extracts only deltas instead of duplicating today's journal.
-    ``known_habits`` lists existing habit labels across days so the model
-    reuses canonical labels instead of inventing synonyms.
-    Any model failure (or unparseable reply) yields an empty list: the job
-    is best-effort and must never break the turn or the compaction that
-    follows it.
-    """
-    prompt = (
-        "You extract durable memories from a chat transcript for a personal "
-        "assistant's notebook. Reply with a JSON array only, no prose. Each item: "
-        '{"topic": "...", "summary": "...", "content": "...", "importance": 1-5, '
-        '"bots": ["<bot-id>"] or null, '
-        '"task": "<task_id from OPEN MEMORY TASKS>" or null, '
-        '"new_task": "<new goal title>" or null, '
-        '"cont": "<latest_memory_id of the continued task>" or null, '
-        '"kind": "habit" or null, '
-        '"status": "open"|"done"|"cancelled"|null, '
-        '"habit": "<short label>" or null, '
-        '"habit_explicit": true|false}. '
-        "bots names the single bot this memory belongs to (its private notebook); "
-        "null means general/user-level. "
-        "DELTA RULE: Do NOT output any fact, habit, or task progress already "
-        "covered in OPEN MEMORY TASKS or TODAY'S NOTES. "
-        "3 LEDGERS: "
-        "(1) Task (task/new_task): one card per multi-step goal. Reuse an open "
-        "task id only when the item is genuine progress, decision, or closure for "
-        "that goal; write current progress in content using lines "
-        "'- done: ...', '- processing: ...', '- next: ...'. Use new_task only "
-        "when a genuinely new multi-step goal starts. Set status='done' only when "
-        "the whole goal is finished, or 'cancelled' when the goal is abandoned. "
-        "NEVER attach stable facts (OS, environment, policy, repo rules, "
-        "team/guild snapshots) to an open task! "
-        '(2) Habit (kind="habit"): only for a repeated habit/preference/working '
-        "style with a short label in the content's language; if it matches a "
-        "label in KNOWN HABIT LABELS, reuse that exact label instead of "
-        "inventing a synonym. Skip if that habit is already in TODAY'S NOTES. "
-        "Set habit_explicit=true only when the user states it directly "
-        '("I usually/always/like..."). '
-        "(3) Other (task=null, new_task=null, kind=null): only genuinely new "
-        "durable facts outside tasks and habits; group related facts into one "
-        "cohesive item instead of many 1-line fragments. "
-        "Skip small talk, transient plans, and anything already phrased as a "
-        "memory entry. Empty array when nothing is worth keeping.\n\n"
+def extraction_prompt(
+    transcript: str,
+    *,
+    open_tasks=(),
+    today_entries=(),
+    known_habits=(),
+) -> str:
+    """Build the single-turn tool-calling prompt for sidecar memory extraction."""
+    return (
+        "You extract durable memories from a chat transcript by calling "
+        "memory_note and/or memory_task tools (call no tools when nothing is worth keeping).\n"
+        "RULES:\n"
+        "1. LANGUAGE: Write every tool argument (topic, summary, content, habit) in the "
+        "exact primary language of the transcript (never translate Vietnamese to English).\n"
+        "2. DELTA ONLY: Do NOT re-record facts, habits, or task progress already covered "
+        "in OPEN MEMORY TASKS or TODAY'S NOTES. If RECENT CONTEXT (ALREADY EXTRACTED) is "
+        "shown, use it only to resolve references and extract ONLY from NEW TRANSCRIPT.\n"
+        "3. REVISE IN-PLACE: If the transcript revises a same-day draft or workflow already "
+        "in TODAY'S NOTES, call memory_note with that entry's memory_id to update it in-place "
+        "instead of creating a duplicate.\n"
+        "4. SKIP NOISE: Never save static bot persona/lore (TWIN.md/SOUL.md), team roster, "
+        "default model/runtime configs, bot self-introductions, small talk, or volatile "
+        "web-search/news/benchmark/price dumps. Keep entries concise; group related facts.\n"
+        "5. HABITS: Use memory_note(habit=..., explicit=...) for recurring preferences, "
+        "formatting rules (e.g. URL wrapping, plain-text layout), or workflow conventions; "
+        "reuse an exact label from KNOWN HABIT LABELS when matching.\n"
+        "6. TASKS: Use memory_task with an existing task id from OPEN MEMORY TASKS for "
+        "genuine progress, decisions, or done/cancelled closure; omit task only for a new "
+        "multi-step goal. NEVER attach stable facts to an open task.\n\n"
         f"{_open_tasks_block(open_tasks)}\n\n"
         f"{_today_notes_block(today_entries)}\n\n"
         f"{_known_habits_block(known_habits)}\n\n"
         f"TRANSCRIPT:\n{transcript}"
     )
+
+
+async def apply_memory_tool_calls(
+    registry: ToolRegistry,
+    calls: list[ToolCall],
+    *,
+    bot_id: str = "thyca",
+    open_tasks=(),
+    chat: str | None = None,
+) -> dict:
+    """Execute sidecar ``memory_note`` / ``memory_task`` tool calls under ``bot_id``."""
+    catalog = [entry for entry in (open_tasks or ()) if isinstance(entry, dict)]
+    known = {str(entry["task_id"]): entry for entry in catalog if entry.get("task_id")}
+    minted: dict[str, str] = {}
+    last_written_task: dict[str, str] = {}
+    written: list[str] = []
+
+    bot_tok = bind_bot_id(bot_id)
+    chat_tok = bind_chat_conversation(chat)
+    try:
+        for call in calls:
+            name = getattr(call, "name", None)
+            if name not in _SIDECAR_TOOLS:
+                continue
+            spec = registry.get(name)
+            if spec is None:
+                continue
+            raw_args = getattr(call, "arguments", None)
+            if not isinstance(raw_args, dict):
+                continue
+            args = dict(raw_args)
+
+            if name == "memory_task":
+                task_id = args.get("task")
+                if task_id is not None:
+                    if not isinstance(task_id, str) or task_id not in known:
+                        continue
+                    if not args.get("memory_id"):
+                        target = last_written_task.get(task_id) or known[task_id].get(
+                            "latest_memory_id"
+                        )
+                        if isinstance(target, str) and target.strip():
+                            args["memory_id"] = target.strip()
+                else:
+                    raw_topic = args.get("topic")
+                    if not isinstance(raw_topic, str) or not raw_topic.strip():
+                        continue
+                    key = " ".join(raw_topic.strip().split()).casefold()
+                    if key in minted:
+                        task_id = minted[key]
+                        args["task"] = task_id
+                        target = last_written_task.get(task_id)
+                        if target:
+                            args["memory_id"] = target
+
+            try:
+                raw_out = await spec.handler(args)
+            except ValueError:
+                continue
+
+            try:
+                payload = json.loads(raw_out) if isinstance(raw_out, str) else {}
+            except ValueError:
+                payload = {}
+            if not isinstance(payload, dict):
+                continue
+            mid = payload.get("memory_id")
+            if isinstance(mid, str) and mid and mid not in written:
+                written.append(mid)
+            if name == "memory_task":
+                out_tid = payload.get("task_id")
+                if isinstance(out_tid, str) and out_tid:
+                    if payload.get("created") and isinstance(args.get("topic"), str):
+                        key = " ".join(args["topic"].strip().split()).casefold()
+                        minted[key] = out_tid
+                        known[out_tid] = {"task_id": out_tid, "latest_memory_id": mid}
+                    if isinstance(mid, str) and mid:
+                        last_written_task[out_tid] = mid
+    finally:
+        reset_chat_conversation(chat_tok)
+        reset_bot_id(bot_tok)
+    return {"written": written}
+
+
+async def extract_memories(
+    connect,
+    facade,
+    transcript: str,
+    *,
+    bot_id: str = "thyca",
+    open_tasks=(),
+    today_entries=(),
+    known_habits=(),
+    chat: str | None = None,
+    strict: bool = False,
+) -> dict:
+    """Single-round tool-calling extraction using built-in memory_note/memory_task."""
+    registry = sidecar_memory_tools(facade)
+    prompt = extraction_prompt(
+        transcript,
+        open_tasks=open_tasks,
+        today_entries=today_entries,
+        known_habits=known_habits,
+    )
     try:
         reply = await connect.chat(
-            [Message(role="user", content=prompt)], None
+            [Message(role="user", content=prompt)],
+            registry.to_openai_schema(),
         )
     except Exception as exc:
         if strict:
             raise ExtractionError(f"extractor chat failed: {type(exc).__name__}") from exc
-        return []
-    return parse_extraction(getattr(reply, "content", None) or "", strict=strict)
-
-
-def _strip_code_fence(text: str) -> str:
-    """Strip an outer Markdown code fence (e.g. ```json ... ```) if present."""
-    raw = text.strip()
-    if not raw.startswith("```"):
-        return raw
-    _, sep, rest = raw.partition("\n")
-    if not sep:
-        return raw
-    body = rest.strip()
-    if body.endswith("```"):
-        body = body.rsplit("```", 1)[0].strip()
-    return body
-
-
-def parse_extraction(text: str, *, strict: bool = False) -> list[ExtractedMemory]:
-    """Parse the extractor's JSON array; invalid items are dropped.
-
-    Phase-1C side fields are sanitized individually: a bad side field
-    never drops the memory itself. The six side fields are validated as
-    one effective set; when invalid, all six are dropped and the core
-    topic/summary/... item is kept.``task`` + ``new_task`` together drop
-    both (ambiguous intent)."""
-
-    try:
-        data = json.loads(_strip_code_fence(text))
-    except ValueError as exc:
-        if strict:
-            raise ExtractionError("extractor returned invalid JSON") from exc
-        return []
-    if not isinstance(data, list):
-        if strict:
-            raise ExtractionError("extractor returned non-list JSON")
-        return []
-    out = []
-    for item in data:
-        if not isinstance(item, dict):
-            continue
-        topic = item.get("topic")
-        summary = item.get("summary")
-        if not isinstance(topic, str) or not topic.strip():
-            continue
-        if not isinstance(summary, str) or not summary.strip():
-            continue
-        content = item.get("content", "")
-        raw_importance = item.get("importance")
-        bots = item.get("bots")
-        task = item.get("task")
-        new_task = item.get("new_task")
-        cont = item.get("cont")
-        kind = item.get("kind")
-        status = item.get("status")
-        habit = item.get("habit")
-        task = task if isinstance(task, str) and task.strip() else None
-        new_task = new_task.strip() if isinstance(new_task, str) and new_task.strip() else None
-        if task is not None and new_task is not None:
-            task = new_task = None
-        cont = cont if isinstance(cont, str) and cont.strip() else None
-        kind = kind if isinstance(kind, str) and kind.strip() else None
-        if kind == "checkpoint":
-            kind = None
-        status = status if isinstance(status, str) and status.strip() else None
-        habit = habit.strip() if isinstance(habit, str) and habit.strip() else None
-        habit_explicit = item.get("habit_explicit") is True
-        probe = task if task is not None else (
-            "task-00000000" if new_task is not None else None
-        )
-        try:
-            validate_task_meta(probe, cont, kind, status, habit, habit_explicit)
-        except ValueError:
-            task = new_task = cont = kind = status = habit = None
-            habit_explicit = False
-        default_imp = (
-            TASK_DEFAULT_IMPORTANCE
-            if (task is not None or new_task is not None)
-            else (HABIT_DEFAULT_IMPORTANCE if kind == "habit" else DEFAULT_IMPORTANCE)
-        )
-        out.append(
-            ExtractedMemory(
-                topic=topic.strip(),
-                summary=summary.strip(),
-                content=content if isinstance(content, str) else "",
-                importance=(
-                    raw_importance if raw_importance in (1, 2, 3, 4, 5) else default_imp
-                ),
-                bots=tuple(bots) if isinstance(bots, list) and bots else None,
-                task=task,
-                new_task=new_task,
-                cont=cont,
-                kind=kind,
-                status=status,
-                habit=habit,
-                habit_explicit=habit_explicit,
-            )
-        )
-    return out
-
-
-def apply_extracted(facade, items: list[ExtractedMemory], *, default_bot: str = "thyca",
-                    open_tasks=(), chat: str | None = None) -> dict:
-    """Write extracted memories into the 3 ledgers (Thyca privileges).
-
-    Per-bot entries land in that bot's notebook; shared knowledge is the
-    profile aggregation turn's job, so nothing is proposed or queued here.
-    Ledger routing:
-    - Task (``task`` in ``open_tasks`` or ``new_task``): updates the card's
-      ``latest_memory_id`` in-place via ``facade.upsert_task_card`` (unless
-      combined with ``kind="habit"`` which preserves the habit link row).
-      Hallucinated ``task`` ids outside ``open_tasks`` are dropped with their
-      ``status``/``cont`` and routed by ``kind``.
-    - Habit (``kind="habit"``, no task): reinforces/dedupes same-day label via
-      ``facade.record_habit_entry``.
-    - Other (no task, no kind): appends to today's scoped journal or skips
-      normalized duplicates via ``facade.append_other_journal``.
-    Returns ``{"written": [...sids]}``.
-    """
-    catalog = [entry for entry in (open_tasks or ()) if isinstance(entry, dict)]
-    known = {str(entry["task_id"]): entry for entry in catalog if entry.get("task_id")}
-    minted: dict[str, str] = {}
-    last_written: dict[str, str] = {}
-    written: list[str] = []
-    token = bind_bot_id("thyca")
-    try:
-        for item in items:
-            owners: list[str] | None = list(item.bots) if item.bots else [default_bot]
-            task = item.task
-            cont = item.cont
-            status = item.status
-            if task is not None and task not in known:
-                task = cont = status = None
-            is_new_task = False
-            if task is None and item.new_task is not None:
-                key = " ".join(item.new_task.strip().split()).casefold()
-                if key not in minted:
-                    minted[key] = facade.new_task_id()
-                    is_new_task = True
-                task = minted[key]
-                if is_new_task and status is None:
-                    status = "open"
-            if task is not None:
-                if item.kind == "habit":
-                    if cont is None:
-                        cont = last_written.get(task)
-                        if cont is None and task in known:
-                            cont = known[task].get("latest_memory_id")
-                    sid = facade.remember(
-                        item.topic, item.summary, content=item.content,
-                        importance=item.importance, bots=owners, chat=chat,
-                        task=task, cont=cont, kind=item.kind,
-                        status=status, habit=item.habit,
-                        habit_explicit=item.habit_explicit,
-                    )
-                else:
-                    target_id = last_written.get(task)
-                    if target_id is None and task in known:
-                        target_id = known[task].get("latest_memory_id")
-                    sid = facade.upsert_task_card(
-                        item.topic, item.summary, content=item.content,
-                        task=task, status=status, importance=item.importance,
-                        bots=owners, chat=chat, target_memory_id=target_id,
-                    )
-                    last_written[task] = sid
-            elif item.kind == "habit":
-                sid = facade.record_habit_entry(
-                    item.topic, item.summary, content=item.content,
-                    habit=item.habit or item.topic,
-                    habit_explicit=item.habit_explicit,
-                    importance=item.importance, bots=owners, chat=chat,
-                )
-            else:
-                sid = facade.append_other_journal(
-                    item.topic, item.summary, content=item.content,
-                    importance=(
-                        DEFAULT_IMPORTANCE if item.importance is None else item.importance
-                    ),
-                    bots=owners, chat=chat,
-                )
-            if sid is not None and sid not in written:
-                written.append(sid)
-    finally:
-        reset_bot_id(token)
-    return {"written": written}
+        return {"written": []}
+    calls = list(getattr(reply, "tool_calls", None) or ())
+    if not calls:
+        return {"written": []}
+    return await apply_memory_tool_calls(
+        registry,
+        calls,
+        bot_id=bot_id,
+        open_tasks=open_tasks,
+        chat=chat,
+    )

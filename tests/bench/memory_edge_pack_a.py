@@ -703,8 +703,8 @@ def _sim_midturn_compact_tool_does_not_shrink_stage(root: Path) -> EdgeCaseResul
         context_tokens=32000,
     )
 
-    async def _do_compact() -> dict:
-        return manager.compact_manual()
+    async def _do_compact(*, drop_prior: bool = False) -> dict:
+        return manager.compact_manual(drop_prior=drop_prior)
 
     tok = bind_bot_turn_context(
         BotTurnContext(sender_id=SYSTEM_BOT_ID, room_id="thyca", compact=_do_compact)
@@ -789,7 +789,7 @@ def _sim_idle_sweep_compacts_after_silent_extractor_failure(root: Path) -> EdgeC
             )
         )
 
-    failing_stub = StubExtractorConnect("", raise_exc=RuntimeError("provider 503 timeout"))
+    failing_stub = StubExtractorConnect(raise_exc=RuntimeError("provider 503 timeout"))
 
     class _NoRunningTurns:
         @staticmethod

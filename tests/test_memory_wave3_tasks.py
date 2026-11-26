@@ -1,6 +1,7 @@
 """Wave 3 regression tests: TTL scale, task ownership, resurrection, dormancy, decisions, priority."""
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -21,6 +22,7 @@ from tests.bench.memory_edge_suite import (
     _sim_task_update_via_memory_update_staleness,
     _sim_window_priority_current_vs_other_chat,
 )
+from thyca.core.protocol import ToolCall
 from thyca.memories import jobs
 from thyca.memories.archive_store import ArchiveError
 from thyca.memories.facade import MemoryFacade
@@ -32,7 +34,8 @@ from thyca.memories.heading import (
     parse_heading,
 )
 from thyca.memories.identity import bind_bot_id, reset_bot_id
-from thyca.memories.ledgers import format_task_catalog
+from thyca.memories.task_ledger import format_task_catalog
+from thyca.tools.memory_tools import sidecar_memory_tools
 
 
 def test_ttl_days_matches_accepted_3d_to_90d_scale() -> None:
@@ -222,19 +225,35 @@ def test_ledger_default_importances_preserved_in_remember_and_sidecar_extraction
         habit="morning tea",
         now=BASE_NOW,
     )
-    extracted = jobs.parse_extraction(
-        '['
-        '{"topic": "Extract Task", "summary": "New multi-step work", "new_task": "sync"},'
-        '{"topic": "Extract Habit", "summary": "Short replies", "kind": "habit", "habit": "short replies"},'
-        '{"topic": "Extract Other", "summary": "Server IP 10.0.0.5"}'
-        ']'
+    registry = sidecar_memory_tools(facade)
+    asyncio.run(
+        jobs.apply_memory_tool_calls(
+            registry,
+            [
+                ToolCall(
+                    id="w1",
+                    name="memory_task",
+                    arguments={"topic": "Extract Task", "summary": "New multi-step work"},
+                ),
+                ToolCall(
+                    id="w2",
+                    name="memory_note",
+                    arguments={
+                        "topic": "Extract Habit",
+                        "summary": "Short replies",
+                        "habit": "short replies",
+                    },
+                ),
+                ToolCall(
+                    id="w3",
+                    name="memory_note",
+                    arguments={"topic": "Extract Other", "summary": "Server IP 10.0.0.5"},
+                ),
+            ],
+            bot_id="thyca",
+            chat="dm-1",
+        )
     )
-    assert [item.importance for item in extracted] == [
-        TASK_DEFAULT_IMPORTANCE,
-        HABIT_DEFAULT_IMPORTANCE,
-        DEFAULT_IMPORTANCE,
-    ]
-    jobs.apply_extracted(facade, extracted, default_bot="thyca", chat="dm-1")
     day_files = sorted((tmp_path / "memory").glob("*.md"))
     by_title = {}
     for day_file in day_files:

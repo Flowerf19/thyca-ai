@@ -279,14 +279,17 @@ class MemoryWriter:
             return "".join(lines[start:end])
         raise ArchiveError(f"memory not found: {memory_id}")
 
-    def purge_expired(self, now: datetime) -> None:
+    def purge_expired(
+        self, now: datetime, *, keep_day: str | None = None
+    ) -> None:
         memory_dir = self.thyca_dir / "memory"
         dailies = sorted(memory_dir.glob("????-??-??.md")) if memory_dir.is_dir() else []
+        effective_keep = keep_day if keep_day is not None else now.strftime("%Y-%m-%d")
         for path in dailies:
             if not path.is_file() or path.is_symlink():
                 continue
             with self.lock_for(path):
-                self._purge(path, now)
+                self._purge(path, now, keep_day=effective_keep)
 
     def remove_bot_entries(self, bot_id: str) -> int:
         """Drop private entries owned exactly by ``[bot_id]`` (BE-5 delete).
@@ -336,18 +339,26 @@ class MemoryWriter:
             raise ArchiveError(f"memory not found: {entry_id}")
         _atomic_write(path, "".join(out))
 
-    def _purge(self, path: Path, now: datetime) -> None:
+    def _purge(
+        self, path: Path, now: datetime, *, keep_day: str | None = None
+    ) -> None:
         lines = _read_lines(path)
         out: list[str] = []
         pos = 0
         removed = False
+        kept_blocks = 0
         for meta, _resolved, start, end in iter_session_blocks(lines, str(path)):
             out.extend(lines[pos:start])
             pos = end
             if is_expired(meta.expires_at, now):
                 removed = True
                 continue
+            kept_blocks += 1
             out.extend(lines[start:end])
+        is_past = keep_day is None or path.stem < keep_day
+        if kept_blocks == 0 and is_past:
+            path.unlink(missing_ok=True)
+            return
         if not removed:
             return
         out.extend(lines[pos:])

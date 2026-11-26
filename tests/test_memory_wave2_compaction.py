@@ -23,7 +23,7 @@ from thyca.conversations.store.runtime import ensure_runtime_store
 from thyca.core.channel import WindowRef
 from thyca.core.protocol import Message, ToolCall
 from thyca.memories.facade import MemoryFacade
-from thyca.memories.jobs import ExtractionError, extract_from_transcript, parse_extraction
+from thyca.memories.jobs import ExtractionError, extract_memories
 
 
 def test_stale_checkpoint_does_not_skip_pre_compaction_flush(tmp_path: Path) -> None:
@@ -92,16 +92,11 @@ def test_idle_sweep_aborts_compaction_on_extractor_exception(tmp_path: Path) -> 
     assert res.passed, res.findings
 
 
-def test_extract_strict_raises_on_malformed_json_and_idle_sweep_retries(tmp_path: Path) -> None:
+def test_extract_strict_raises_on_provider_failure_and_idle_sweep_retries(tmp_path: Path) -> None:
+    facade = MemoryFacade(tmp_path, timezone_name=TZ_NAME)
+    bad_stub = StubExtractorConnect(raise_exc=RuntimeError("provider 503"))
     with pytest.raises(ExtractionError):
-        parse_extraction("not valid json", strict=True)
-    with pytest.raises(ExtractionError):
-        parse_extraction('{"not": "a list"}', strict=True)
-    assert parse_extraction("[]", strict=True) == []
-
-    bad_stub = StubExtractorConnect("broken json {")
-    with pytest.raises(ExtractionError):
-        asyncio.run(extract_from_transcript(bad_stub, "m", "hello", strict=True))
+        asyncio.run(extract_memories(bad_stub, facade, "hello", strict=True))
 
     ensure_runtime_store(tmp_path)
     cfg = _stub_config(tmp_path, context_tokens=32000)
@@ -109,7 +104,6 @@ def test_extract_strict_raises_on_malformed_json_and_idle_sweep_retries(tmp_path
     bots.ensure_thyca()
     convs = ConversationManager(tmp_path / "sessions", timezone_name=TZ_NAME)
     dm = convs.ensure_dm(SYSTEM_BOT_ID)
-    facade = MemoryFacade(tmp_path, timezone_name=TZ_NAME)
     runtime = BotRuntime(tmp_path, bots, Bus(tmp_path))
     window = WindowRef(
         window_id=dm.conversation_id,
@@ -150,7 +144,7 @@ def test_extract_strict_raises_on_malformed_json_and_idle_sweep_retries(tmp_path
             construction_cfg=cfg,
             submit=loop.run_until_complete,
             scheduled_turn=lambda _bot, _prompt: {"reply": "ok"},
-            injected_connect=StubExtractorConnect("not json at all"),
+            injected_connect=StubExtractorConnect(raise_exc=RuntimeError("provider down")),
             facade=facade,
         )
         svc = BackgroundJobsService(deps)

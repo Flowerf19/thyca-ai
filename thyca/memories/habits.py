@@ -10,13 +10,29 @@ Only the bot's own file is touched; the shared ``USER.md`` aggregation
 from __future__ import annotations
 
 import re
+from datetime import datetime
 from pathlib import Path
 
 from thyca.configs import atomic_write_text
 from thyca.memories.archive_store import decode_bots, encode_bots
 from thyca.memories.chunk import Chunker
-from thyca.memories.heading import format_ts, is_visible, read_text_file, utc_now
+from thyca.memories.heading import (
+    HABIT_DEFAULT_IMPORTANCE,
+    HeadingMeta,
+    format_ts,
+    is_visible,
+    memory_id,
+    read_text_file,
+    utc_now,
+    validate_task_meta,
+)
 from thyca.memories.identity import current_bot_id
+from thyca.memories.ledger_common import (
+    locate_visible_block,
+    resolve_owners,
+    today_blocks,
+    validate_entry_fields,
+)
 from thyca.memories.visibility import current_memory_view
 
 AUTO_START = "<!-- habits:auto:start -->"
@@ -135,6 +151,127 @@ def habit_observations(facade, bot_id: str | None = None, now=None) -> list[dict
         record for record in records
         if record["bots"] is not None and bot_id in record["bots"]
     ]
+
+
+def record_habit_entry(
+    facade,
+    topic: str,
+    summary: str,
+    content: str = "",
+    *,
+    habit: str,
+    habit_explicit: bool = False,
+    importance: int | None = None,
+    bots: list[str] | tuple[str, ...] | None = None,
+    chat: str | None = None,
+    proj: str | None = None,
+    now: datetime | None = None,
+) -> str:
+    """Record a habit observation or reinforce an existing habit across days.
+
+    If a matching habit (same normalized label and owner set) already exists
+    today or in an earlier active daily file, renews its TTL instead of
+    minting a new ``##`` block, upgrades ``habit_explicit`` if stated
+    directly, and appends one ``YYYY-MM-DD`` observation line when seen on a
+    new calendar day. Cross-window repeats record only the canonical label to
+    prevent DM text from leaking into group-origin blocks.
+    """
+    effective_importance = (
+        HABIT_DEFAULT_IMPORTANCE if importance is None else importance
+    )
+    validate_entry_fields(topic, summary, content, effective_importance)
+    validate_task_meta(None, None, "habit", None, habit, habit_explicit)
+    clean_habit = " ".join(habit.split())
+    norm_habit = Chunker.normalize(clean_habit)
+    clean_chat = chat.strip() if isinstance(chat, str) and chat.strip() else None
+    owners = resolve_owners(bots, current_bot_id())
+    with facade.writer.mutation_lock():
+        today_str, _path, lines, blocks = today_blocks(facade, now)
+        match: tuple[str, HeadingMeta, list[str]] | None = None
+        for meta, resolved, start, end in blocks:
+            if not is_visible(meta.expires_at, now):
+                continue
+            if meta.kind != "habit" or not meta.habit or meta.bots != owners:
+                continue
+            if Chunker.normalize(" ".join(meta.habit.split())) != norm_habit:
+                continue
+            sid = memory_id(today_str, resolved)
+            if not facade._may_mutate(sid, now):
+                continue
+            body = [
+                line.rstrip("\r\n")
+                for line in lines[start + 1 : end]
+                if line.strip()
+            ]
+            match = (sid, meta, body)
+            break
+        if match is None:
+            facade.archive.reindex(now)
+            now_ts = format_ts(utc_now(now))
+            for row in facade.archive.store.habit_rows(
+                now_ts, reader=current_bot_id()
+            ):
+                if decode_bots(row["bots"]) != owners:
+                    continue
+                row_habit = str(row["habit"] or "")
+                if not row_habit:
+                    continue
+                if Chunker.normalize(" ".join(row_habit.split())) != norm_habit:
+                    continue
+                sid = str(row["memory_id"])
+                if not facade._may_mutate(sid, now):
+                    continue
+                located = locate_visible_block(facade, sid, now)
+                if located is not None:
+                    match = (sid, located[0], located[1])
+                    break
+        if match is not None:
+            sid, existing_meta, body_lines = match
+            existing_days = {
+                sid.split("#", 1)[0],
+                *OBS_DAY_RE.findall("\n".join(body_lines)),
+            }
+            summary_clean = " ".join(summary.split())
+            cross_window = (
+                clean_chat is not None
+                and existing_meta.chat is not None
+                and existing_meta.chat != clean_chat
+            )
+            obs_text = clean_habit if cross_window else summary_clean
+            new_body = (
+                [*body_lines, f"  - {today_str}: {obs_text}"]
+                if today_str not in existing_days
+                else None
+            )
+            upgrade_explicit = (
+                True
+                if (habit_explicit and not existing_meta.habit_explicit)
+                else None
+            )
+            if new_body is not None or upgrade_explicit is not None:
+                facade.writer.update_memory(
+                    sid,
+                    body_lines=new_body,
+                    habit_explicit=upgrade_explicit,
+                )
+            facade.writer.reinforce(
+                sid, importance=max(existing_meta.importance, effective_importance), now=now
+            )
+            facade._refresh_index(now)
+            return sid
+        return facade.remember(
+            topic,
+            summary,
+            content=content,
+            importance=effective_importance,
+            now=now,
+            proj=proj,
+            chat=chat,
+            bots=bots,
+            kind="habit",
+            habit=clean_habit,
+            habit_explicit=habit_explicit,
+        )
 
 
 def sweep_bot_habits(facade, bot_id: str, bot_user_path, now=None) -> list[str]:

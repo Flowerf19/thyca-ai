@@ -1,14 +1,13 @@
 """Shared types, constants, and offline stubs for memory edge simulation suites."""
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
 from thyca.agents.think import ChatReply
-from thyca.core.protocol import Message
+from thyca.core.protocol import Message, ToolCall
 
 TZ_NAME = "Asia/Ho_Chi_Minh"
 TZ = ZoneInfo(TZ_NAME)
@@ -27,30 +26,28 @@ class EdgeCaseResult:
 
 
 class StubExtractorConnect:
-    """Offline fake LLM for idle sweep extraction that records prompt calls."""
+    """Offline fake LLM for idle sweep extraction that records prompt & tool schema calls."""
 
     def __init__(
         self,
-        reply_json: list[dict[str, Any]] | str,
+        tool_calls: list[ToolCall] | tuple[ToolCall, ...] = (),
         *,
         raise_exc: Exception | None = None,
     ) -> None:
-        self._payload = (
-            reply_json
-            if isinstance(reply_json, str)
-            else json.dumps(reply_json, ensure_ascii=False)
-        )
+        self._tool_calls = list(tool_calls)
         self._raise_exc = raise_exc
         self.calls: int = 0
         self.prompts: list[str] = []
+        self.tools_seen: list[list | None] = []
 
-    async def chat(self, messages: list[Message], _tools: list | None = None) -> ChatReply:
+    async def chat(self, messages: list[Message], tools: list | None = None) -> ChatReply:
         self.calls += 1
         if messages:
             self.prompts.append(str(messages[-1].content or ""))
+        self.tools_seen.append(tools)
         if self._raise_exc is not None:
             raise self._raise_exc
-        return ChatReply(content=self._payload)
+        return ChatReply(content="", tool_calls=list(self._tool_calls))
 
     async def aclose(self) -> None:
         return None

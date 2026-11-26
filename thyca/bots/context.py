@@ -50,7 +50,7 @@ class BotTurnContext:
     thyca_dir: Any = None
     window: Any = None
     pending_private_id: str | None = None
-    compact: Callable[[], Awaitable[dict]] | None = None
+    compact: Callable[..., Awaitable[dict]] | None = None
 
 
 _turn_context: ContextVar[BotTurnContext | None] = ContextVar(

@@ -356,6 +356,7 @@ class ConversationManager:
         hot_tokens: int = 0,
         tools_tokens: int = 0,
         calibration: float = 1.0,
+        drop_prior: bool = False,
     ) -> dict:
         """User-triggered compact: same tail policy, no 95% threshold.
 
@@ -371,6 +372,7 @@ class ConversationManager:
                 tools_tokens=tools_tokens,
                 pending_user_tokens=0,
                 calibration=calibration,
+                drop_prior=drop_prior,
             )
 
     def _compact_locked(
@@ -381,6 +383,7 @@ class ConversationManager:
         tools_tokens: int,
         pending_user_tokens: int,
         calibration: float = 1.0,
+        drop_prior: bool = False,
     ) -> dict:
         runtime_root = _manager_runtime_root(self)
         if runtime_root is not None:
@@ -396,6 +399,7 @@ class ConversationManager:
                 pending_user_tokens=pending_user_tokens,
                 force=force,
                 calibration=calibration,
+                drop_prior=drop_prior,
             )
             if plan is None:
                 return {
@@ -404,10 +408,7 @@ class ConversationManager:
                     "messages_after": before,
                 }
             body = self.compactor.excerpt_body(plan)
-            summary_text = (
-                f"[compaction: omitted {plan.total_messages} messages/"
-                f"{plan.total_turns} turns; excerpt: {body}]"
-            )
+            summary_text = self.compactor.render(plan, body)[0].content or ""
 
             ref = resolve_ref(runtime_root, conversation.conversation_id)
             conn = open_existing_conversation(runtime_root, lock_mode="shared")
@@ -463,6 +464,7 @@ class ConversationManager:
             pending_user_tokens=pending_user_tokens,
             force=force,
             calibration=calibration,
+            drop_prior=drop_prior,
         )
         if compacted is None:
             return {

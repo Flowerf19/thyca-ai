@@ -255,14 +255,14 @@ async def test_memory_tool_limit_edges_never_raise(tmp_path: Path) -> None:
             ToolCall(id="s", name="memory_search", arguments=arguments)
         )
         assert not result.is_error, limit
-        recent = await gateway.submit(
+        tasks_list = await gateway.submit(
             ToolCall(
-                id="r",
-                name="memory_recent",
-                arguments={} if limit is None else {"limit": limit},
+                id="t",
+                name="memory_search",
+                arguments={"scope": "tasks"} if limit is None else {"scope": "tasks", "limit": limit},
             )
         )
-        assert not recent.is_error, limit
+        assert not tasks_list.is_error, limit
     for limit in (2.5, "abc"):
         result = await gateway.submit(
             ToolCall(
@@ -283,7 +283,7 @@ def test_non_str_search_inputs_warn(tmp_path: Path) -> None:
     ]
 
 
-async def test_tool_non_str_timeline_day_rejected(tmp_path: Path) -> None:
+async def test_tool_non_str_day_rejected(tmp_path: Path) -> None:
     facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
     registry = ToolRegistry()
     register_memory_tools(registry, facade)
@@ -292,8 +292,8 @@ async def test_tool_non_str_timeline_day_rejected(tmp_path: Path) -> None:
         ToolCall(
             id="s",
             name="memory_search",
-            arguments={"query": "cafe", "timeline_day": 123},
+            arguments={"query": "cafe", "day": 123},
         )
     )
     assert result.is_error
-    assert "argument 'timeline_day' must be string, got integer" in result.content
+    assert "argument 'day' must be string, got integer" in result.content

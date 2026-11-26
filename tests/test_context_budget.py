@@ -23,7 +23,7 @@ def test_format_context_budget_states(ratio: float, state: str) -> None:
     assert f"used={round(ratio * 100)}%" in text
     assert f"state={state}" in text
     assert "checkpoint=none" in text
-    assert "kind='checkpoint'" in text
+    assert "call memory_task" in text
 
 
 def test_format_context_budget_recorded_and_stale() -> None:
@@ -38,32 +38,26 @@ def test_format_context_budget_recorded_and_stale() -> None:
 def test_format_context_budget_without_write_tool() -> None:
     text = format_context_budget(_usage(0.83), checkpoint="none", can_write=False)
     assert "unavailable for this bot" in text
-    assert "call memory_remember" not in text
+    assert "call memory_task" not in text
 
 
 def test_format_context_budget_without_read_tool() -> None:
     text = format_context_budget(_usage(0.83), checkpoint="none", can_read=False)
     assert "search memory first" not in text
     assert "already in context" in text
-    assert "kind='checkpoint'" in text
+    assert "call memory_task" in text
 
 
 def _write_pair(
     *,
     prompt_tokens: int,
-    kind: str | None = "checkpoint",
     task: str | None = "task-1234abcd",
-    new_task: bool = False,
-    tool_name: str = "memory_remember",
+    tool_name: str = "memory_task",
     is_error: bool = False,
 ) -> list[Message]:
     args: dict = {"topic": "Goal", "summary": "Done A; next B"}
-    if kind is not None:
-        args["kind"] = kind
-    if task is not None:
+    if task is not None and tool_name == "memory_task":
         args["task"] = task
-    if new_task:
-        args["new_task"] = True
     return [
         Message(
             role="assistant",
@@ -73,7 +67,7 @@ def _write_pair(
         ),
         Message(
             role="tool",
-            content='{"conversation_id": "2026-10-19#abc", "task_id": "task-1234abcd"}',
+            content='{"memory_id": "2026-10-19#abc", "task_id": "task-1234abcd"}',
             tool_call_id="call-1",
             meta={"is_error": True} if is_error else None,
         ),
@@ -98,34 +92,10 @@ def test_checkpoint_freshness_follows_band_escalation() -> None:
     assert _state(prepare_write, 0.92) == "stale"
 
 
-def test_checkpoint_requires_explicit_checkpoint_kind_and_task() -> None:
-    assert _state(_write_pair(prompt_tokens=83_000, kind="habit"), 0.83) == "none"
-    assert _state(_write_pair(prompt_tokens=83_000, kind=None), 0.83) == "none"
-    assert _state(_write_pair(prompt_tokens=83_000, task=None), 0.83) == "none"
-    assert (
-        _state(_write_pair(prompt_tokens=83_000, task=None, new_task=True), 0.83)
-        == "recorded"
-    )
-    assert (
-        _state(
-            _write_pair(prompt_tokens=83_000, tool_name="memory_update"), 0.83
-        )
-        == "recorded"
-    )
-    assert (
-        _state(
-            _write_pair(prompt_tokens=83_000, tool_name="memory_update", kind=None),
-            0.83,
-        )
-        == "none"
-    )
-    assert (
-        _state(
-            _write_pair(prompt_tokens=83_000, tool_name="memory_update", task=None),
-            0.83,
-        )
-        == "none"
-    )
+def test_checkpoint_requires_memory_task_tool() -> None:
+    assert _state(_write_pair(prompt_tokens=83_000, tool_name="memory_note"), 0.83) == "none"
+    assert _state(_write_pair(prompt_tokens=83_000, task=None), 0.83) == "recorded"
+    assert _state(_write_pair(prompt_tokens=83_000, task="task-1234abcd"), 0.83) == "recorded"
 
 
 def test_checkpoint_not_recorded_for_error_or_old_segment() -> None:

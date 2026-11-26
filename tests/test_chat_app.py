@@ -176,7 +176,7 @@ def test_memory_remember_injects_turn_conversation_id(tmp_path: Path) -> None:
                     tool_calls=[
                         ToolCall(
                             id="remember-1",
-                            name="memory_remember",
+                            name="memory_note",
                             arguments={"topic": "linked", "summary": "linked-token"},
                         )
                     ],

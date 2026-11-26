@@ -355,6 +355,94 @@ def lexical_search(
     return SearchResult(hits=hits, warnings=warnings)
 
 
+def list_day_entries(
+    archive: ArchivedMemory,
+    day: str,
+    *,
+    limit: int = 5,
+    now: datetime | None = None,
+    reader: str | None = None,
+    task: str | None = None,
+    status: str | None = None,
+    allow_own_cross_window: bool = False,
+) -> SearchResult:
+    """List visible entries recorded on ``day`` (YYYY-MM-DD), one hit per memory_id."""
+    if not isinstance(day, str) or not DATE_RE.fullmatch(day):
+        return SearchResult(warnings=["invalid timeline_day"])
+    requested_limit = limit
+    limit = max(1, min(limit, 10))
+    warnings: list[str] = []
+    if limit != requested_limit:
+        warnings.append(f"limit clamped from {requested_limit} to {limit}")
+    today_str = archive.day(now)
+    if day > today_str:
+        return SearchResult(
+            warnings=[f"timeline_day {day} is in the future (future files are not indexed)"]
+        )
+    day_path = archive.thyca_dir / "memory" / f"{day}.md"
+    try:
+        text = read_text_file(day_path)
+    except (OSError, UnicodeDecodeError):
+        return SearchResult(warnings=warnings)
+    if not text:
+        return SearchResult(warnings=warnings)
+    view = current_memory_view()
+    chunks = archive.chunker.chunk_markdown(
+        str(day_path), text, source_kind="daily", timeline_day=day
+    )
+    eligible = [
+        chunk
+        for chunk in chunks
+        if is_visible(chunk.expires_at, now)
+        and visible_to(chunk.bots, reader)
+        and (task is None or chunk.task == task)
+        and (status is None or chunk.status == status)
+        and (
+            view is None
+            or view.can_read_entry(
+                chunk.chat_session,
+                chunk.bots,
+                allow_own_cross_window=allow_own_cross_window,
+            )
+        )
+    ]
+    leaf_counts: dict[str, int] = {}
+    first_chunk: dict[str, object] = {}
+    for chunk in eligible:
+        leaf_counts[chunk.memory_id] = leaf_counts.get(chunk.memory_id, 0) + 1
+        first_chunk.setdefault(chunk.memory_id, chunk)
+    hits: list[Hit] = []
+    for mid, chunk in first_chunk.items():
+        count = leaf_counts[mid]
+        hits.append(
+            Hit(
+                path=chunk.path,
+                source_kind="daily",
+                chunk_id=chunk.chunk_id,
+                timeline_day=day,
+                memory_id=mid,
+                heading=chunk.heading_raw,
+                snippet=chunk.text_raw[:250],
+                score=1.0,
+                match_type="day",
+                leaf_ord=chunk.leaf_ord,
+                memory_leaf_count=count,
+                has_more=count > 1,
+                line_start=chunk.line_start,
+                line_end=chunk.line_end,
+                bots=chunk.bots,
+                task=chunk.task,
+                cont=chunk.cont,
+                kind=chunk.kind,
+                status=chunk.status,
+                habit=chunk.habit,
+                habit_explicit=chunk.habit_explicit,
+                chat_session=chunk.chat_session,
+            )
+        )
+    return SearchResult(hits=hits[:limit], warnings=warnings)
+
+
 def recent(
     archive: ArchivedMemory, limit: int = 5, now: datetime | None = None,
     reader: str | None = None,

@@ -139,8 +139,8 @@ def test_runtime_guidance_has_one_owner() -> None:
     assert "memory_search also searches today's daily file" in rules
     assert "<open_tasks>" in rules
     assert "<memory_tasks> is background only" in rules
-    assert "call memory_tasks" in rules
-    assert 'kind="habit"' in rules
+    assert 'memory_search(scope="tasks")' in rules
+    assert "memory_note(habit=" in rules
     assert "<today_elsewhere>" in rules
     assert "other/unattributed sessions' notes" in rules
     assert "Never assume the user is still on those topics" in rules

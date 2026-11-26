@@ -34,9 +34,9 @@ def compact_spec() -> ToolSpec:
             "Compact the current conversation now: summarize what happened and "
             "keep the tail, freeing context for later turns. Call this only "
             "AFTER you have written the durable facts/checkpoints to memory "
-            "(memory_remember with kind='checkpoint' where a task is "
-            "involved), so nothing important is lost. Safe to call any "
-            "time; never deletes your memory entries."
+            "(via memory_task for open work or memory_note for facts), so "
+            "nothing important is lost. Safe to call any time; never deletes "
+            "your memory entries."
         ),
         parameters={
             "type": "object",

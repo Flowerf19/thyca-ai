@@ -384,7 +384,7 @@ def test_print_tags_memory_with_cli_conversation(tmp_path: Path) -> None:
         tool_calls=[
             ToolCall(
                 id="c1",
-                name="memory_remember",
+                name="memory_note",
                 arguments={"topic": "t", "summary": "s"},
             )
         ],

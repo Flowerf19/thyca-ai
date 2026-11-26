@@ -108,9 +108,9 @@ def _sim_task_update_checkpoint_recognition(_root: Path) -> EdgeCaseResult:
             tool_calls=[
                 ToolCall(
                     id="u1",
-                    name="memory_update",
+                    name="memory_task",
                     arguments={
-                        "memory_id": "2026-11-25#abcd1234",
+                        "task": "task-abcd1234",
                         "summary": "Xong replica, chờ failover",
                         "status": "open",
                     },
@@ -118,20 +118,23 @@ def _sim_task_update_checkpoint_recognition(_root: Path) -> EdgeCaseResult:
             ],
             meta={"estimate_tokens": 85_000},
         ),
-        Message(role="tool", content="updated", tool_call_id="u1"),
+        Message(
+            role="tool",
+            content='{"memory_id":"2026-11-25#abcd1234","task_id":"task-abcd1234"}',
+            tool_call_id="u1",
+        ),
     ]
     state = checkpoint_state(messages, context_tokens=100_000, current_ratio=0.85)
     findings: list[str] = []
     if state != "recorded":
         findings.append(
-            f"memory_update following rules.md without kind='checkpoint'+task yielded "
-            f"checkpoint_state={state!r} instead of 'recorded'"
+            f"memory_task update yielded checkpoint_state={state!r} instead of 'recorded'"
         )
     return EdgeCaseResult(
         case_id="task_update_checkpoint_recognition",
         group="task",
         passed=not findings,
-        summary="Task update via memory_update at 85% context should satisfy checkpoint_state",
+        summary="Task update via memory_task at 85% context should satisfy checkpoint_state",
         findings=findings,
         metrics={"checkpoint_state": state},
     )
@@ -730,9 +733,13 @@ def _sim_prompt_rules_contract_audit(_root: Path) -> EdgeCaseResult:
         findings.append(
             "<rules> gives no guidance on returning to closed (done/cancelled) or older tasks"
         )
-    elif "memory_tasks" in rules_low and "memory_tasks(" not in rules_low and "call memory_tasks" not in rules_low:
+    elif (
+        "memory_tasks" in rules_low
+        and 'scope="tasks"' not in rules_low
+        and "call memory_tasks" not in rules_low
+    ):
         findings.append(
-            "<rules> does not instruct agent to call memory_tasks for older/closed tasks "
+            "<rules> does not instruct agent to query older/closed tasks "
             "missing from <memory_tasks>"
         )
     if "user.md" in combined_low and "habit" not in combined_low:

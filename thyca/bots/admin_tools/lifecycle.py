@@ -119,7 +119,7 @@ def _create_spec(deps: AdminDeps) -> ToolSpec:
             "double-flag|dotted|fermata|plain), bash (ask|allow|deny), skills, tools, "
             "hidden_tools, memory {read,write}, schedule, persona. "
             "Every created bot also receives the baseline tools (bot_send, "
-            "message_user, ask_user, report_error, memory_remember, "
+            "message_user, ask_user, report_error, memory_note, memory_task, "
             "memory_search, memory_get) "
             "unioned with `tools`; hidden_tools still blocks them."
         ),

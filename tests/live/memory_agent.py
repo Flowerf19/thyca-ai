@@ -42,14 +42,11 @@ from thyca.memories.identity import bind_bot_id, reset_bot_id
 
 LIVE_ENV = "THYCA_LIVE"
 _MEMORY_ALLOWLIST = (
-    "memory_remember",
     "memory_search",
-    "memory_recent",
     "memory_get",
-    "memory_tasks",
-    "memory_update",
+    "memory_note",
+    "memory_task",
     "memory_forget",
-    "memory_reinforce",
     "compact",
     "read",
     "edit",
@@ -235,25 +232,23 @@ def scenario_write_other(app: ChatApp, root: Path, today: str) -> ScenarioResult
     prompt = (
         "Chỉ ghi nhớ một fact vào nhật ký Other (không mở task, không habit): "
         "Máy phát triển chạy Fedora Bazzite LiveHarnessOS. "
-        "Dùng memory_remember, không sửa file hồ sơ."
+        "Dùng memory_note, không sửa file hồ sơ."
     )
     reply, calls = _run_turn(app, dm_id, prompt)
     today_md = _today_text(root, today)
     reasons: list[str] = []
-    remembers = find_tools(calls, "memory_remember")
-    if not remembers:
-        reasons.append("expected memory_remember for other-journal fact")
+    notes = find_tools(calls, "memory_note")
+    if not notes:
+        reasons.append("expected memory_note for other-journal fact")
     else:
-        bad = [
-            c
-            for c in remembers
-            if c.args.get("kind") or c.args.get("task") or c.args.get("new_task")
-        ]
+        bad = [c for c in notes if c.args.get("habit")]
         if bad:
             reasons.append(
-                "other fact used kind/task/new_task: "
+                "other fact unexpectedly set habit: "
                 + json.dumps([c.args for c in bad], ensure_ascii=False)
             )
+    if find_tools(calls, "memory_task"):
+        reasons.append("unexpected memory_task for plain other fact")
     if "LiveHarnessOS" not in today_md and "Bazzite" not in today_md:
         reasons.append("today.md missing expected OS fact tokens")
     return ScenarioResult(
@@ -269,7 +264,7 @@ def scenario_write_other(app: ChatApp, root: Path, today: str) -> ScenarioResult
 def scenario_write_habit(app: ChatApp, root: Path, today: str) -> ScenarioResult:
     dm_id = app.bot_dm(SYSTEM_BOT_ID)["conversation_id"]
     prompt = (
-        "Ghi một quan sát habit lặp lại bằng memory_remember với kind='habit': "
+        "Ghi một quan sát habit lặp lại bằng memory_note với habit: "
         "mình uống cà phê đen mỗi sáng (label ngắn hợp lệ). Không mở task."
     )
     reply, calls = _run_turn(app, dm_id, prompt)
@@ -277,14 +272,11 @@ def scenario_write_habit(app: ChatApp, root: Path, today: str) -> ScenarioResult
     reasons: list[str] = []
     habits = find_tools(
         calls,
-        "memory_remember",
-        pred=lambda a: a.get("kind") == "habit",
+        "memory_note",
+        pred=lambda a: bool(str(a.get("habit") or "").strip()),
     )
     if not habits:
-        reasons.append("expected memory_remember with kind=habit")
-    else:
-        if any(not str(c.args.get("habit") or "").strip() for c in habits):
-            reasons.append("habit remember missing non-empty habit label")
+        reasons.append("expected memory_note with non-empty habit label")
     if (
         '"kind": "habit"' not in today_md
         and "kind\":\"habit\"" not in today_md
@@ -305,19 +297,14 @@ def scenario_write_task(app: ChatApp, root: Path, today: str) -> ScenarioResult:
     dm_id = app.bot_dm(SYSTEM_BOT_ID)["conversation_id"]
     prompt = (
         "Mở một task mới tên gần với 'LiveHarnessTask' để theo dõi kiểm thử bộ nhớ. "
-        "Dùng memory_remember với new_task=true (hoặc task id mới). "
-        "Ghi checkpoint trạng thái hiện tại."
+        "Dùng memory_task (bỏ trống task để mở mới) ghi trạng thái hiện tại."
     )
     reply, calls = _run_turn(app, dm_id, prompt)
     today_md = _today_text(root, today)
     reasons: list[str] = []
-    task_writes = find_tools(
-        calls,
-        "memory_remember",
-        pred=lambda a: bool(a.get("new_task")) or bool(a.get("task")),
-    )
+    task_writes = find_tools(calls, "memory_task")
     if not task_writes:
-        reasons.append("expected memory_remember with new_task or task")
+        reasons.append("expected memory_task to open new task")
     tok = bind_bot_id(SYSTEM_BOT_ID)
     try:
         tasks = app._memory_facade.tasks()
@@ -381,17 +368,17 @@ def scenario_search_seeded(
 
 
 def scenario_call_must_remember(app: ChatApp, root: Path, today: str) -> ScenarioResult:
-    """Must call memory_remember when asked to persist a fact."""
+    """Must call memory_note when asked to persist a fact."""
     dm_id = app.bot_dm(SYSTEM_BOT_ID)["conversation_id"]
     prompt = (
-        "Hãy lưu vào trí nhớ (memory_remember) fact sau rồi xác nhận ngắn: "
+        "Hãy lưu vào trí nhớ (memory_note) fact sau rồi xác nhận ngắn: "
         "Repo LiveCallToolAlpha dùng Python 3.14. "
         "Không cần tìm kiếm trước."
     )
     reply, calls = _run_turn(app, dm_id, prompt)
     reasons: list[str] = []
-    if not find_tools(calls, "memory_remember"):
-        reasons.append("must call memory_remember to persist the fact")
+    if not find_tools(calls, "memory_note"):
+        reasons.append("must call memory_note to persist the fact")
     names = [c.name for c in calls]
     return ScenarioResult(
         name="call_must_remember",
@@ -400,7 +387,7 @@ def scenario_call_must_remember(app: ChatApp, root: Path, today: str) -> Scenari
         tool_calls=calls,
         reply=reply,
         today_md=_today_text(root, today),
-        details={"expected": ["memory_remember"], "forbidden": [], "tools": names},
+        details={"expected": ["memory_note"], "forbidden": [], "tools": names},
     )
 
 
@@ -419,8 +406,8 @@ def scenario_call_must_search(
     reasons: list[str] = []
     if not find_tools(calls, "memory_search"):
         reasons.append("must call memory_search for seeded recall")
-    if find_tools(calls, "memory_remember"):
-        reasons.append("must not memory_remember when only asked to recall")
+    if find_tools(calls, "memory_note") or find_tools(calls, "memory_task"):
+        reasons.append("must not write memory when only asked to recall")
     return ScenarioResult(
         name="call_must_search",
         passed=not reasons,
@@ -430,7 +417,7 @@ def scenario_call_must_search(
         today_md=_today_text(root, today),
         details={
             "expected": ["memory_search"],
-            "forbidden": ["memory_remember"],
+            "forbidden": ["memory_note", "memory_task"],
             "tools": [c.name for c in calls],
         },
     )
@@ -449,7 +436,7 @@ def scenario_call_no_remember_chitchat(
     names = [c.name for c in calls]
     reasons = [
         f"must not call {forbidden} on chitchat/math"
-        for forbidden in ("memory_remember", "memory_search", "memory_tasks", "memory_update")
+        for forbidden in ("memory_note", "memory_task", "memory_search")
         if forbidden in names
     ]
     return ScenarioResult(
@@ -459,22 +446,22 @@ def scenario_call_no_remember_chitchat(
         tool_calls=calls,
         reply=reply,
         today_md=_today_text(root, today),
-        details={"expected": [], "forbidden": ["memory_remember", "memory_search"], "tools": names},
+        details={"expected": [], "forbidden": ["memory_note", "memory_task", "memory_search"], "tools": names},
     )
 
 
 def scenario_call_must_tasks(app: ChatApp, root: Path, today: str) -> ScenarioResult:
-    """Must call memory_tasks (or search) when asked for open task catalog."""
+    """Must call memory_search(scope='tasks') when asked for open task catalog."""
     dm_id = app.bot_dm(SYSTEM_BOT_ID)["conversation_id"]
     prompt = (
         "Liệt kê các task đang open trong catalog trí nhớ. "
-        "Dùng memory_tasks (ưu tiên) — không bịa danh sách."
+        "Dùng memory_search với scope='tasks' — không bịa danh sách."
     )
     reply, calls = _run_turn(app, dm_id, prompt)
     reasons: list[str] = []
     names = [c.name for c in calls]
-    if "memory_tasks" not in names and "memory_search" not in names:
-        reasons.append("must call memory_tasks (or memory_search) for open-task listing")
+    if "memory_search" not in names:
+        reasons.append("must call memory_search(scope='tasks') for open-task listing")
     return ScenarioResult(
         name="call_must_tasks",
         passed=not reasons,
@@ -483,7 +470,7 @@ def scenario_call_must_tasks(app: ChatApp, root: Path, today: str) -> ScenarioRe
         reply=reply,
         today_md=_today_text(root, today),
         details={
-            "expected_any": ["memory_tasks", "memory_search"],
+            "expected_any": ["memory_search"],
             "tools": names,
         },
     )

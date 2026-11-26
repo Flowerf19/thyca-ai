@@ -411,7 +411,7 @@ def _sim_task_child_bot_close_bypass(root: Path) -> EdgeCaseResult:
             gateway.submit(
                 ToolCall(
                     id="c1",
-                    name="memory_remember",
+                    name="memory_task",
                     arguments={
                         "topic": "Triển khai production",
                         "summary": "Worker tự đóng task của Thyca",
@@ -609,12 +609,10 @@ def _sim_compaction_skips_memory_flush_on_stale_checkpoint(_root: Path) -> EdgeC
             tool_calls=[
                 ToolCall(
                     id="cp1",
-                    name="memory_remember",
+                    name="memory_task",
                     arguments={
                         "topic": "Refactor auth",
                         "summary": "Khởi tạo bước 1",
-                        "new_task": True,
-                        "kind": "checkpoint",
                     },
                 )
             ],

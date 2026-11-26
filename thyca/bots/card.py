@@ -60,10 +60,10 @@ BASELINE_BOT_TOOLS: tuple[str, ...] = (
     "ask_private",
     "private_followup",
     "report_error",
-    "memory_remember",
+    "memory_note",
+    "memory_task",
     "memory_search",
     "memory_get",
-    "memory_tasks",
     "compact",
 )
 

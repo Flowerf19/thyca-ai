@@ -68,10 +68,8 @@ if TYPE_CHECKING:
 
 ADMIN_TOOL_PREFIX = "bot_"
 
-MEMORY_READ_TOOLS = frozenset({"memory_search", "memory_recent", "memory_get", "memory_tasks"})
-MEMORY_WRITE_TOOLS = frozenset(
-    {"memory_remember", "memory_update", "memory_forget", "memory_reinforce"}
-)
+MEMORY_READ_TOOLS = frozenset({"memory_search", "memory_get"})
+MEMORY_WRITE_TOOLS = frozenset({"memory_note", "memory_task", "memory_forget"})
 
 PEER_TOOL_NAMES = frozenset({"bot_send", "bot_fetch", "task_open", "message_user", "ask_user", "report_error"})
 

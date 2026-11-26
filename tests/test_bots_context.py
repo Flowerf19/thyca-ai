@@ -252,9 +252,9 @@ def test_no_flush_when_agent_checkpointed_segment(tmp_path: Path) -> None:
         manager.append(Message(
             role="assistant", content="",
             tool_calls=[ToolCall(
-                id="call-ckpt", name="memory_remember",
+                id="call-ckpt", name="memory_task",
                 arguments={"topic": "Goal", "summary": "Done A; next B",
-                           "kind": "checkpoint", "task": "task-1234abcd"},
+                           "task": "task-1234abcd"},
             )],
             ts="2026-08-01T10:20:00Z",
         ))

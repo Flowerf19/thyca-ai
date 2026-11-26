@@ -18,8 +18,8 @@ def _user(delta: timedelta, text: str = "hi") -> Message:
     return Message(role="user", content=text, ts=_ts(delta))
 
 
-def _remember(delta: timedelta, *, error: bool = False) -> list[Message]:
-    call = ToolCall(id="c1", name="memory_remember", arguments={})
+def _remember(delta: timedelta, *, error: bool = False, name: str = "memory_note") -> list[Message]:
+    call = ToolCall(id="c1", name=name, arguments={})
     assistant = Message(
         role="assistant",
         content=None,

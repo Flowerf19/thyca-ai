@@ -40,12 +40,11 @@ def test_fresh_backstop_checkpoint_still_skips_flush() -> None:
             tool_calls=[
                 ToolCall(
                     id="cp_fresh",
-                    name="memory_remember",
+                    name="memory_task",
                     arguments={
                         "topic": "Refactor auth",
                         "summary": "Up-to-date checkpoint",
                         "task": "task-11112222",
-                        "kind": "checkpoint",
                     },
                 )
             ],
@@ -60,7 +59,7 @@ def test_fresh_backstop_checkpoint_still_skips_flush() -> None:
     assert _segment_checkpointed(messages, context_tokens=100_000) is True
 
 
-def test_unmetered_tail_memory_update_status_checkpoint_matches_checkpoint_state() -> None:
+def test_unmetered_tail_memory_task_status_checkpoint_matches_checkpoint_state() -> None:
     messages = [
         Message(role="user", content="Cập nhật tiến độ task"),
         Message(
@@ -69,16 +68,16 @@ def test_unmetered_tail_memory_update_status_checkpoint_matches_checkpoint_state
             tool_calls=[
                 ToolCall(
                     id="u_tail",
-                    name="memory_update",
+                    name="memory_task",
                     arguments={
-                        "memory_id": "2026-11-25#11112222",
+                        "task": "task-11112222",
                         "summary": "Đang xử lý bước 2",
                         "status": "open",
                     },
                 )
             ],
         ),
-        Message(role="tool", content="updated", tool_call_id="u_tail"),
+        Message(role="tool", content='{"memory_id":"2026-11-25#11112222","task_id":"task-11112222"}', tool_call_id="u_tail"),
     ]
     assert _segment_checkpointed(messages, context_tokens=100_000) is True
 

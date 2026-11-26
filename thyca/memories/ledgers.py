@@ -809,6 +809,6 @@ def format_task_catalog(
         lines.append(line)
     if dormant_count > 0:
         lines.append(
-            f"(+{dormant_count} older open tasks — call memory_tasks if user brings them up)"
+            f"(+{dormant_count} older open tasks — call memory_search(scope='tasks') if user brings them up)"
         )
     return "\n".join(lines)

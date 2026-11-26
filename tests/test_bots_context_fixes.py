@@ -114,20 +114,21 @@ def test_legacy_card_gets_baseline_but_policies_still_win() -> None:
     legacy = BotCard(bot_id="coder", name="coder", role="C", description="D",
                      persona="P", tools=("read",))
     kept = {s["function"]["name"] for s in filtered_tool_schemas(
-        schemas("bot_send", "bot_fetch", "task_open", "memory_remember", "read"),
+        schemas("bot_send", "bot_fetch", "task_open", "memory_note", "memory_task", "read"),
         legacy)}
-    assert {"bot_fetch", "task_open", "bot_send", "memory_remember", "read"} <= kept
+    assert {"bot_fetch", "task_open", "bot_send", "memory_note", "memory_task", "read"} <= kept
 
     masked = BotCard(bot_id="coder", name="coder", role="C", description="D",
                      persona="P", tools=("read",), hidden_tools=("bot_fetch",),
                      memory=BotMemoryPolicy(read=True, write=False),
                      bash="deny")
     kept = {s["function"]["name"] for s in filtered_tool_schemas(
-        schemas("bot_fetch", "task_open", "memory_remember", "memory_search",
+        schemas("bot_fetch", "task_open", "memory_note", "memory_task", "memory_search",
                 "bash", "read"),
         masked)}
     assert "bot_fetch" not in kept
-    assert "memory_remember" not in kept
+    assert "memory_note" not in kept
+    assert "memory_task" not in kept
     assert "bash" not in kept
     assert {"task_open", "memory_search", "read"} <= kept
 

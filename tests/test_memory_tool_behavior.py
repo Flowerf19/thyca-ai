@@ -155,52 +155,60 @@ def test_memory_schemas_emit_enums_and_bounds_on_both_wire_formats(tmp_path: Pat
     _facade, registry, _gateway = _setup_gateway(tmp_path)
     chat_schemas = registry.to_openai_schema()
     by_name = {item["function"]["name"]: item["function"]["parameters"] for item in chat_schemas}
+    assert set(by_name) == {
+        "memory_search",
+        "memory_get",
+        "memory_note",
+        "memory_task",
+        "memory_forget",
+    }
 
-    for tool_name in ("memory_remember", "memory_search", "memory_update"):
+    for tool_name in ("memory_search", "memory_task"):
         props = by_name[tool_name]["properties"]
-        assert props["kind"]["enum"] == ["habit", "checkpoint"], tool_name
         assert props["status"]["enum"] == ["open", "done", "cancelled"], tool_name
+    assert by_name["memory_search"]["properties"]["scope"]["enum"] == ["notes", "tasks"]
 
-    assert by_name["memory_tasks"]["properties"]["status"]["enum"] == [
+    responses_tools = _to_responses_tools(chat_schemas)
+    resp_by_name = {item["name"]: item["parameters"] for item in responses_tools}
+    assert resp_by_name["memory_search"]["properties"]["scope"]["enum"] == ["notes", "tasks"]
+    assert resp_by_name["memory_task"]["properties"]["status"]["enum"] == [
         "open",
         "done",
         "cancelled",
     ]
-    assert by_name["memory_reinforce"]["properties"]["importance"]["minimum"] == 1
-    assert by_name["memory_reinforce"]["properties"]["importance"]["maximum"] == 5
-
-    responses_tools = _to_responses_tools(chat_schemas)
-    resp_by_name = {item["name"]: item["parameters"] for item in responses_tools}
-    assert resp_by_name["memory_remember"]["properties"]["kind"]["enum"] == [
-        "habit",
-        "checkpoint",
-    ]
-    assert resp_by_name["memory_reinforce"]["properties"]["importance"]["maximum"] == 5
 
 
 @pytest.mark.asyncio
-async def test_memory_remember_and_search_tool_validation_contracts(tmp_path: Path) -> None:
+async def test_memory_tool_validation_contracts(tmp_path: Path) -> None:
     facade, _registry, gateway = _setup_gateway(tmp_path)
 
-    bad_remember_cases = [
-        ({"topic": "g", "summary": "s", "new_task": True, "cont": "2026-11-18#1234abcd"}, "cont cannot be combined with new_task"),
-        ({"topic": "g", "summary": "s", "new_task": True, "task": ""}, "new_task cannot be combined with task"),
-        ({"topic": "g", "summary": "s", "kind": "other"}, "must be one of ['habit', 'checkpoint']"),
-        ({"topic": "g", "summary": "s", "new_task": True, "status": "completed"}, "must be one of ['open', 'done', 'cancelled']"),
-        ({"topic": "t", "summary": "s", "kind": "habit"}, "non-empty habit label"),
-        ({"topic": "t", "summary": "s", "habit": "morning tea"}, "habit requires kind='habit'"),
+    bad_task_cases = [
+        ({"topic": "g", "summary": "s", "memory_id": "2026-11-18#1234abcd"}, "memory_id requires task"),
+        ({"summary": "s"}, "topic is required"),
+        ({"topic": "g", "summary": "s", "status": "completed"}, "must be one of ['open', 'done', 'cancelled']"),
+        ({"summary": "s", "task": "MyTask"}, "task-<8 hex>"),
     ]
-    for args, expected_sub in bad_remember_cases:
-        res = await gateway.submit(ToolCall(id="bad_r", name="memory_remember", arguments=args))
+    for args, expected_sub in bad_task_cases:
+        res = await gateway.submit(ToolCall(id="bad_t", name="memory_task", arguments=args))
+        assert res.is_error, args
+        assert expected_sub in res.content, (args, res.content)
+
+    bad_note_cases = [
+        ({"topic": "t", "summary": "s", "habit": "   "}, "non-empty string"),
+        ({"topic": "t", "summary": "s", "explicit": True}, "explicit=true requires habit"),
+        ({"summary": "s"}, "topic is required"),
+        ({"topic": "t"}, "summary is required"),
+    ]
+    for args, expected_sub in bad_note_cases:
+        res = await gateway.submit(ToolCall(id="bad_n", name="memory_note", arguments=args))
         assert res.is_error, args
         assert expected_sub in res.content, (args, res.content)
 
     bad_search_cases = [
         ({"query": "   "}, "query must not be blank"),
-        ({"query": "bazzite", "timeline_day": "yesterday"}, "YYYY-MM-DD"),
+        ({"query": "bazzite", "day": "yesterday"}, "YYYY-MM-DD"),
         ({"query": "bazzite", "task": "MyTask"}, "task-<8 hex>"),
-        ({"query": "bazzite", "proj": "thyca-ai"}, "absolute project root"),
-        ({"query": "bazzite", "kind": "other"}, "['habit', 'checkpoint']"),
+        ({"query": "bazzite", "scope": "other"}, "['notes', 'tasks']"),
         ({"query": "bazzite", "status": "completed"}, "['open', 'done', 'cancelled']"),
     ]
     for args, expected_sub in bad_search_cases:
@@ -251,14 +259,14 @@ def test_agent_loop_self_recovers_from_search_enum_and_habit_and_update_errors(t
                     ToolCall(
                         id="s1",
                         name="memory_search",
-                        arguments={"query": "Bazzite", "kind": "other"},
+                        arguments={"query": "Bazzite", "scope": "other"},
                     )
                 ],
             )
         if call_no == 2:
             last_tool = messages[-1]
             assert last_tool.role == "tool"
-            assert "['habit', 'checkpoint']" in (last_tool.content or "")
+            assert "['notes', 'tasks']" in (last_tool.content or "")
             return ChatReply(
                 content=None,
                 tool_calls=[ToolCall(id="s2", name="memory_search", arguments={"query": "Bazzite"})],
@@ -278,25 +286,24 @@ def test_agent_loop_self_recovers_from_search_enum_and_habit_and_update_errors(t
                 tool_calls=[
                     ToolCall(
                         id="h1",
-                        name="memory_remember",
-                        arguments={"topic": "Trà", "summary": "Uống trà ô long mỗi chiều", "kind": "habit"},
+                        name="memory_note",
+                        arguments={"topic": "Trà", "summary": "Uống trà ô long mỗi chiều", "explicit": True},
                     )
                 ],
             )
         if call_no == 2:
-            assert "non-empty habit label" in (messages[-1].content or "")
+            assert "explicit=true requires habit" in (messages[-1].content or "")
             return ChatReply(
                 content=None,
                 tool_calls=[
                     ToolCall(
                         id="h2",
-                        name="memory_remember",
+                        name="memory_note",
                         arguments={
                             "topic": "Trà",
                             "summary": "Uống trà ô long mỗi chiều",
-                            "kind": "habit",
                             "habit": "uống trà ô long",
-                            "habit_explicit": True,
+                            "explicit": True,
                         },
                     )
                 ],
@@ -308,7 +315,7 @@ def test_agent_loop_self_recovers_from_search_enum_and_habit_and_update_errors(t
                 tool_calls=[
                     ToolCall(
                         id="u1",
-                        name="memory_update",
+                        name="memory_note",
                         arguments={"memory_id": sid, "content": "Pha lúc 15:00 không đường"},
                     )
                 ],
@@ -316,7 +323,7 @@ def test_agent_loop_self_recovers_from_search_enum_and_habit_and_update_errors(t
         if call_no == 4:
             assert "content requires summary" in (messages[-1].content or "")
             prev_calls = [
-                tc for m in messages for tc in (m.tool_calls or []) if tc.name == "memory_update"
+                tc for m in messages for tc in (m.tool_calls or []) if tc.name == "memory_note"
             ]
             sid = prev_calls[-1].arguments["memory_id"]
             return ChatReply(
@@ -324,7 +331,7 @@ def test_agent_loop_self_recovers_from_search_enum_and_habit_and_update_errors(t
                 tool_calls=[
                     ToolCall(
                         id="u2",
-                        name="memory_update",
+                        name="memory_note",
                         arguments={
                             "memory_id": sid,
                             "summary": "Uống trà ô long không đường mỗi chiều",
@@ -373,7 +380,7 @@ def test_agent_loop_multichunk_search_followed_by_get_and_task_lifecycle(tmp_pat
             return ChatReply(
                 content=None,
                 tool_calls=[
-                    ToolCall(id="g1", name="memory_get", arguments={"memory_id": hit["memory_id"]})
+                    ToolCall(id="g1", name="memory_get", arguments={"id": hit["memory_id"]})
                 ],
             )
         full = messages[-1].content or ""
@@ -394,12 +401,10 @@ def test_agent_loop_multichunk_search_followed_by_get_and_task_lifecycle(tmp_pat
                 tool_calls=[
                     ToolCall(
                         id="t1",
-                        name="memory_remember",
+                        name="memory_task",
                         arguments={
                             "topic": "VNPAY webhook",
                             "summary": "Kiểm tra signature webhook VNPAY",
-                            "new_task": True,
-                            "kind": "checkpoint",
                         },
                     )
                 ],
@@ -410,13 +415,11 @@ def test_agent_loop_multichunk_search_followed_by_get_and_task_lifecycle(tmp_pat
                 tool_calls=[
                     ToolCall(
                         id="t2",
-                        name="memory_remember",
+                        name="memory_task",
                         arguments={
                             "topic": "VNPAY webhook",
                             "summary": "Xong signature; còn test timeout",
                             "task": state["task_id"],
-                            "cont": state["memory_id"],
-                            "kind": "checkpoint",
                         },
                     )
                 ],
@@ -427,13 +430,10 @@ def test_agent_loop_multichunk_search_followed_by_get_and_task_lifecycle(tmp_pat
                 tool_calls=[
                     ToolCall(
                         id="t3",
-                        name="memory_remember",
+                        name="memory_task",
                         arguments={
-                            "topic": "VNPAY webhook",
                             "summary": "Hoàn tất kiểm thử webhook VNPAY",
                             "task": state["task_id"],
-                            "cont": state["memory_id"],
-                            "kind": "checkpoint",
                             "status": "done",
                         },
                     )

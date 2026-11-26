@@ -122,9 +122,9 @@ class AgentLoop:
     ) -> object:
         tool_names = self._tool_names()
         can_read = tool_names is None or bool(
-            tool_names & {"memory_search", "memory_recent", "memory_get", "memory_tasks"}
+            tool_names & {"memory_search", "memory_get"}
         )
-        can_write = tool_names is None or "memory_remember" in tool_names
+        can_write = tool_names is None or "memory_task" in tool_names
 
         from thyca.bots.workspace_context import WorkspaceContextBuilder  # noqa: PLC0415 -- reason: break circular import with bots.workspace_context
 

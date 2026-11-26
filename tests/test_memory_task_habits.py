@@ -599,7 +599,7 @@ def test_update_and_reinforce_keep_task_fields(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_tool_remember_new_task_and_continue(tmp_path) -> None:
+async def test_tool_task_new_and_continue(tmp_path) -> None:
     facade = MemoryFacade(tmp_path, timezone_name=TZ)
     registry = ToolRegistry()
     register_memory_tools(registry, facade)
@@ -610,35 +610,35 @@ async def test_tool_remember_new_task_and_continue(tmp_path) -> None:
         assert not result.is_error, result.content
         return json.loads(result.content)
 
-    created = await call("memory_remember", {
-        "topic": "goal", "summary": "start work", "new_task": True})
+    created = await call("memory_task", {"topic": "goal", "summary": "start work"})
     assert created["task_id"].startswith("task-")
     assert created["memory_id"][10] == "#"
-    second = await call("memory_remember", {
+    assert created["created"] is True
+    second = await call("memory_task", {
         "topic": "goal", "summary": "more work",
-        "task": created["task_id"], "cont": created["memory_id"]})
+        "task": created["task_id"], "memory_id": created["memory_id"]})
     assert second["task_id"] == created["task_id"]
+    assert second["created"] is False
     tid = facade.new_task_id()
     facade.remember("past goal", "past work", now=at(1), task=tid,
                       importance=5)
     facade._refresh_index(at(5))
-    catalog = await call("memory_tasks", {})
+    catalog = await call("memory_search", {"scope": "tasks"})
     assert [t["task_id"] for t in catalog["tasks"]] == [created["task_id"], tid]
     assert catalog["tasks"][1]["entry_count"] == 1
 
 
 @pytest.mark.asyncio
-async def test_tool_remember_rejects_task_plus_new_task(tmp_path) -> None:
+async def test_tool_task_rejects_memory_id_without_task(tmp_path) -> None:
     facade = MemoryFacade(tmp_path, timezone_name=TZ)
     registry = ToolRegistry()
     register_memory_tools(registry, facade)
     gateway = ToolGateway(registry, TaskStore())
     result = await gateway.submit(ToolCall(
-        id="r", name="memory_remember",
-        arguments={"topic": "t", "summary": "s",
-                   "task": "task-1234abcd", "new_task": True}))
+        id="r", name="memory_task",
+        arguments={"topic": "t", "summary": "s", "memory_id": "2026-09-01#1234abcd"}))
     assert result.is_error
-    assert "new_task cannot be combined with task" in result.content
+    assert "memory_id requires task" in result.content
 
 
 @pytest.mark.asyncio
@@ -653,53 +653,48 @@ async def test_tool_checkpoint_contract(tmp_path) -> None:
 
     tok_a = bind_chat_conversation("room-a")
     try:
-        created_result = await submit("memory_remember", {
-            "topic": "goal", "summary": "state one; next two",
-            "new_task": True, "kind": "checkpoint"})
+        created_result = await submit("memory_task", {
+            "topic": "goal", "summary": "state one; next two"})
         assert not created_result.is_error, created_result.content
         created = json.loads(created_result.content)
-        second_result = await submit("memory_remember", {
+        second_result = await submit("memory_task", {
             "topic": "goal", "summary": "state two; next three",
-            "task": created["task_id"], "cont": created["memory_id"],
-            "kind": "checkpoint"})
+            "task": created["task_id"], "memory_id": created["memory_id"]})
         assert not second_result.is_error, second_result.content
         second = json.loads(second_result.content)
         assert second["memory_id"] == created["memory_id"]
     finally:
         reset_chat_conversation(tok_a)
-    got = await submit("memory_get", {"memory_id": second["memory_id"]})
+    got = await submit("memory_get", {"id": second["memory_id"]})
     assert not got.is_error
     assert "state two; next three" in got.content
-    catalog = json.loads((await submit("memory_tasks", {})).content)
+    catalog = json.loads((await submit("memory_search", {"scope": "tasks"})).content)
     entry = next(t for t in catalog["tasks"] if t["task_id"] == created["task_id"])
     assert entry["entry_count"] == 1
     assert entry["latest_memory_id"] == second["memory_id"]
 
     tok_b = bind_chat_conversation("room-b")
     try:
-        cross_result = await submit("memory_remember", {
+        cross_result = await submit("memory_task", {
             "topic": "goal", "summary": "dm secret checkpoint",
-            "task": created["task_id"], "cont": created["memory_id"],
-            "kind": "checkpoint"})
+            "task": created["task_id"], "memory_id": created["memory_id"]})
         assert not cross_result.is_error, cross_result.content
         cross = json.loads(cross_result.content)
         assert cross["memory_id"] != created["memory_id"]
     finally:
         reset_chat_conversation(tok_b)
-    catalog2 = json.loads((await submit("memory_tasks", {})).content)
+    catalog2 = json.loads((await submit("memory_search", {"scope": "tasks"})).content)
     entry2 = next(t for t in catalog2["tasks"] if t["task_id"] == created["task_id"])
     assert entry2["entry_count"] == 2
-    assert "dm secret checkpoint" not in (await submit("memory_get", {"memory_id": created["memory_id"]})).content
+    assert "dm secret checkpoint" not in (await submit("memory_get", {"id": created["memory_id"]})).content
 
-    no_task = await submit("memory_remember", {
-        "topic": "orphan", "summary": "state", "kind": "checkpoint"})
-    assert no_task.is_error
-    assert "checkpoint" in no_task.content and "requires task" in no_task.content
-    with_habit = await submit("memory_remember", {
-        "topic": "goal", "summary": "state", "task": created["task_id"],
-        "kind": "checkpoint", "habit": "label"})
+    no_topic = await submit("memory_task", {"summary": "state"})
+    assert no_topic.is_error
+    assert "topic is required" in no_topic.content
+    with_habit = await submit("memory_task", {
+        "topic": "goal", "summary": "state", "task": created["task_id"], "habit": "label"})
     assert with_habit.is_error
-    assert "does not take a habit" in with_habit.content
+    assert "unexpected argument: habit" in with_habit.content
 
 
 def test_status_cancelled_validation_search_and_catalog(tmp_path) -> None:

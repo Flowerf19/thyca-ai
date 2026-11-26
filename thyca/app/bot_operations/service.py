@@ -314,7 +314,7 @@ class BotOperationsService:
                     team=self._deps.bots.team_index_text(),
                     pending_followup=pending,
                 )
-            hot_tokens, _ = overhead_tokens(hot=hot)
+            hot_tokens, _ = overhead_tokens(hot=hot, thyca_dir=self._deps.root)
         except Exception:
             if strict:
                 raise

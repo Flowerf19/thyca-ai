@@ -205,8 +205,15 @@ class PathGuard:
             return True
         return False
 
+    def _bot_write_denied(self, target: Path) -> bool:
+        bot_id = current_bot_id()
+        if bot_id is None or bot_id == "thyca":
+            return False
+        root = self.thyca_dir
+        return target in (root / "USER.md", root / "SOUL.md", root / "IDENTITY.md")
+
     def _blocked(self, target: Path) -> bool:
-        if self._bot_sensitive(target):
+        if self._bot_sensitive(target) or self._bot_write_denied(target):
             return True
         root = self.thyca_dir
         try:

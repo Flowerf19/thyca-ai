@@ -82,8 +82,13 @@ def test_reindex_fts_and_skip_today(tmp_path: Path) -> None:
     )
     meat = facade.search("thịt quay")
     assert meat.hits
-    today = facade.search("UNIQUE_TODAY_TOKEN")
-    assert today.hits == []
+    fts_today, _, _ = archived.fts_memory_hits("UNIQUE_TODAY_TOKEN", None, at("2026-08-17"), 10)
+    assert fts_today == []
+    assert archived.trigram_hits("UNIQUE_TODAY_TOKEN", None, at("2026-08-17"), 10) == []
+    today = facade.search("UNIQUE_TODAY_TOKEN", now=at("2026-08-17"))
+    assert len(today.hits) == 1
+    assert today.hits[0].memory_id == "2026-08-17#11111111"
+    assert today.hits[0].match_type == "today"
 
 
 def test_trigram_typo_and_get(tmp_path: Path) -> None:
@@ -475,9 +480,11 @@ def test_facade_auto_reindexes_on_forward_day_rollover(tmp_path: Path) -> None:
     day2 = at("2026-08-16")
     facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
     sid = facade.remember("Rollover", "RolloverMarkerXYZ yesterday", now=day1)
-    assert facade.search("RolloverMarkerXYZ", now=day1).hits == []
+    assert facade.archive.fts_memory_hits("RolloverMarkerXYZ", None, day1, 5)[0] == []
+    same_day = facade.search("RolloverMarkerXYZ", now=day1)
+    assert [(hit.memory_id, hit.match_type) for hit in same_day.hits] == [(sid, "today")]
     found = facade.search("RolloverMarkerXYZ", now=day2)
-    assert [hit.memory_id for hit in found.hits] == [sid]
+    assert [(hit.memory_id, hit.match_type) for hit in found.hits] == [(sid, "fts")]
 
     facade2 = MemoryFacade(tmp_path / "h2", timezone_name="Asia/Ho_Chi_Minh")
     h_sid = facade2.remember(

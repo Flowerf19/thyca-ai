@@ -29,6 +29,10 @@ from tests.live.behavior_scenarios import (
     LiveHarnessOps,
     build_behavior_runners,
 )
+from tests.live.edge_scenarios import (
+    EDGE_SCENARIOS,
+    build_edge_runners,
+)
 from thyca.app.chat_app import ChatApp
 from thyca.bots.card import CARD_FILENAME
 from thyca.bots.registry import SYSTEM_BOT_ID
@@ -47,6 +51,8 @@ _MEMORY_ALLOWLIST = (
     "memory_forget",
     "memory_reinforce",
     "compact",
+    "read",
+    "edit",
     "ask_user",
     "message_user",
 )
@@ -496,7 +502,11 @@ TOOL_CALL_SCENARIOS: tuple[str, ...] = (
     "call_must_tasks",
 )
 SCENARIOS: tuple[str, ...] = (
-    WRITE_SCENARIOS + TOOL_CALL_SCENARIOS + NATURAL_SCENARIOS + SAFETY_SCENARIOS
+    WRITE_SCENARIOS
+    + TOOL_CALL_SCENARIOS
+    + NATURAL_SCENARIOS
+    + SAFETY_SCENARIOS
+    + EDGE_SCENARIOS
 )
 
 
@@ -509,6 +519,8 @@ def _suite_for_scenario(name: str) -> str:
         return "natural"
     if name in SAFETY_SCENARIOS:
         return "safety"
+    if name in EDGE_SCENARIOS:
+        return "edge"
     return "unknown"
 
 
@@ -518,7 +530,10 @@ def run_scenario(name: str, *, keep_dir: Path | None = None) -> ScenarioResult:
         raise ValueError(f"unknown scenario {name!r}; choose from {SCENARIOS}")
     cfg = live_config()
     owns_tmp = keep_dir is None
-    root = keep_dir or Path(tempfile.mkdtemp(prefix=f"thyca_live_{name}_"))
+    fake_home = keep_dir or Path(tempfile.mkdtemp(prefix=f"thyca_live_{name}_"))
+    root = fake_home / ".thyca"
+    old_home = os.environ.get("HOME")
+    os.environ["HOME"] = str(fake_home)
     app: ChatApp | None = None
     t0 = time.perf_counter()
     try:
@@ -546,6 +561,7 @@ def run_scenario(name: str, *, keep_dir: Path | None = None) -> ScenarioResult:
             ),
             "call_must_tasks": lambda: scenario_call_must_tasks(app, root, today),
             **build_behavior_runners(app, root, today, yesterday, ops),
+            **build_edge_runners(app, root, today, ops),
         }
         result = runners[name]()
         result.duration_ms = int((time.perf_counter() - t0) * 1000)
@@ -553,21 +569,26 @@ def run_scenario(name: str, *, keep_dir: Path | None = None) -> ScenarioResult:
             result.suite = _suite_for_scenario(name)
         return result
     finally:
+        if old_home is None:
+            os.environ.pop("HOME", None)
+        else:
+            os.environ["HOME"] = old_home
         if app is not None:
             app.shutdown()
         if owns_tmp:
-            shutil.rmtree(root, ignore_errors=True)
+            shutil.rmtree(fake_home, ignore_errors=True)
 
 
 def run_all(
     *, keep_dir: Path | None = None, suite: str = "all"
 ) -> list[ScenarioResult]:
-    """Run scenarios in ``suite``: all | write | tool_call | natural | safety."""
+    """Run scenarios in ``suite``: all | write | tool_call | natural | safety | edge."""
     suite_map: dict[str, tuple[str, ...]] = {
         "write": WRITE_SCENARIOS,
         "tool_call": TOOL_CALL_SCENARIOS,
         "natural": NATURAL_SCENARIOS,
         "safety": SAFETY_SCENARIOS,
+        "edge": EDGE_SCENARIOS,
         "all": SCENARIOS,
     }
     names = suite_map.get(suite, SCENARIOS)
@@ -626,9 +647,9 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Live Thyca memory-agent scenarios")
     parser.add_argument(
         "--suite",
-        choices=("all", "write", "tool_call", "natural", "safety"),
+        choices=("all", "write", "tool_call", "natural", "safety", "edge"),
         default="all",
-        help="write=ledger writes; tool_call=explicit tool prompts; natural=no tool hints; safety=guardrails",
+        help="write=ledger writes; tool_call=explicit tool prompts; natural=no tool hints; safety=guardrails; edge=lifecycle & failure cases",
     )
     parser.add_argument(
         "--scenario",

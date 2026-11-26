@@ -53,12 +53,12 @@ def test_remember_default_month_and_get_resets_ttl(tmp_path: Path) -> None:
     text = daily.read_text(encoding="utf-8")
     meta = next(m for line in text.splitlines() if (m := parse_heading(line)))
     assert meta.importance == 3
-    assert meta.expires_at == "2026-08-31T12:00:00Z"
+    assert meta.expires_at == "2026-08-15T12:00:00Z"
     t1 = t0 + timedelta(days=5)
     facade.get(memory_id=sid, now=t1)
     text = daily.read_text(encoding="utf-8")
     meta = next(m for line in text.splitlines() if (m := parse_heading(line)))
-    assert meta.expires_at == "2026-09-05T12:00:00Z"
+    assert meta.expires_at == "2026-08-20T12:00:00Z"
 
 
 def test_two_facades_serialize_append_with_update(tmp_path: Path, monkeypatch) -> None:
@@ -288,7 +288,7 @@ def test_expired_deleted_on_reindex(tmp_path: Path) -> None:
     facade.remember("x", "ttl-purge-token-zzzx", importance=1, now=t0)
     daily = tmp_path / "memory" / "2026-08-01.md"
     assert "ttl-purge-token-zzzx" in daily.read_text(encoding="utf-8")
-    assert TTL_DAYS[5] == 180
+    assert TTL_DAYS == {1: 3, 2: 7, 3: 14, 4: 30, 5: 90}
     facade._refresh_index(t0 + timedelta(days=4))
     assert "ttl-purge-token-zzzx" not in daily.read_text(encoding="utf-8")
     assert facade.search("ttl-purge-token-zzzx", now=t0 + timedelta(days=4)).hits == []

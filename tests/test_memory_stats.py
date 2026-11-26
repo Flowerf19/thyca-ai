@@ -158,7 +158,7 @@ def test_get_still_slides_ttl(tmp_path: Path) -> None:
         for line in (tmp_path / "memory" / "2026-08-01.md").read_text(encoding="utf-8").splitlines()
         if (parsed := parse_heading(line))
     )
-    assert meta.expires_at == "2026-09-05T12:00:00Z"
+    assert meta.expires_at == "2026-08-20T12:00:00Z"
 
 
 def test_stats_sees_remember_from_other_facade(tmp_path: Path) -> None:

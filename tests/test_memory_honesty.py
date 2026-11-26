@@ -145,11 +145,14 @@ def test_t6c_timeline_day_today_warns(tmp_path: Path) -> None:
     facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
     now = at("2026-08-17")
     assert facade.archive.day(now) == "2026-08-17"
+    sid = facade.remember("today note", "anything unique today", now=now)
     found = facade.search("anything", timeline_day="2026-08-17", now=now)
-    assert found.hits == []
-    assert found.warnings == [
-        "timeline_day 2026-08-17 is not indexed "
-        "(today and future files are excluded)"
+    assert [hit.memory_id for hit in found.hits] == [sid]
+    assert found.warnings == []
+    future = facade.search("anything", timeline_day="2026-08-18", now=now)
+    assert future.hits == []
+    assert future.warnings == [
+        "timeline_day 2026-08-18 is in the future (future files are not indexed)"
     ]
     past = facade.search("anything", timeline_day="2026-08-13", now=now)
     assert past.warnings == []

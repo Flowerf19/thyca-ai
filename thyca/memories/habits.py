@@ -13,13 +13,16 @@ import re
 from pathlib import Path
 
 from thyca.configs import atomic_write_text
-from thyca.memories.archive_store import decode_bots
+from thyca.memories.archive_store import decode_bots, encode_bots
 from thyca.memories.chunk import Chunker
 from thyca.memories.heading import format_ts, is_visible, read_text_file, utc_now
 from thyca.memories.identity import current_bot_id
+from thyca.memories.visibility import current_memory_view
 
 AUTO_START = "<!-- habits:auto:start -->"
 AUTO_END = "<!-- habits:auto:end -->"
+PROFILE_AUTO_START = "<!-- profile:auto:start -->"
+PROFILE_AUTO_END = "<!-- profile:auto:end -->"
 OBS_DAY_RE = re.compile(r"^\s*-\s*(\d{4}-\d{2}-\d{2})\s*:", re.MULTILINE)
 
 FRAME = (
@@ -56,8 +59,14 @@ def habit_observations(facade, bot_id: str | None = None, now=None) -> list[dict
     for row in facade.archive.store.habit_rows(now_ts, reader=reader):
         if not row["day"]:
             continue
+        keys = tuple(row.keys())
+        origin = row["chat"] if "chat" in keys else None
+        if hasattr(facade, "_entry_readable") and not facade._entry_readable(
+            origin, row["bots"], allow_own_cross_window=False
+        ):
+            continue
         day_str = str(row["day"])
-        body_text = str(row["text_raw"] or "") if "text_raw" in tuple(row.keys()) else ""
+        body_text = str(row["text_raw"] or "") if "text_raw" in keys else ""
         days = sorted({day_str, *OBS_DAY_RE.findall(body_text)})
         by_session[str(row["memory_id"])] = {
             "memory_id": str(row["memory_id"]),
@@ -84,6 +93,12 @@ def habit_observations(facade, bot_id: str | None = None, now=None) -> list[dict
         seen_leaves: dict[str, list] = {}
         for chunk in chunks:
             if chunk.kind != "habit" or chunk.memory_id in by_session:
+                continue
+            if hasattr(facade, "_entry_readable") and not facade._entry_readable(
+                getattr(chunk, "chat_session", None),
+                encode_bots(chunk.bots),
+                allow_own_cross_window=False,
+            ):
                 continue
             seen_leaves.setdefault(chunk.memory_id, []).append(chunk)
         for memory_id, leaves in seen_leaves.items():
@@ -215,20 +230,27 @@ def parse_bot_habits(text: str) -> list[str]:
     return labels
 
 
-def strip_auto_habits(text: str) -> str:
-    """Remove ONLY the exact auto-generated habits block.
-
-    Returns the manual profile text unchanged around it. A well-formed
-    block drops through AUTO_END; a start marker without its end hides
-    the rest of the file (the tail is auto-generated garbage, not user
-    content). No file rewrite — projection-time stripping only."""
-    if not isinstance(text, str) or AUTO_START not in text:
-        return text if isinstance(text, str) else ""
-    head, _, tail = text.partition(AUTO_START)
-    if AUTO_END not in tail:
+def _strip_marker_block(text: str, start: str, end: str) -> str:
+    if start not in text:
+        return text
+    head, _, tail = text.partition(start)
+    if end not in tail:
         return head.rstrip("\n") + ("\n" if head.endswith("\n") else "")
-    _, _, rest = tail.partition(AUTO_END)
+    _, _, rest = tail.partition(end)
     return head + rest
+
+
+def strip_auto_habits(text: str) -> str:
+    """Remove auto-generated habits and profile blocks for projection-time safety.
+
+    Returns the manual profile text unchanged around them. Well-formed
+    blocks drop through their end marker; a start marker without its end
+    hides the rest of the file (auto-generated tail, not user content).
+    No file rewrite — projection-time stripping only."""
+    if not isinstance(text, str):
+        return ""
+    out = _strip_marker_block(text, AUTO_START, AUTO_END)
+    return _strip_marker_block(out, PROFILE_AUTO_START, PROFILE_AUTO_END)
 
 
 def known_habit_labels(
@@ -244,7 +266,8 @@ def known_habit_labels(
         if not collapsed or "<!--" in collapsed:
             continue
         seen.setdefault(Chunker.normalize(collapsed), collapsed)
-    if bot_user_path is not None:
+    view = current_memory_view()
+    if bot_user_path is not None and not (view is not None and view.is_group):
         path = Path(bot_user_path)
         try:
             text = path.read_text(encoding="utf-8") if path.is_file() else ""

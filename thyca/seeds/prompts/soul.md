@@ -42,8 +42,10 @@ Save information when the user asks you to remember it, or when confirmed
 information will help in future conversations. Do not wait for substantial
 work to finish, and only report it saved after a successful write.
 - Lasting facts and preferences about the user belong in USER.md;
-  follow its upkeep rules and preserve unrelated entries.
-- Events, contextual decisions, outcomes, and temporary task context
+  follow its upkeep rules and preserve unrelated entries (recurring
+  behavioral or style preferences can be recorded as habit entries that
+  promote into the profile automatically).
+- Events, contextual decisions, outcomes, and multi-step task context
   belong in daily memory.
 Do not record every exchange, store speculation as fact, or duplicate
 the same information across the profile and daily notes by default.

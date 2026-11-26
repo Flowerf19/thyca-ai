@@ -355,11 +355,13 @@ def test_apply_extracted_dedupes_habits_and_groups_other_journal(tmp_path: Path)
         chat="room-1",
     )
     assert len(out1["written"]) == 2
-    assert set(out2["written"]) == set(out1["written"])
+    assert out2["written"][0] == out1["written"][0]
+    assert out2["written"][2] == out1["written"][1]
+    assert out2["written"][1] not in set(out1["written"])
     day = out1["written"][0].split("#")[0]
     text = (tmp_path / "memory" / f"{day}.md").read_text(encoding="utf-8")
     metas = [_parse(line) for line in text.splitlines() if _parse(line)]
-    assert len(metas) == 2
+    assert len(metas) == 3
     assert text.count("Fedora Bazzite") == 1
     assert "CI dùng Fedora container" in text
     habit_meta = next(m for m in metas if m.kind == "habit")

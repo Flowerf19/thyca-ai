@@ -21,9 +21,10 @@ from thyca.memories.habits import (
 from thyca.memories.habits import (
     AUTO_START as LEGACY_AUTO_START,
 )
-
-PROFILE_AUTO_START = "<!-- profile:auto:start -->"
-PROFILE_AUTO_END = "<!-- profile:auto:end -->"
+from thyca.memories.habits import (
+    PROFILE_AUTO_END,
+    PROFILE_AUTO_START,
+)
 
 PROFILE_COMMENT = (
     "<!-- Profile Thyca tự tổng hợp từ quan sát của các bot (auto); "
@@ -154,17 +155,50 @@ def update_profile_block(
     old = _block_lines(text, PROFILE_AUTO_START, PROFILE_AUTO_END)
     lock_ctx = lock_for(path) if lock_for is not None else nullcontext()
     with lock_ctx:
-        if PROFILE_HEADING not in text:
-            text = text.rstrip("\n") + (
-                f"\n\n## Profile\n{PROFILE_COMMENT}\n"
-                f"{PROFILE_AUTO_START}\n{PROFILE_AUTO_END}\n"
-            )
+        text = _ensure_profile_markers(text)
         new_text = _replace_block(text, PROFILE_AUTO_START, PROFILE_AUTO_END, cleaned)
         path.parent.mkdir(parents=True, exist_ok=True)
         atomic_write_text(path, new_text)
     old_keys = {_normalized(line) for line in old}
     new_keys = {_normalized(line) for line in cleaned}
     return len(new_keys - old_keys), len(old_keys - new_keys)
+
+
+def _ensure_profile_markers(text: str) -> str:
+    """Guarantee a balanced ``PROFILE_AUTO_START..PROFILE_AUTO_END`` block under ``## Profile``."""
+    if (
+        PROFILE_AUTO_START in text
+        and PROFILE_AUTO_END in text
+        and text.index(PROFILE_AUTO_START) < text.index(PROFILE_AUTO_END)
+    ):
+        return text
+    lines = text.splitlines(keepends=True)
+    out: list[str] = []
+    index = 0
+    total = len(lines)
+    inserted = False
+    while index < total:
+        out.append(lines[index])
+        if not inserted and lines[index].strip() == PROFILE_HEADING:
+            index += 1
+            while index < total and not lines[index].strip().startswith("## "):
+                out.append(lines[index])
+                index += 1
+            if out and not out[-1].endswith("\n"):
+                out[-1] = out[-1] + "\n"
+            if PROFILE_AUTO_START not in text:
+                out.append(f"{PROFILE_COMMENT}\n{PROFILE_AUTO_START}\n{PROFILE_AUTO_END}\n")
+            else:
+                out.append(f"{PROFILE_AUTO_END}\n")
+            inserted = True
+            continue
+        index += 1
+    if not inserted:
+        return text.rstrip("\n") + (
+            f"\n\n## Profile\n{PROFILE_COMMENT}\n"
+            f"{PROFILE_AUTO_START}\n{PROFILE_AUTO_END}\n"
+        )
+    return "".join(out)
 
 
 def strip_legacy_habits_block(text: str) -> str:

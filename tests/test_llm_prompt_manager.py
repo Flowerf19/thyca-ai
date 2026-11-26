@@ -136,7 +136,11 @@ def test_runtime_guidance_has_one_owner() -> None:
     assert "<today> holds this session's notes for today" in rules
     assert "even if the user has not repeated it" in rules
     assert "Do not search or reread information already present there" in rules
-    assert "Today's daily file is not in archive search" in rules
+    assert "memory_search also searches today's daily file" in rules
+    assert "<open_tasks>" in rules
+    assert "<memory_tasks> is background only" in rules
+    assert "call memory_tasks" in rules
+    assert 'kind="habit"' in rules
     assert "<today_elsewhere>" in rules
     assert "other/unattributed sessions' notes" in rules
     assert "Never assume the user is still on those topics" in rules
@@ -184,3 +188,19 @@ def test_mcp_status_section_rendered_only_when_nonempty() -> None:
     with_status = manager.build(_hot(mcp_status="- tavily: RuntimeError: tls failed"))
     assert "<mcp_status>\n- tavily: RuntimeError: tls failed\n</mcp_status>" in with_status
     assert with_status.index("</mcp_status>") < with_status.index("<rules>")
+
+
+def test_rules_section_rewrites_custom_thyca_dir_and_keeps_default_tilde(tmp_path: Path) -> None:
+    default_dir = Path.home() / ".thyca"
+    assert "~/.thyca/USER.md" in PromptManager(default_dir).rules_section()
+
+    custom_dir = tmp_path / "isolated_profile"
+    custom_dir.mkdir()
+    resolved = str(custom_dir.resolve())
+    custom_rules = PromptManager(custom_dir).rules_section()
+    assert "~/.thyca" not in custom_rules
+    for filename in ("SOUL.md", "IDENTITY.md", "USER.md", "config.json", "read_before_config.md"):
+        assert f"{resolved}/{filename}" in custom_rules
+    built = PromptManager(custom_dir).build(_hot())
+    assert "~/.thyca" not in built
+    assert f"{resolved}/USER.md" in built

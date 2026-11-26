@@ -20,6 +20,7 @@ from thyca.memories.schema import (
 from thyca.memories.usage import LeafUsage, guarded
 
 TRIGRAM_FLOOR = 60
+TYPO_TRIGRAM_FLOOR = 80
 CANDIDATE_CAP = 50
 GET_MEMORY_CAP = 10
 BM25_WEIGHTS = (0.7, 1.2, 0.3)
@@ -349,6 +350,7 @@ class ArchiveStore:
         if cap == 0:
             return []
         tokens = [t for t in _NON_ALNUM.split(query_norm) if len(t) >= 3]
+        grams = tuple({tok[i : i + 3] for tok in tokens for i in range(len(tok) - 2)})
         filter_sql, filter_params = _build_filter_sql(
             timeline_day, project, chat_session, reader, task, kind, status
         )
@@ -360,10 +362,12 @@ class ArchiveStore:
         for row in self._db.execute(sql, [now, *filter_params]):
             title = str(row["memory_title"] or "")
             hay = f"{Chunker.normalize(title)} {row['text_norm']}" if title else row["text_norm"]
-            if tokens and not any(t in hay for t in tokens):
+            has_exact_token = not tokens or any(t in hay for t in tokens)
+            if not has_exact_token and (not grams or not any(g in hay for g in grams)):
                 continue
             score = float(fuzz.partial_ratio(query_norm, hay))
-            if score >= TRIGRAM_FLOOR:
+            floor = TRIGRAM_FLOOR if has_exact_token else TYPO_TRIGRAM_FLOOR
+            if score >= floor:
                 scored.append((score, str(row["chunk_id"]), int(row["row_id"])))
         scored.sort(key=lambda item: (-item[0], item[1]))
         top_scored = scored[:cap]
@@ -472,6 +476,7 @@ class ArchiveStore:
                            MAX(habit) AS habit,
                            MAX(habit_explicit) AS explicit,
                            MAX(bots) AS bots,
+                           MAX(chat_session) AS chat,
                            GROUP_CONCAT(text_raw, char(10)) AS text_raw
                     FROM chunks
                     WHERE kind = 'habit' AND {VISIBLE_SQL}{clause}

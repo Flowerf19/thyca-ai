@@ -110,6 +110,26 @@ def _write_band(message: Message, context_tokens: int, calibration: float) -> in
     return 0
 
 
+def is_checkpoint_call(call) -> bool:
+    """True when ``call`` records a task checkpoint or task status update."""
+    args = call.arguments if isinstance(call.arguments, dict) else {}
+    task_linked = (
+        isinstance(args.get("task"), str) and bool(args["task"].strip())
+    ) or (call.name == "memory_remember" and args.get("new_task") is True)
+    explicit_checkpoint = (
+        call.name in ("memory_remember", "memory_update")
+        and args.get("kind") == "checkpoint"
+        and task_linked
+    )
+    task_status_update = (
+        call.name == "memory_update"
+        and isinstance(args.get("memory_id"), str)
+        and bool(args["memory_id"].strip())
+        and args.get("status") in ("open", "done", "cancelled")
+    )
+    return explicit_checkpoint or task_status_update
+
+
 def checkpoint_state(
     messages: list[Message],
     *,
@@ -122,10 +142,9 @@ def checkpoint_state(
     Evidence is an explicit checkpoint write in the persisted
     transcript: a successful ``memory_remember`` or ``memory_update`` with
     ``kind="checkpoint"`` and a task link (`task` or `new_task` for
-    remember; `task` for update). Ordinary memory writes, habit
-    observations, and updates without ``kind="checkpoint"`` + ``task``
-    never count. The latest qualifying write is fresh only while usage
-    stays in (or below) the band it was written in.
+    remember; `task` for update), or a ``memory_update`` setting a task
+    ``status`` (``open``/``done``/``cancelled``). The latest qualifying write
+    is fresh only while usage stays in (or below) the band it was written in.
     """
     if context_tokens <= 0:
         return "none"
@@ -140,15 +159,7 @@ def checkpoint_state(
         if message.role != "assistant" or not message.tool_calls:
             continue
         for call in message.tool_calls:
-            args = call.arguments if isinstance(call.arguments, dict) else {}
-            task_linked = (
-                isinstance(args.get("task"), str) and bool(args["task"].strip())
-            ) or (call.name == "memory_remember" and args.get("new_task") is True)
-            if (
-                call.name in ("memory_remember", "memory_update")
-                and args.get("kind") == "checkpoint"
-                and task_linked
-            ):
+            if is_checkpoint_call(call):
                 calls[call.id] = _write_band(message, context_tokens, calibration)
     latest_band: int | None = None
     for message in messages[start:]:

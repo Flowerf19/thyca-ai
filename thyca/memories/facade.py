@@ -20,6 +20,8 @@ from thyca.memories.fallback import read_unindexed_chunk
 from thyca.memories.habits import strip_auto_habits
 from thyca.memories.heading import (
     DEFAULT_IMPORTANCE,
+    HABIT_DEFAULT_IMPORTANCE,
+    TASK_DEFAULT_IMPORTANCE,
     TASK_STATUSES,
     TTL_DAYS,
     HeadingMeta,
@@ -41,11 +43,13 @@ from thyca.memories.ledgers import (
     append_other_journal as _append_other_journal,
 )
 from thyca.memories.ledgers import (
+    check_task_close_allowed,
     extract_task_updated_day,
     first_summary_line,
     format_task_catalog,  # noqa: F401 -- reason: re-exported
     locate_visible_block,
     resolve_owners,
+    today_blocks,
     validate_entry_fields,
 )
 from thyca.memories.ledgers import (
@@ -86,7 +90,7 @@ class MemoryFacade:
         topic: str,
         summary: str,
         content: str = "",
-        importance: int = DEFAULT_IMPORTANCE,
+        importance: int | None = None,
         now: datetime | None = None,
         proj: str | None = None,
         chat: str | None = None,
@@ -98,13 +102,24 @@ class MemoryFacade:
         habit: str | None = None,
         habit_explicit: bool = False,
     ) -> str:
-        validate_entry_fields(topic, summary, content, importance)
+        if importance is None:
+            if task is not None:
+                effective_importance = TASK_DEFAULT_IMPORTANCE
+            elif kind == "habit":
+                effective_importance = HABIT_DEFAULT_IMPORTANCE
+            else:
+                effective_importance = DEFAULT_IMPORTANCE
+        else:
+            effective_importance = importance
+        validate_entry_fields(topic, summary, content, effective_importance)
         validate_task_meta(task, cont, kind, status, habit, habit_explicit)
         if isinstance(habit, str):
             habit = " ".join(habit.split())
         normalized_proj = _absolute_proj(proj)
         owners = resolve_owners(bots, current_bot_id())
         with self.writer.mutation_lock():
+            if status in ("done", "cancelled") and task is not None:
+                check_task_close_allowed(self, task, now)
             self.active.ensure_files(now)
             moment = utc_now(now)
             entry = new_entry_id()
@@ -116,8 +131,8 @@ class MemoryFacade:
                 time=hour,
                 title=topic,
                 entry_id=entry,
-                importance=importance,
-                expires_at=expiry_ts(importance, moment),
+                importance=effective_importance,
+                expires_at=expiry_ts(effective_importance, moment),
                 proj=normalized_proj,
                 chat=chat if isinstance(chat, str) and chat.strip() else None,
                 bots=owners,
@@ -275,13 +290,13 @@ class MemoryFacade:
             )
             latest = max(
                 members,
-                key=lambda r: (str(r["last_day"]), int(r["last_line"])),
+                key=lambda r: (str(r["last_day"]), str(r["first_day"]), int(r["last_line"])),
             )
             latest_status = "open"
             latest_memory_id = str(latest["memory_id"])
             for member in sorted(
                 members,
-                key=lambda r: (str(r["last_day"]), int(r["last_line"])),
+                key=lambda r: (str(r["last_day"]), str(r["first_day"]), int(r["last_line"])),
                 reverse=True,
             ):
                 candidate = member["status"]
@@ -346,7 +361,7 @@ class MemoryFacade:
         *,
         task: str,
         status: str | None = None,
-        importance: int = DEFAULT_IMPORTANCE,
+        importance: int | None = None,
         bots: list[str] | tuple[str, ...] | None = None,
         chat: str | None = None,
         proj: str | None = None,
@@ -377,7 +392,7 @@ class MemoryFacade:
         *,
         habit: str,
         habit_explicit: bool = False,
-        importance: int = DEFAULT_IMPORTANCE,
+        importance: int | None = None,
         bots: list[str] | tuple[str, ...] | None = None,
         chat: str | None = None,
         proj: str | None = None,
@@ -493,12 +508,18 @@ class MemoryFacade:
                 body_lines = format_body(summary, content)
         self._check_mutate(memory_id, "update", now)
         with self.writer.mutation_lock():
+            if status in ("done", "cancelled"):
+                effective_task = task or self._lookup_task(memory_id, now)
+                if effective_task is not None:
+                    check_task_close_allowed(self, effective_task, now)
             self.writer.update_memory(
                 memory_id, topic=topic, body_lines=body_lines,
                 proj=normalized_proj, keep_details=keep_details,
                 task=task, cont=cont, kind=kind, status=status,
                 habit=habit.strip() if habit is not None else None,
                 habit_explicit=habit_explicit or None,
+                task_updated_day=self.archive.day(now),
+                reinforce_task_now=utc_now(now),
             )
             self._refresh_index(now)
 
@@ -758,6 +779,22 @@ class MemoryFacade:
         if bots is None:
             return False
         return reader in bots and "team" not in bots
+
+    def _lookup_task(self, sid: str, now: datetime | None) -> str | None:
+        now_ts = format_ts(utc_now(now))
+        try:
+            rows = self.archive.store.get_memory(sid, now_ts)
+        except ArchiveError:
+            rows = []
+        if rows:
+            keys = rows[0].keys()
+            raw = rows[0]["task"] if "task" in keys else None
+            return str(raw) if isinstance(raw, str) and raw else None
+        today_str, _path, _lines, blocks = today_blocks(self, now)
+        for meta, resolved, _start, _end in blocks:
+            if memory_id(today_str, resolved) == sid:
+                return meta.task
+        return None
 
     def _check_mutate(self, memory_id: str, op: str, now: datetime | None = None) -> None:
         if self._may_mutate(memory_id, now):

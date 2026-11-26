@@ -13,8 +13,10 @@ instance (same lifetime as the app: constructed once in __init__).
 from __future__ import annotations
 
 import hashlib
+import inspect
 import time
 from collections.abc import Callable
+from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -31,6 +33,7 @@ from thyca.memories.facade import MemoryFacade
 from thyca.memories.habits import habit_observations
 from thyca.memories.identity import bind_bot_id, reset_bot_id
 from thyca.memories.profile import format_card_line
+from thyca.memories.visibility import MemoryView, bound_memory_view, current_memory_view
 
 if TYPE_CHECKING:
     from thyca.app.webui_channel import WindowRef
@@ -82,7 +85,8 @@ class BackgroundJobsService:
         self._idle_swept: dict[tuple[str, str], tuple[str, int, str, str]] = {}
 
     async def _flush_bot_memory(self, bot_id: str, messages, turn_cfg,
-                                room_id: str | None = None) -> None:
+                                room_id: str | None = None, *,
+                                strict: bool = False) -> None:
         """Extract memories from a bot transcript about to compact (CBE-4).
 
         Same machinery and order as the room idle sweep: the existing
@@ -113,13 +117,37 @@ class BackgroundJobsService:
 
             facade = self.job_facade()
             bot_user_path = self._deps.bots.bot_dir(bot_id) / "USER.md"
+            resolved_window = None
+            if room_id and current_memory_view() is None:
+                try:
+                    binding = self._deps.runtime.workspaces.store.get_binding(
+                        bot_id, room_id
+                    )
+                    if binding is not None and binding.window is not None:
+                        resolved_window = binding.window
+                except Exception:
+                    resolved_window = None
+                if resolved_window is None:
+                    try:
+                        room_conv = self._deps.conversations.store.load(room_id)
+                        resolved_window = self._deps.window_for(room_conv)
+                    except Exception:
+                        resolved_window = None
+            view_ctx = (
+                bound_memory_view(
+                    MemoryView(window=resolved_window, bot_id=bot_id, thyca_dir=self._deps.root)
+                )
+                if resolved_window is not None and current_memory_view() is None
+                else nullcontext()
+            )
             token = bind_bot_id(bot_id)
             try:
-                open_tasks = facade.tasks(status="open").get("tasks", [])
-                today_entries = facade.today_entries(chat=room_id, reader=bot_id)
-                known_habits = mem_habits.known_habit_labels(
-                    facade, bot_id, bot_user_path
-                )
+                with view_ctx:
+                    open_tasks = facade.tasks(status="open").get("tasks", [])
+                    today_entries = facade.today_entries(chat=room_id, reader=bot_id)
+                    known_habits = mem_habits.known_habit_labels(
+                        facade, bot_id, bot_user_path
+                    )
             finally:
                 reset_bot_id(token)
             extracted = await mem_jobs.extract_from_transcript(
@@ -127,6 +155,7 @@ class BackgroundJobsService:
                 open_tasks=open_tasks,
                 today_entries=today_entries,
                 known_habits=known_habits,
+                strict=strict,
             )
             if extracted:
                 mem_jobs.apply_extracted(
@@ -228,9 +257,19 @@ class BackgroundJobsService:
                     return None
                 entry = {"idle_since": last_ts}
                 try:
+                    flush_kwargs: dict[str, Any] = {"room_id": window_id}
+                    try:
+                        params = inspect.signature(self._flush_bot_memory).parameters
+                        if "strict" in params or any(
+                            p.kind is inspect.Parameter.VAR_KEYWORD
+                            for p in params.values()
+                        ):
+                            flush_kwargs["strict"] = True
+                    except (TypeError, ValueError):
+                        pass
                     await self._flush_bot_memory(
                         bot_id, list(sweep_item.messages), bot_cfg,
-                        room_id=window_id,
+                        **flush_kwargs,
                     )
                     sweep_manager.load(conversation_id)
                     compacted = sweep_manager.compact_manual()

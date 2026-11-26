@@ -616,8 +616,11 @@ def run_ledgers_eval(root: Path) -> dict[str, Any]:
         d10, d11 = _day_at(10), _day_at(11)
         sid = f.remember("Rollover", "RolloverCheckToken yesterday", now=d10)
         hid = f.remember("Habit", "Morning coffee", kind="habit", habit="morning coffee", now=d10)
-        assert f.search("RolloverCheckToken", now=d10).hits == []
-        assert [h.memory_id for h in f.search("RolloverCheckToken", now=d11).hits] == [sid]
+        assert f.archive.fts_memory_hits("RolloverCheckToken", None, d10, 5)[0] == []
+        d10_hits = f.search("RolloverCheckToken", now=d10).hits
+        assert [(h.memory_id, h.match_type) for h in d10_hits] == [(sid, "today")]
+        d11_hits = f.search("RolloverCheckToken", now=d11).hits
+        assert [(h.memory_id, h.match_type) for h in d11_hits] == [(sid, "fts")]
         assert any(h.memory_id == sid for h in f.recent(limit=5, now=d11))
         assert f.stats(now=d11).total >= 2
         assert f.tasks(now=d11)["tasks"] == []

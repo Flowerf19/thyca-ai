@@ -12,10 +12,19 @@ import json
 from dataclasses import dataclass
 
 from thyca.core.protocol import Message, parse_ts
-from thyca.memories.heading import validate_task_meta
+from thyca.memories.heading import (
+    DEFAULT_IMPORTANCE,
+    HABIT_DEFAULT_IMPORTANCE,
+    TASK_DEFAULT_IMPORTANCE,
+    validate_task_meta,
+)
 from thyca.memories.identity import bind_bot_id, reset_bot_id
 
 IDLE_SWEEP_SECONDS = 15 * 60
+
+
+class ExtractionError(RuntimeError):
+    """Memory extraction failed (provider error or malformed JSON output)."""
 
 
 @dataclass(frozen=True)
@@ -23,7 +32,7 @@ class ExtractedMemory:
     topic: str
     summary: str
     content: str = ""
-    importance: int = 3
+    importance: int | None = None
     bots: tuple[str, ...] | None = None
     task: str | None = None
     new_task: str | None = None
@@ -121,7 +130,8 @@ def _known_habits_block(known_habits) -> str:
 
 async def extract_from_transcript(connect, model: str, transcript: str,
                                    open_tasks=(), today_entries=(),
-                                   known_habits=()) -> list[ExtractedMemory]:
+                                   known_habits=(), *,
+                                   strict: bool = False) -> list[ExtractedMemory]:
     """Ask the model to list durable delta memories in a strict JSON schema.
 
     ``open_tasks`` is an iterable of ``facade.tasks(status="open")``
@@ -179,9 +189,11 @@ async def extract_from_transcript(connect, model: str, transcript: str,
         reply = await connect.chat(
             [Message(role="user", content=prompt)], None
         )
-    except Exception:
+    except Exception as exc:
+        if strict:
+            raise ExtractionError(f"extractor chat failed: {type(exc).__name__}") from exc
         return []
-    return parse_extraction(getattr(reply, "content", None) or "")
+    return parse_extraction(getattr(reply, "content", None) or "", strict=strict)
 
 
 def _strip_code_fence(text: str) -> str:
@@ -198,7 +210,7 @@ def _strip_code_fence(text: str) -> str:
     return body
 
 
-def parse_extraction(text: str) -> list[ExtractedMemory]:
+def parse_extraction(text: str, *, strict: bool = False) -> list[ExtractedMemory]:
     """Parse the extractor's JSON array; invalid items are dropped.
 
     Phase-1C side fields are sanitized individually: a bad side field
@@ -209,9 +221,13 @@ def parse_extraction(text: str) -> list[ExtractedMemory]:
 
     try:
         data = json.loads(_strip_code_fence(text))
-    except ValueError:
+    except ValueError as exc:
+        if strict:
+            raise ExtractionError("extractor returned invalid JSON") from exc
         return []
     if not isinstance(data, list):
+        if strict:
+            raise ExtractionError("extractor returned non-list JSON")
         return []
     out = []
     for item in data:
@@ -224,7 +240,7 @@ def parse_extraction(text: str) -> list[ExtractedMemory]:
         if not isinstance(summary, str) or not summary.strip():
             continue
         content = item.get("content", "")
-        importance = item.get("importance", 3)
+        raw_importance = item.get("importance")
         bots = item.get("bots")
         task = item.get("task")
         new_task = item.get("new_task")
@@ -251,12 +267,19 @@ def parse_extraction(text: str) -> list[ExtractedMemory]:
         except ValueError:
             task = new_task = cont = kind = status = habit = None
             habit_explicit = False
+        default_imp = (
+            TASK_DEFAULT_IMPORTANCE
+            if (task is not None or new_task is not None)
+            else (HABIT_DEFAULT_IMPORTANCE if kind == "habit" else DEFAULT_IMPORTANCE)
+        )
         out.append(
             ExtractedMemory(
                 topic=topic.strip(),
                 summary=summary.strip(),
                 content=content if isinstance(content, str) else "",
-                importance=importance if importance in (1, 2, 3, 4, 5) else 3,
+                importance=(
+                    raw_importance if raw_importance in (1, 2, 3, 4, 5) else default_imp
+                ),
                 bots=tuple(bots) if isinstance(bots, list) and bots else None,
                 task=task,
                 new_task=new_task,
@@ -344,7 +367,10 @@ def apply_extracted(facade, items: list[ExtractedMemory], *, default_bot: str = 
             else:
                 sid = facade.append_other_journal(
                     item.topic, item.summary, content=item.content,
-                    importance=item.importance, bots=owners, chat=chat,
+                    importance=(
+                        DEFAULT_IMPORTANCE if item.importance is None else item.importance
+                    ),
+                    bots=owners, chat=chat,
                 )
             if sid is not None and sid not in written:
                 written.append(sid)

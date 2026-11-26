@@ -201,7 +201,7 @@ def _search_spec(facade: MemoryFacade) -> ToolSpec:
         timeline_day = args.get("timeline_day")
         if timeline_day is not None and DATE_RE.fullmatch(timeline_day) is None:
             raise ValueError(
-                f"timeline_day must be YYYY-MM-DD (closed past day), got {timeline_day!r}"
+                f"timeline_day must be YYYY-MM-DD (today or past day), got {timeline_day!r}"
             )
         task = args.get("task")
         if task is not None and TASK_ID_RE.fullmatch(task) is None:
@@ -233,10 +233,11 @@ def _search_spec(facade: MemoryFacade) -> ToolSpec:
     return ToolSpec(
         name="memory_search",
         description=(
-            "Lexical search (FTS + trigram) over archived closed days and profile files "
-            "(today is in <today>, or read <today_elsewhere> via memory_get). "
-            "Pass 2-6 concise keywords, not full sentences. If has_more=true or snippet "
-            "is truncated, call memory_get(memory_id=...). Retry once or admit miss if empty."
+            "Lexical search (FTS + trigram) over archived days, today's daily file, and profile "
+            "files (check <today> first; use this when <today> is truncated, <today_elsewhere> "
+            "overflowed, or info is older). Pass 2-6 concise keywords, not full sentences. If "
+            "has_more=true or snippet is truncated, call memory_get(memory_id=...). Retry once "
+            "or admit miss if empty."
         ),
         parameters={
             "type": "object",
@@ -246,7 +247,7 @@ def _search_spec(facade: MemoryFacade) -> ToolSpec:
                     "description": "2-6 concise keywords or entity names (not full questions).",
                 },
                 "limit": {"type": "integer"},
-                "timeline_day": {"type": "string", "description": "Closed day YYYY-MM-DD."},
+                "timeline_day": {"type": "string", "description": "Day YYYY-MM-DD (today or past)."},
                 "proj": {"type": "string", "description": "Exact absolute project root filter."},
                 "chat": {"type": "string"},
                 "task": {"type": "string", "description": "Filter by task-<8 hex>."},
@@ -340,7 +341,7 @@ def _reinforce_spec(facade: MemoryFacade) -> ToolSpec:
 
     return ToolSpec(
         name="memory_reinforce",
-        description="Extend expiry (optionally raise importance 1..5: 3d/7d/30d/90d/180d) by memory_id.",
+        description="Extend expiry (optionally raise importance 1..5: 3d/7d/14d/30d/90d) by memory_id.",
         parameters={
             "type": "object",
             "properties": {
@@ -371,8 +372,9 @@ def _tasks_spec(facade: MemoryFacade) -> ToolSpec:
     return ToolSpec(
         name="memory_tasks",
         description=(
-            "List task catalog (archived + today) by status/date range; returns task_id "
-            "and latest_memory_id to continue/close without duplicates."
+            "List task catalog (archived + today, including dormant >7d and done/cancelled tasks) "
+            "by status/date range; returns task_id and latest_memory_id to inspect, continue, "
+            "reopen, or close without duplicates."
         ),
         parameters={
             "type": "object",
@@ -411,9 +413,10 @@ def _update_spec(facade: MemoryFacade) -> ToolSpec:
     return ToolSpec(
         name="memory_update",
         description=(
-            "Edit an existing L2 entry in-place by memory_id (avoids duplicates). "
-            "Read via memory_get first if not in <today>; omit unchanged fields; "
-            "content requires summary; blank titles/summaries rejected."
+            "Edit an existing L2 entry in-place by memory_id (avoids duplicates; refreshes task "
+            "updated date and TTL when editing a task). Read via memory_get first if not in "
+            "<today>; omit unchanged fields; content requires summary; blank titles/summaries "
+            "rejected."
         ),
         parameters={
             "type": "object",

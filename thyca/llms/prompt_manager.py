@@ -14,6 +14,16 @@ _STUB_USER = frozenset({"", "# User"})
 
 
 class PromptManager:
+    def __init__(self, thyca_dir: Path | str | None = None) -> None:
+        self._thyca_dir = Path(thyca_dir) if thyca_dir is not None else None
+
+    def _rules_root(self) -> str:
+        if self._thyca_dir is None:
+            return "~/.thyca"
+        resolved = self._thyca_dir.expanduser().resolve()
+        default = (Path.home() / ".thyca").resolve()
+        return "~/.thyca" if resolved == default else str(resolved)
+
     def build(self, hot: ActiveSnapshot) -> str:
         soul = hot.soul.strip()
         identity = hot.identity.strip()
@@ -54,7 +64,9 @@ class PromptManager:
         return "\n".join(parts)
 
     def rules_section(self) -> str:
-        return (_PROMPTS_DIR / "rules.md").read_text(encoding="utf-8").rstrip("\n")
+        text = (_PROMPTS_DIR / "rules.md").read_text(encoding="utf-8").rstrip("\n")
+        root = self._rules_root()
+        return text if root == "~/.thyca" else text.replace("~/.thyca", root)
 
     def template(self, name: str) -> str:
         key = name.strip().lower()

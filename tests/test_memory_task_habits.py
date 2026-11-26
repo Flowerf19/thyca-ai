@@ -821,24 +821,35 @@ def test_append_other_journal_groups_scope_and_skips_duplicates(tmp_path) -> Non
         "CI Fedora", "CI trên Fedora cần cài thêm util-linux",
         chat="room-a", bots=["coder"], now=at(2, 12)
     )
+    sid_same_topic = facade.append_other_journal(
+        "CI Fedora", "Runner bật cache pip", content="Giảm thời gian build",
+        chat="room-a", bots=["coder"], now=at(2, 12)
+    )
     sid_other_room = facade.append_other_journal(
         "Phòng khác", "Fact riêng phòng B", chat="room-b", bots=["coder"], now=at(2, 13)
     )
-    assert sid1 == sid_dup == sid2 == sid_fuzzy
-    assert sid_other_room != sid1
+    assert sid1 == sid_dup
+    assert sid2 != sid1
+    assert sid2 == sid_fuzzy == sid_same_topic
+    assert sid_other_room not in {sid1, sid2}
 
     path = tmp_path / "memory" / "2026-09-02.md"
     day_text = path.read_text(encoding="utf-8")
-    assert day_text.count("## ") == 2
-    assert "Môi trường · CI Fedora" in day_text
+    assert day_text.count("## ") == 3
+    assert "Môi trường · CI Fedora" not in day_text
     assert day_text.count("Máy chạy Fedora Bazzite") == 1
     assert "CI trên Fedora cần cài thêm util-linux" not in day_text
-    assert "  - 19:00 — CI Fedora: CI cần cài util-linux" in day_text
-    assert "    Cho script test" in day_text
+    assert "  - 19:00 — Runner bật cache pip" in day_text
+    assert "    Giảm thời gian build" in day_text
 
     chunks = Chunker().chunk_markdown(path, day_text, source_kind="daily", timeline_day="2026-09-02")
-    room_a_chunks = [c for c in chunks if c.memory_id == sid1]
-    assert len(room_a_chunks) == 1
+    room_a_ci_chunks = [c for c in chunks if c.memory_id == sid2]
+    assert len(room_a_ci_chunks) == 1
+
+    facade.forget(sid2, now=at(2, 14))
+    after_forget = path.read_text(encoding="utf-8")
+    assert "Máy chạy Fedora Bazzite" in after_forget
+    assert "CI cần cài util-linux" not in after_forget
 
 
 def test_migration_v9_to_v10_keeps_usage_and_indexes_title_and_d_stroke(tmp_path) -> None:

@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
 
 from thyca.agents.compacting import compact_with_llm
-from thyca.agents.context_budget import checkpoint_state
+from thyca.agents.context_budget import checkpoint_state, is_checkpoint_call
 from thyca.agents.events import EventSink, wire_retry_events
 from thyca.agents.shrink import estimate_wire_tokens
 from thyca.bots.bus import MAX_REF_CHARS, MAX_REFS, Bus, Envelope, new_span_id
@@ -49,6 +49,7 @@ from thyca.conversations.runtime.store import ConversationStore
 from thyca.conversations.runtime.summary import SUMMARY_MAX_CHARS
 from thyca.core.channel import WORK_REF_RE, WindowRef
 from thyca.core.channel import WindowRef as _PrivateWindow
+from thyca.core.context import BACKSTOP_RATIO
 from thyca.core.protocol import Message as _Msg
 from thyca.llms.llm_base import LLMError
 from thyca.llms.llm_factory import ConnectFactory
@@ -67,10 +68,8 @@ if TYPE_CHECKING:
 
 ADMIN_TOOL_PREFIX = "bot_"
 
-MEMORY_READ_TOOLS = frozenset({"memory_search", "memory_recent", "memory_get", "memory_tasks"})
-MEMORY_WRITE_TOOLS = frozenset(
-    {"memory_remember", "memory_update", "memory_forget", "memory_reinforce"}
-)
+MEMORY_READ_TOOLS = frozenset({"memory_search", "memory_get"})
+MEMORY_WRITE_TOOLS = frozenset({"memory_note", "memory_task", "memory_forget"})
 
 PEER_TOOL_NAMES = frozenset({"bot_send", "bot_fetch", "task_open", "message_user", "ask_user", "report_error"})
 
@@ -127,7 +126,9 @@ def filtered_tool_schemas(
     ]
 
 
-def _force_compact(connect, conversations, model: str, turn_cfg) -> dict:
+def _force_compact(
+    connect, conversations, model: str, turn_cfg, *, drop_prior: bool = False
+) -> dict:
     """Agent-invoked compaction of the current conversation (TURN-CURATE).
 
     ``LlmSummarizer`` lives under ``thyca.app`` which imports this module,
@@ -142,23 +143,77 @@ def _force_compact(connect, conversations, model: str, turn_cfg) -> dict:
         model=model,
         pricing=turn_cfg.effective_pricing() or None,
         force=True,
+        drop_prior=drop_prior,
     )
 
 
-def _segment_checkpointed(messages, context_tokens: int) -> bool:
-    """True when the agent recorded a checkpoint in the current segment.
+def _segment_checkpointed(
+    messages,
+    context_tokens: int,
+    *,
+    current_ratio: float = BACKSTOP_RATIO,
+) -> bool:
+    """True when the agent recorded a fresh checkpoint for the current band.
 
-    Reuses the context-budget evidence rule (kind='checkpoint' + task link
-    after the last compaction marker); band freshness is irrelevant here —
-    any checkpoint means the agent already wrote what matters, so the
-    system's mono extraction can stand down.
-    """
-
-    return checkpoint_state(
+    A checkpoint written in an earlier lower context band (``stale``) must
+    not suppress the pre-compaction memory flush, otherwise post-checkpoint
+    work would be lost at compaction. Legacy/unmetered checkpoints without
+    token metadata count as fresh only when no later user/assistant turn
+    followed them."""
+    if context_tokens <= 0:
+        return False
+    state = checkpoint_state(
         messages,
         context_tokens=context_tokens,
-        current_ratio=0.0,
-    ) != "none"
+        current_ratio=current_ratio,
+    )
+    if state == "recorded":
+        return True
+    if state == "none":
+        return False
+    start = 0
+    for index, message in enumerate(messages):
+        if message.role == "system" and (message.content or "").startswith(
+            "[compaction: "
+        ):
+            start = index + 1
+    segment = messages[start:]
+    latest_has_telemetry = False
+    latest_tool_index = -1
+    qualifying: dict[str, bool] = {}
+    for message in segment:
+        if message.role != "assistant" or not message.tool_calls:
+            continue
+        meta = message.meta or {}
+        usage = meta.get("usage")
+        has_usage = (
+            isinstance(usage, dict)
+            and isinstance(usage.get("prompt_tokens"), int)
+            and not isinstance(usage.get("prompt_tokens"), bool)
+            and usage["prompt_tokens"] > 0
+        )
+        has_est = (
+            isinstance(meta.get("estimate_tokens"), int)
+            and not isinstance(meta.get("estimate_tokens"), bool)
+            and meta["estimate_tokens"] > 0
+        )
+        has_telemetry = has_usage or has_est
+        for call in message.tool_calls:
+            if is_checkpoint_call(call):
+                qualifying[call.id] = has_telemetry
+    for index, message in enumerate(segment):
+        if message.role != "tool":
+            continue
+        call_id = message.tool_call_id or ""
+        if call_id not in qualifying or (message.meta or {}).get("is_error"):
+            continue
+        latest_has_telemetry = qualifying[call_id]
+        latest_tool_index = index
+    if latest_tool_index < 0 or latest_has_telemetry:
+        return False
+    return not any(
+        msg.role in ("user", "assistant") for msg in segment[latest_tool_index + 1 :]
+    )
 
 
 @_dataclass
@@ -635,6 +690,7 @@ class BotRuntime:
                 model=model,
                 pricing=turn_cfg.effective_pricing() or None,
                 context_tokens=turn_cfg.effective_limits().contextTokens,
+                thyca_dir=self._dir,
             )
             limits = turn_cfg.effective_limits()
             hot = scope.memory.refresh(
@@ -722,7 +778,9 @@ class BotRuntime:
             if self.memory_flush is not None:
                 try:
 
-                    _hot_tokens, _tools_tokens = overhead_tokens(hot, filtered)
+                    _hot_tokens, _tools_tokens = overhead_tokens(
+                        hot, filtered, thyca_dir=self._dir
+                    )
                     plan = conversations.compactor.plan(
                         list(conversations.current.messages),
                         turn_cfg.effective_limits().contextTokens,
@@ -790,8 +848,8 @@ class BotRuntime:
                     pending_private_id=(
                         _active_pf.pending_id if _active_pf is not None else None
                     ),
-                    compact=lambda: _force_compact(
-                        connect, conversations, model, turn_cfg
+                    compact=lambda *, drop_prior=False: _force_compact(
+                        connect, conversations, model, turn_cfg, drop_prior=drop_prior
                     ),
                 )
             )
@@ -831,7 +889,7 @@ class BotRuntime:
                             "model": model,
                             "provider": turn_cfg.provider_id_for(model),
                             "base_url": turn_cfg.effective_provider_for(model).baseUrl,
-                            "system": PromptManager().build(final_hot),
+                            "system": PromptManager(self._dir).build(final_hot),
                             "tools": list(filtered or []),
                         })
 

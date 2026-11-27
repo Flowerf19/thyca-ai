@@ -71,6 +71,7 @@ class ActiveSnapshot:
     channel_brief: str = ""
     private_followup: str = ""
     mcp_status: str = ""
+    today_day: str = ""
 
 
 class ActiveMemory:
@@ -204,6 +205,7 @@ class ActiveMemory:
                 )
             ),
             today_elsewhere=elsewhere_text,
+            today_day=day_str,
         )
 
     def _now(self) -> datetime:

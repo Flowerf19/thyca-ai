@@ -24,11 +24,17 @@ from thyca.core.channel import WindowRef
 from thyca.core.protocol import estimate_tokens as _chars_to_tokens
 from thyca.llms.prompt_manager import PromptManager
 from thyca.memories.active import ActiveSnapshot
-from thyca.memories.facade import format_task_catalog
 from thyca.memories.habits import strip_auto_habits
+from thyca.memories.task_ledger import (
+    HOT_TASK_MAX_AGE_DAYS,
+    HOT_TASK_PROMPT_LIMIT,
+    format_task_catalog,
+)
 
 
-def overhead_tokens(hot=None, tool_schemas=None) -> tuple[int, int]:
+def overhead_tokens(
+    hot=None, tool_schemas=None, *, thyca_dir: Path | None = None
+) -> tuple[int, int]:
     """Shared hot/tool overhead composer (chars-to-tokens estimate).
 
     One rule for every site that prices prepared turn inputs: the
@@ -39,7 +45,9 @@ def overhead_tokens(hot=None, tool_schemas=None) -> tuple[int, int]:
 
 
     hot_tokens = (
-        _chars_to_tokens(PromptManager().build(hot)) if hot is not None else 0
+        _chars_to_tokens(PromptManager(thyca_dir).build(hot))
+        if hot is not None
+        else 0
     )
     tools_tokens = (
         _chars_to_tokens(_json.dumps(tool_schemas or [], ensure_ascii=False))
@@ -161,7 +169,15 @@ class WorkspaceContextBuilder:
                     if item.memory_row is not None
                 ]
                 if rows:
-                    hot = replace(hot, memory_tasks=format_task_catalog(rows))
+                    hot = replace(
+                        hot,
+                        memory_tasks=format_task_catalog(
+                            rows,
+                            limit=HOT_TASK_PROMPT_LIMIT,
+                            reference_day=hot.today_day or None,
+                            max_age_days=HOT_TASK_MAX_AGE_DAYS,
+                        ),
+                    )
         if recalled and memory_ok:
             hot = replace(hot, recalled="\n".join(str(line) for line in recalled))
         if room_delta:
@@ -204,6 +220,7 @@ class WorkspaceContextBuilder:
         tools_tokens: int,
         can_read: bool,
         can_write: bool,
+        prompts: PromptManager | None = None,
     ) -> object:
         """The two-pass ``<context_budget>`` signal (moved verbatim from
         AgentLoop: same timing inputs, same 80/90/95 math and renderer)."""
@@ -211,7 +228,7 @@ class WorkspaceContextBuilder:
         if not isinstance(hot, ActiveSnapshot) or context_tokens is None:
             return hot
         baseline = replace(hot, context_budget="")
-        baseline_hot = _chars_to_tokens(PromptManager().build(baseline))
+        baseline_hot = _chars_to_tokens((prompts or PromptManager()).build(baseline))
 
         def _usage(signal_text: str) -> dict:
             signal_tokens = (

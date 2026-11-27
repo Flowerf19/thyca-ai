@@ -58,6 +58,7 @@ class WindowBinding:
     window_id: str
     internal_conversation_id: str | None = None
     cursor: tuple[int, str] | None = None
+    memory_cursor: tuple[str, str] | None = None
     window: WindowRef | None = None
     extra: dict = field(default_factory=dict)
 
@@ -67,6 +68,8 @@ class WindowBinding:
             entry["conversation"] = self.internal_conversation_id
         if self.cursor is not None:
             entry["room_cursor"], entry["room_fingerprint"] = self.cursor
+        if self.memory_cursor is not None:
+            entry["memory_cursor_ts"], entry["memory_cursor_digest"] = self.memory_cursor
         if self.window is not None:
             entry["window"] = self.window.to_dict()
         return entry
@@ -77,7 +80,14 @@ def _entry_to_binding(window_id: str, entry: dict) -> WindowBinding:
         raise WorkspaceStoreError(
             f"registry entry for window {window_id!r} must be a dict"
         )
-    known = {"conversation", "room_cursor", "room_fingerprint", "window"}
+    known = {
+        "conversation",
+        "room_cursor",
+        "room_fingerprint",
+        "memory_cursor_ts",
+        "memory_cursor_digest",
+        "window",
+    }
     extra = {k: v for k, v in entry.items() if k not in known}
     conversation = entry.get("conversation")
     if conversation is not None and not isinstance(conversation, str):
@@ -93,6 +103,15 @@ def _entry_to_binding(window_id: str, entry: dict) -> WindowBinding:
                 "room_cursor/room_fingerprint must be int + string"
             )
         cursor = (count, fingerprint)
+    mem_ts, mem_digest = entry.get("memory_cursor_ts"), entry.get("memory_cursor_digest")
+    memory_cursor = None
+    if mem_ts is not None or mem_digest is not None:
+        if not isinstance(mem_ts, str) or not isinstance(mem_digest, str):
+            raise WorkspaceStoreError(
+                f"registry entry for window {window_id!r}: "
+                "memory_cursor_ts/memory_cursor_digest must be strings"
+            )
+        memory_cursor = (mem_ts, mem_digest)
     window = entry.get("window")
     if window is not None:
         try:
@@ -105,6 +124,7 @@ def _entry_to_binding(window_id: str, entry: dict) -> WindowBinding:
         window_id=window_id,
         internal_conversation_id=conversation,
         cursor=cursor,
+        memory_cursor=memory_cursor,
         window=window,
         extra=extra,
     )
@@ -296,6 +316,7 @@ class WorkspaceStore:
         window: WindowRef | None = None,
         internal_conversation_id: str | None = None,
         cursor: tuple[int, str] | None = None,
+        memory_cursor: tuple[str, str] | None = None,
         generate_conversation: bool = False,
     ) -> WindowBinding:
         """Single read-modify-write helper (caller holds the txn lock)."""
@@ -314,6 +335,8 @@ class WorkspaceStore:
             binding.internal_conversation_id = _new_internal_conversation_id()
         if cursor is not None:
             binding.cursor = cursor
+        if memory_cursor is not None:
+            binding.memory_cursor = memory_cursor
         windows[window_id] = binding.to_entry()
         doc.setdefault("version", REGISTRY_VERSION)
         return binding
@@ -355,4 +378,22 @@ class WorkspaceStore:
             if window_id not in doc["windows"]:
                 return
             self._update_locked(bot_id, doc, window_id, cursor=cursor)
+            self._write_registry_doc(bot_id, path, doc)
+
+    def set_memory_cursor(
+        self, bot_id: str, window_id: str,
+        cursor: tuple[str, str] | None,
+    ) -> None:
+        """Persist the latest extracted message watermark on an existing binding."""
+        if cursor is None:
+            return
+        ts, digest = cursor
+        if not isinstance(ts, str) or not isinstance(digest, str):
+            return
+        path = self._registry_path(bot_id)
+        with self._txn_lock(bot_id):
+            doc = self._read_registry_doc(bot_id)
+            if window_id not in doc["windows"]:
+                return
+            self._update_locked(bot_id, doc, window_id, memory_cursor=cursor)
             self._write_registry_doc(bot_id, path, doc)

@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import json as _json
 from dataclasses import replace
 from pathlib import Path
 
@@ -252,9 +251,9 @@ def test_no_flush_when_agent_checkpointed_segment(tmp_path: Path) -> None:
         manager.append(Message(
             role="assistant", content="",
             tool_calls=[ToolCall(
-                id="call-ckpt", name="memory_remember",
+                id="call-ckpt", name="memory_task",
                 arguments={"topic": "Goal", "summary": "Done A; next B",
-                           "kind": "checkpoint", "task": "task-1234abcd"},
+                           "task": "task-1234abcd"},
             )],
             ts="2026-08-01T10:20:00Z",
         ))
@@ -349,6 +348,63 @@ def test_aggregate_team_profiles_skips_without_input(tmp_path: Path) -> None:
     app = _chat(tmp_path, llm)
     try:
         assert app.aggregate_team_profiles()["ran"] is False
+    finally:
+        app.shutdown()
+
+
+def test_thyca_explicit_habit_reaches_user_direct_and_idle_sweep_promotes_bot_habits(
+    tmp_path: Path, monkeypatch
+) -> None:
+    llm = _CaptureLLM()
+    app = _chat(tmp_path, llm)
+    try:
+        app._bots.create(
+            BotCard(
+                bot_id="march7th",
+                name="march7th",
+                role="Assistant",
+                description="Daily updates.",
+                persona="",
+            )
+        )
+        facade = app._background_jobs.job_facade()
+        tok = bind_bot_id("thyca")
+        try:
+            facade.record_habit_entry(
+                "Reply style",
+                "User luôn muốn trả lời ngắn gọn thẳng vào vấn đề",
+                habit="tra loi ngan gon thang vao van de",
+                habit_explicit=True,
+            )
+        finally:
+            reset_bot_id(tok)
+        tok2 = bind_bot_id("march7th")
+        try:
+            facade.record_habit_entry(
+                "News layout",
+                "Bản tin 4 dòng văn bản thuần",
+                habit="ban tin 4 dong van ban thuan",
+                habit_explicit=True,
+            )
+        finally:
+            reset_bot_id(tok2)
+
+        direct = app._background_jobs._user_direct_profile_observations()
+        assert any(r["habit"] == "tra loi ngan gon thang vao van de" for r in direct)
+
+        calls = []
+        monkeypatch.setattr(
+            app._background_jobs._deps,
+            "scheduled_turn",
+            lambda bot_id, text: (calls.append((bot_id, text)), {"id": "dm"})[1],
+        )
+        app.sweep_idle_conversations(idle_s=900)
+        m7_user = app._bots.bot_dir("march7th") / "USER.md"
+        assert m7_user.is_file()
+        assert "ban tin 4 dong van ban thuan" in m7_user.read_text(encoding="utf-8")
+        assert len(calls) == 1
+        assert "tra loi ngan gon thang vao van de" in calls[0][1]
+        assert "ban tin 4 dong van ban thuan" in calls[0][1]
     finally:
         app.shutdown()
 
@@ -600,11 +656,21 @@ def test_flush_explicit_habit_lands_in_bot_user(tmp_path: Path) -> None:
 
     class HabitLLM:
         async def chat(self, messages, tools=None):
-            return type("R", (), {"content": _json.dumps([{
-                "topic": "morning drink", "summary": "user drinks tea",
-                "kind": "habit", "habit": "uong tra buoi sang",
-                "habit_explicit": True,
-            }])})()
+            return ChatReply(
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="h1",
+                        name="memory_note",
+                        arguments={
+                            "topic": "morning drink",
+                            "summary": "user drinks tea",
+                            "habit": "uong tra buoi sang",
+                            "explicit": True,
+                        },
+                    )
+                ],
+            )
 
     app = _chat(tmp_path, HabitLLM())
     try:

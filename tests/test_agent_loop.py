@@ -607,12 +607,11 @@ def test_loop_injects_context_budget_signal(tmp_path: Path) -> None:
             tool_calls=[
                 ToolCall(
                     id="call-1",
-                    name="memory_remember",
+                    name="memory_task",
                     arguments={
                         "topic": "Goal",
                         "summary": "State",
                         "task": "task-1234abcd",
-                        "kind": "checkpoint",
                     },
                 )
             ],
@@ -688,12 +687,10 @@ def test_loop_checkpoint_tool_call_is_seen_next_turn(tmp_path: Path) -> None:
     gateway = ToolGateway(registry, TaskStore())
     call = ToolCall(
         id="cp-1",
-        name="memory_remember",
+        name="memory_task",
         arguments={
             "topic": "Goal",
             "summary": "Done A; next B",
-            "new_task": True,
-            "kind": "checkpoint",
         },
     )
     llm = FakeLLM([
@@ -714,9 +711,8 @@ def test_loop_checkpoint_tool_call_is_seen_next_turn(tmp_path: Path) -> None:
         observe=Observe(manager),
         loop_max=3,
         tools=[
-            {"type": "function", "function": {"name": "memory_remember"}},
+            {"type": "function", "function": {"name": "memory_task"}},
             {"type": "function", "function": {"name": "memory_search"}},
-            {"type": "function", "function": {"name": "memory_tasks"}},
         ],
         model="m",
         context_tokens=100_000,
@@ -743,12 +739,11 @@ def test_loop_context_budget_marks_old_checkpoint_stale(tmp_path: Path) -> None:
             tool_calls=[
                 ToolCall(
                     id="cp-1",
-                    name="memory_remember",
+                    name="memory_task",
                     arguments={
                         "topic": "Goal",
                         "summary": "Old state",
                         "task": "task-1234abcd",
-                        "kind": "checkpoint",
                     },
                 )
             ],
@@ -807,4 +802,4 @@ def test_loop_context_budget_respects_unavailable_memory_tools(tmp_path: Path) -
     )
     system_text = llm.requests[0][0].content or ""
     assert "Memory write tools are unavailable" in system_text
-    assert "call memory_remember" not in system_text
+    assert "call memory_task" not in system_text

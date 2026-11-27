@@ -23,6 +23,8 @@ from thyca.memories.heading import (
     validate_task_meta,
 )
 
+_TASK_UPDATED_LINE_RE = re.compile(r"^\s*-\s*updated:\s*(\d{4}-\d{2}-\d{2})\s*$")
+
 
 class MemoryWriter:
     _locks: ClassVar[dict[str, threading.RLock]] = {}
@@ -107,6 +109,8 @@ class MemoryWriter:
         status: str | None = None,
         habit: str | None = None,
         habit_explicit: bool | None = None,
+        task_updated_day: str | None = None,
+        reinforce_task_now: datetime | None = None,
     ) -> None:
         """Rewrite one session's title, body, and/or linking metadata in place.
 
@@ -123,6 +127,9 @@ class MemoryWriter:
                 proj=proj, chat=chat, keep_details=keep_details,
                 task=task, cont=cont, kind=kind, status=status, habit=habit,
                 habit_explicit=habit_explicit,
+                origin_day=memory_id.split("#", 1)[0],
+                task_updated_day=task_updated_day,
+                reinforce_task_now=reinforce_task_now,
             )
 
     def _update_memory(
@@ -142,6 +149,9 @@ class MemoryWriter:
         status: str | None = None,
         habit: str | None = None,
         habit_explicit: bool | None = None,
+        origin_day: str = "",
+        task_updated_day: str | None = None,
+        reinforce_task_now: datetime | None = None,
     ) -> None:
         if not path.is_file():
             raise ArchiveError(f"memory file missing: {path}")
@@ -195,14 +205,40 @@ class MemoryWriter:
                 )
             except ValueError as exc:
                 raise ArchiveError(str(exc)) from exc
+            if new_meta.task is not None and reinforce_task_now is not None:
+                new_meta = replace(
+                    new_meta,
+                    expires_at=expiry_ts(new_meta.importance, reinforce_task_now),
+                )
             out.append(render_heading(new_meta))
+            stamp_updated = (
+                new_meta.task is not None
+                and task_updated_day is not None
+                and bool(origin_day)
+                and task_updated_day > origin_day
+            )
             if body_lines is not None:
                 merged = list(body_lines)
                 if keep_details:
                     merged.extend(lines[start + 1 : end][1:])
+                if stamp_updated:
+                    merged = [
+                        line
+                        for line in merged
+                        if not _TASK_UPDATED_LINE_RE.match(line.rstrip("\r\n"))
+                    ]
+                    merged.append(f"  - updated: {task_updated_day}")
                 out.extend(
                     line if line.endswith("\n") else f"{line}\n" for line in merged
                 )
+            elif stamp_updated:
+                existing_body = [
+                    line
+                    for line in lines[start + 1 : end]
+                    if not _TASK_UPDATED_LINE_RE.match(line.rstrip("\r\n"))
+                ]
+                existing_body.append(f"  - updated: {task_updated_day}\n")
+                out.extend(existing_body)
             else:
                 out.extend(lines[start + 1 : end])
             break
@@ -243,14 +279,17 @@ class MemoryWriter:
             return "".join(lines[start:end])
         raise ArchiveError(f"memory not found: {memory_id}")
 
-    def purge_expired(self, now: datetime) -> None:
+    def purge_expired(
+        self, now: datetime, *, keep_day: str | None = None
+    ) -> None:
         memory_dir = self.thyca_dir / "memory"
         dailies = sorted(memory_dir.glob("????-??-??.md")) if memory_dir.is_dir() else []
+        effective_keep = keep_day if keep_day is not None else now.strftime("%Y-%m-%d")
         for path in dailies:
             if not path.is_file() or path.is_symlink():
                 continue
             with self.lock_for(path):
-                self._purge(path, now)
+                self._purge(path, now, keep_day=effective_keep)
 
     def remove_bot_entries(self, bot_id: str) -> int:
         """Drop private entries owned exactly by ``[bot_id]`` (BE-5 delete).
@@ -267,15 +306,18 @@ class MemoryWriter:
                 lines = _read_lines(path)
                 out: list[str] = []
                 pos = 0
+                file_removed = 0
                 for meta, _resolved, start, end in iter_session_blocks(lines, str(path)):
                     out.extend(lines[pos:start])
                     pos = end
                     if meta.bots is not None and list(meta.bots) == [bot_id]:
                         removed += 1
+                        file_removed += 1
                         continue
                     out.extend(lines[start:end])
-                out.extend(lines[pos:])
-                _atomic_write(path, "".join(out))
+                if file_removed:
+                    out.extend(lines[pos:])
+                    _atomic_write(path, "".join(out))
         return removed
 
     def _remove_session(self, path: Path, entry_id: str) -> None:
@@ -297,16 +339,28 @@ class MemoryWriter:
             raise ArchiveError(f"memory not found: {entry_id}")
         _atomic_write(path, "".join(out))
 
-    def _purge(self, path: Path, now: datetime) -> None:
+    def _purge(
+        self, path: Path, now: datetime, *, keep_day: str | None = None
+    ) -> None:
         lines = _read_lines(path)
         out: list[str] = []
         pos = 0
+        removed = False
+        kept_blocks = 0
         for meta, _resolved, start, end in iter_session_blocks(lines, str(path)):
             out.extend(lines[pos:start])
             pos = end
             if is_expired(meta.expires_at, now):
+                removed = True
                 continue
+            kept_blocks += 1
             out.extend(lines[start:end])
+        is_past = keep_day is None or path.stem < keep_day
+        if kept_blocks == 0 and is_past:
+            path.unlink(missing_ok=True)
+            return
+        if not removed:
+            return
         out.extend(lines[pos:])
         _atomic_write(path, "".join(out))
 

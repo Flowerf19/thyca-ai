@@ -57,6 +57,8 @@ def project_work_items(
             work_id=task_id,
             memory_task_id=task_id,
             owner_bot=owner_bot,
+            origin_window=row.get("chat"),
+            current_window=row.get("chat"),
             title=row.get("title"),
             latest_memory_id=row.get("latest_memory_id"),
             status=str(row.get("status") or "open"),

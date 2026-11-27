@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 from thyca.core.protocol import Message, parse_ts
 
 IDLE = timedelta(minutes=15)
-_REMEMBER = "memory_remember"
+_REMEMBER_TOOLS = frozenset({"memory_note", "memory_task"})
 
 
 def ask_remember(messages: list[Message], now: datetime) -> bool:
@@ -23,7 +23,7 @@ def ask_remember(messages: list[Message], now: datetime) -> bool:
         if message.role != "assistant" or not message.tool_calls:
             continue
         for call in message.tool_calls:
-            if call.name != _REMEMBER:
+            if call.name not in _REMEMBER_TOOLS:
                 continue
             result = results.get(call.id)
             if result is None or result[1]:

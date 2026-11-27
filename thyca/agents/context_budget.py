@@ -35,17 +35,17 @@ _FALLBACK_GUIDANCE = {
         "context at compaction."
     ),
     "pressure": (
-        "{action} {urgency} before large work: {lookup}call memory_remember "
-        "with kind='checkpoint' and task/new_task to record only the durable "
-        "delta (goal, decisions, open work, next step, references). Do not "
-        "dump the transcript, secrets, or DM content. After recording, call "
-        "compact to summarize the conversation and free context."
+        "{action} {urgency} before large work: {lookup}call memory_task "
+        "to record only the durable delta (goal, decisions, open work, next "
+        "step, references). Do not dump the transcript, secrets, or DM "
+        "content. After recording, call compact to summarize the conversation "
+        "and free context."
     ),
     "roomy": (
-        "You may proactively checkpoint at a task boundary: call "
-        "memory_remember with kind='checkpoint' and task/new_task, reusing "
-        "ids and references instead of copying memory text. After "
-        "checkpointing a finished task, you may call compact to free context."
+        "You may proactively checkpoint at a task boundary: call memory_task, "
+        "reusing existing task ids and references instead of copying memory "
+        "text. After checkpointing a finished task, you may call compact to "
+        "free context."
     ),
 }
 
@@ -110,6 +110,11 @@ def _write_band(message: Message, context_tokens: int, calibration: float) -> in
     return 0
 
 
+def is_checkpoint_call(call) -> bool:
+    """True when ``call`` records a task checkpoint or task status update."""
+    return call.name == "memory_task"
+
+
 def checkpoint_state(
     messages: list[Message],
     *,
@@ -119,13 +124,10 @@ def checkpoint_state(
 ) -> str:
     """``recorded`` / ``stale`` / ``none`` for the post-compaction segment.
 
-    Evidence is an explicit checkpoint write in the persisted
-    transcript: a successful ``memory_remember`` or ``memory_update`` with
-    ``kind="checkpoint"`` and a task link (`task` or `new_task` for
-    remember; `task` for update). Ordinary memory writes, habit
-    observations, and updates without ``kind="checkpoint"`` + ``task``
-    never count. The latest qualifying write is fresh only while usage
-    stays in (or below) the band it was written in.
+    Evidence is a succeeded ``memory_task`` call in the persisted transcript
+    after the last ``[compaction: ...]`` marker. Ordinary ``memory_note``
+    writes never count. The latest qualifying write is fresh only while
+    usage stays in (or below) the band it was written in.
     """
     if context_tokens <= 0:
         return "none"
@@ -140,15 +142,7 @@ def checkpoint_state(
         if message.role != "assistant" or not message.tool_calls:
             continue
         for call in message.tool_calls:
-            args = call.arguments if isinstance(call.arguments, dict) else {}
-            task_linked = (
-                isinstance(args.get("task"), str) and bool(args["task"].strip())
-            ) or (call.name == "memory_remember" and args.get("new_task") is True)
-            if (
-                call.name in ("memory_remember", "memory_update")
-                and args.get("kind") == "checkpoint"
-                and task_linked
-            ):
+            if is_checkpoint_call(call):
                 calls[call.id] = _write_band(message, context_tokens, calibration)
     latest_band: int | None = None
     for message in messages[start:]:

@@ -101,11 +101,11 @@ def test_memory_and_bash_filters() -> None:
 
     card = _card(memory=BotMemoryPolicy(read=False, write=False),
                  bash="deny",
-                 tools=("memory_search", "memory_remember",
+                 tools=("memory_search", "memory_note", "memory_task",
                         "bash", "read"))
     out = filtered_tool_schemas(
-        _schemas("memory_search", "memory_remember",
-                 "bash", "bot_fetch", "task_open", "read", "memory_tasks"),
+        _schemas("memory_search", "memory_note", "memory_task",
+                 "bash", "bot_fetch", "task_open", "read", "memory_get"),
         card,
     )
     assert [s["function"]["name"] for s in out] == ["bot_fetch", "task_open", "read"]
@@ -146,19 +146,19 @@ def test_bus_rejects_self_send() -> None:
     assert bus.pending("coder") == 0
 
 
-def test_memory_tasks_in_baseline_read_gated_hidden_wins() -> None:
+def test_memory_search_in_baseline_read_gated_hidden_wins() -> None:
 
-    assert "memory_tasks" in BASELINE_BOT_TOOLS
-    card = _card(tools=("memory_tasks", "read"))
-    out = filtered_tool_schemas(_schemas("memory_tasks", "read"), card)
-    assert [s["function"]["name"] for s in out] == ["memory_tasks", "read"]
+    assert "memory_search" in BASELINE_BOT_TOOLS
+    card = _card(tools=("memory_search", "read"))
+    out = filtered_tool_schemas(_schemas("memory_search", "read"), card)
+    assert [s["function"]["name"] for s in out] == ["memory_search", "read"]
     nor = _card(memory=BotMemoryPolicy(read=False, write=True),
-                tools=("memory_tasks", "read"))
+                tools=("memory_search", "read"))
     assert [s["function"]["name"]
-            for s in filtered_tool_schemas(_schemas("memory_tasks", "read"), nor)] == ["read"]
-    hid = _card(tools=("memory_tasks", "read"), hidden_tools=("memory_tasks",))
+            for s in filtered_tool_schemas(_schemas("memory_search", "read"), nor)] == ["read"]
+    hid = _card(tools=("memory_search", "read"), hidden_tools=("memory_search",))
     assert [s["function"]["name"]
-            for s in filtered_tool_schemas(_schemas("memory_tasks", "read"), hid)] == ["read"]
+            for s in filtered_tool_schemas(_schemas("memory_search", "read"), hid)] == ["read"]
 
 
 def test_private_followup_tools_in_baseline() -> None:

@@ -1,7 +1,7 @@
 """Phase 1E: habit_explicit field + per-bot habit sweep."""
 from __future__ import annotations
 
-import json as _json
+import asyncio
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
@@ -10,12 +10,14 @@ import pytest
 import pytest as _pytest
 
 from tests.test_memory_task_habits import _schema_without
+from thyca.core.protocol import ToolCall
 from thyca.memories import habits, jobs
 from thyca.memories.archive_store import ArchiveError
 from thyca.memories.archived import SCHEMA_VERSION
 from thyca.memories.facade import MemoryFacade
 from thyca.memories.heading import HeadingMeta, parse_heading, render_heading
 from thyca.memories.identity import bind_bot_id, reset_bot_id
+from thyca.tools.memory_tools import sidecar_memory_tools
 
 TZ = "Asia/Ho_Chi_Minh"
 
@@ -88,23 +90,37 @@ def test_migration_v8_1a_gains_explicit_column(tmp_path: Path) -> None:
 
 
 def test_extractor_explicit_roundtrip(tmp_path: Path) -> None:
-
-
-    items = jobs.parse_extraction(_json.dumps([
-        {"topic": "t", "summary": "s", "kind": "habit",
-         "habit": "uong tra", "habit_explicit": True},
-        {"topic": "t2", "summary": "s2", "habit_explicit": True},
-    ]))
-    assert [(i.habit_explicit, i.kind) for i in items] == [
-        (True, "habit"), (False, None)]
     facade = MemoryFacade(tmp_path, timezone_name=TZ)
-    out = jobs.apply_extracted(facade, items)
+    registry = sidecar_memory_tools(facade)
+    out = asyncio.run(
+        jobs.apply_memory_tool_calls(
+            registry,
+            [
+                ToolCall(
+                    id="h1",
+                    name="memory_note",
+                    arguments={
+                        "topic": "t",
+                        "summary": "s",
+                        "habit": "uong tra",
+                        "explicit": True,
+                    },
+                ),
+                ToolCall(
+                    id="h2",
+                    name="memory_note",
+                    arguments={"topic": "t2", "summary": "s2", "explicit": True},
+                ),
+            ],
+        )
+    )
+    assert len(out["written"]) == 1
     day = out["written"][0].split("#")[0]
     lines = (tmp_path / "memory" / f"{day}.md").read_text(encoding="utf-8").splitlines()
-    metas = [parse_heading(line) for line in lines]
-    metas = [m for m in metas if m is not None]
+    metas = [m for line in lines if (m := parse_heading(line)) is not None]
+    assert len(metas) == 1
+    assert metas[0].kind == "habit"
     assert metas[0].habit_explicit is True
-    assert metas[1].habit_explicit is False
 
 
 def _remember(facade: MemoryFacade, bot: str, summary: str, day: int,
@@ -268,14 +284,26 @@ def test_sweep_skips_handwritten_marker_label(tmp_path: Path) -> None:
 
 
 def test_extractor_drops_bad_habit_side_fields(tmp_path: Path) -> None:
-
-
-    items = jobs.parse_extraction(_json.dumps([
-        {"topic": "t", "summary": "s", "kind": "habit",
-         "habit": "a\nb", "habit_explicit": True},
-    ]))
-    assert [(i.topic, i.kind, i.habit, i.habit_explicit) for i in items] == [
-        ("t", None, None, False)]
+    facade = MemoryFacade(tmp_path, timezone_name=TZ)
+    registry = sidecar_memory_tools(facade)
+    out = asyncio.run(
+        jobs.apply_memory_tool_calls(
+            registry,
+            [
+                ToolCall(
+                    id="bad",
+                    name="memory_note",
+                    arguments={
+                        "topic": "t",
+                        "summary": "s",
+                        "habit": "a\nb",
+                        "explicit": True,
+                    },
+                )
+            ],
+        )
+    )
+    assert out["written"] == []
 
 
 def test_cross_day_habit_reinforce_count_and_promote(tmp_path: Path) -> None:
@@ -349,3 +377,27 @@ def test_record_habit_entry_isolates_cross_window_summary(tmp_path: Path) -> Non
     day1_text = (tmp_path / "memory" / "2026-09-01.md").read_text(encoding="utf-8")
     assert "PRIVATE_DM_HABIT_TEXT" not in day1_text
     assert "  - 2026-09-02: uong tra" in day1_text
+
+
+def test_memory_note_explicit_habit_sweeps_bot_user_md_immediately(tmp_path: Path) -> None:
+    facade = MemoryFacade(tmp_path, timezone_name=TZ)
+    bot_dir = tmp_path / "bots" / "march7th"
+    bot_dir.mkdir(parents=True, exist_ok=True)
+    registry = sidecar_memory_tools(facade)
+    note_spec = registry.get("memory_note")
+    assert note_spec is not None
+    tok = bind_bot_id("march7th")
+    try:
+        asyncio.run(
+            note_spec.handler({
+                "topic": "URL format",
+                "summary": "Luôn bọc URL trong dấu ngoặc nhọn <...>",
+                "habit": "luon boc URL trong dau ngoac nhon",
+                "explicit": True,
+            })
+        )
+    finally:
+        reset_bot_id(tok)
+    bot_user = bot_dir / "USER.md"
+    assert bot_user.is_file()
+    assert "luon boc URL trong dau ngoac nhon" in bot_user.read_text(encoding="utf-8")

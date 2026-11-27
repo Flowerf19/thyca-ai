@@ -74,13 +74,14 @@ def build_agent_loop(
     model: str | None,
     pricing: dict | None,
     context_tokens: int | None = None,
+    thyca_dir: Path | None = None,
 ) -> AgentLoop:
     """Assemble one AgentLoop: the shared per-turn wiring for ChatApp and Cli.
 
     Both entry points wire the same five stages; only the act instance
     (ChatApp reuses one carrying skills_root, Cli builds one per run) and
     the per-turn pieces differ, so those stay parameters."""
-    prompts = PromptManager()
+    prompts = PromptManager(thyca_dir)
     return AgentLoop(
         conversations=conversations,
         assemble=Assemble(prompts),

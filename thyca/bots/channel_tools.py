@@ -40,31 +40,31 @@ def _owner_of(ctx, deps, work_id: str) -> str | None:
 
 def register_channel_tools(registry: ToolRegistry, deps) -> None:
     """ask_private + private_followup; registered beside admin tools."""
-    _wrap_memory_remember(registry, deps)
+    _wrap_memory_task(registry, deps)
     for spec in (_ask_private_spec(deps), _private_followup_spec(deps)):
         if registry.get(spec.name) is None:
             registry.register(spec)
 
 
-def _wrap_memory_remember(registry: ToolRegistry, deps) -> None:
-    """Capture task ownership on a successful memory_remember(new_task).
+def _wrap_memory_task(registry: ToolRegistry, deps) -> None:
+    """Capture task ownership on a successful new-task memory_task call.
 
     Preserves the original spec name/schema/description — only the
-    handler is wrapped so the canonical task id that new_task minted is
-    bound to the trusted turn sender. Existing memory owner bytes are
-    untouched."""
-    original = registry.get("memory_remember")
+    handler is wrapped so the canonical task id minted when ``task`` is
+    omitted is bound to the trusted turn sender."""
+    original = registry.get("memory_task")
     if original is None or getattr(original.handler, "_pf_wrapped", False):
         return
 
     async def handler(args: dict) -> str:
         result = await original.handler(args)
-        if not args.get("new_task"):
+        if args.get("task"):
             return result
         ctx = _ctx()
         if ctx is None:
             return result
-        task_id = json.loads(result).get("task_id")
+        payload = json.loads(result)
+        task_id = payload.get("task_id")
         if not (isinstance(task_id, str) and WORK_REF_RE.fullmatch(task_id)):
             return result
         store = getattr(deps.runtime.workspaces, "store", None)

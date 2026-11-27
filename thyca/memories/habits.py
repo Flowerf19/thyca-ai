@@ -10,16 +10,35 @@ Only the bot's own file is touched; the shared ``USER.md`` aggregation
 from __future__ import annotations
 
 import re
+from datetime import datetime
 from pathlib import Path
 
 from thyca.configs import atomic_write_text
-from thyca.memories.archive_store import decode_bots
+from thyca.memories.archive_store import decode_bots, encode_bots
 from thyca.memories.chunk import Chunker
-from thyca.memories.heading import format_ts, is_visible, read_text_file, utc_now
+from thyca.memories.heading import (
+    HABIT_DEFAULT_IMPORTANCE,
+    HeadingMeta,
+    format_ts,
+    is_visible,
+    memory_id,
+    read_text_file,
+    utc_now,
+    validate_task_meta,
+)
 from thyca.memories.identity import current_bot_id
+from thyca.memories.ledger_common import (
+    locate_visible_block,
+    resolve_owners,
+    today_blocks,
+    validate_entry_fields,
+)
+from thyca.memories.visibility import current_memory_view
 
 AUTO_START = "<!-- habits:auto:start -->"
 AUTO_END = "<!-- habits:auto:end -->"
+PROFILE_AUTO_START = "<!-- profile:auto:start -->"
+PROFILE_AUTO_END = "<!-- profile:auto:end -->"
 OBS_DAY_RE = re.compile(r"^\s*-\s*(\d{4}-\d{2}-\d{2})\s*:", re.MULTILINE)
 
 FRAME = (
@@ -56,8 +75,14 @@ def habit_observations(facade, bot_id: str | None = None, now=None) -> list[dict
     for row in facade.archive.store.habit_rows(now_ts, reader=reader):
         if not row["day"]:
             continue
+        keys = tuple(row.keys())
+        origin = row["chat"] if "chat" in keys else None
+        if hasattr(facade, "_entry_readable") and not facade._entry_readable(
+            origin, row["bots"], allow_own_cross_window=False
+        ):
+            continue
         day_str = str(row["day"])
-        body_text = str(row["text_raw"] or "") if "text_raw" in tuple(row.keys()) else ""
+        body_text = str(row["text_raw"] or "") if "text_raw" in keys else ""
         days = sorted({day_str, *OBS_DAY_RE.findall(body_text)})
         by_session[str(row["memory_id"])] = {
             "memory_id": str(row["memory_id"]),
@@ -84,6 +109,12 @@ def habit_observations(facade, bot_id: str | None = None, now=None) -> list[dict
         seen_leaves: dict[str, list] = {}
         for chunk in chunks:
             if chunk.kind != "habit" or chunk.memory_id in by_session:
+                continue
+            if hasattr(facade, "_entry_readable") and not facade._entry_readable(
+                getattr(chunk, "chat_session", None),
+                encode_bots(chunk.bots),
+                allow_own_cross_window=False,
+            ):
                 continue
             seen_leaves.setdefault(chunk.memory_id, []).append(chunk)
         for memory_id, leaves in seen_leaves.items():
@@ -120,6 +151,127 @@ def habit_observations(facade, bot_id: str | None = None, now=None) -> list[dict
         record for record in records
         if record["bots"] is not None and bot_id in record["bots"]
     ]
+
+
+def record_habit_entry(
+    facade,
+    topic: str,
+    summary: str,
+    content: str = "",
+    *,
+    habit: str,
+    habit_explicit: bool = False,
+    importance: int | None = None,
+    bots: list[str] | tuple[str, ...] | None = None,
+    chat: str | None = None,
+    proj: str | None = None,
+    now: datetime | None = None,
+) -> str:
+    """Record a habit observation or reinforce an existing habit across days.
+
+    If a matching habit (same normalized label and owner set) already exists
+    today or in an earlier active daily file, renews its TTL instead of
+    minting a new ``##`` block, upgrades ``habit_explicit`` if stated
+    directly, and appends one ``YYYY-MM-DD`` observation line when seen on a
+    new calendar day. Cross-window repeats record only the canonical label to
+    prevent DM text from leaking into group-origin blocks.
+    """
+    effective_importance = (
+        HABIT_DEFAULT_IMPORTANCE if importance is None else importance
+    )
+    validate_entry_fields(topic, summary, content, effective_importance)
+    validate_task_meta(None, None, "habit", None, habit, habit_explicit)
+    clean_habit = " ".join(habit.split())
+    norm_habit = Chunker.normalize(clean_habit)
+    clean_chat = chat.strip() if isinstance(chat, str) and chat.strip() else None
+    owners = resolve_owners(bots, current_bot_id())
+    with facade.writer.mutation_lock():
+        today_str, _path, lines, blocks = today_blocks(facade, now)
+        match: tuple[str, HeadingMeta, list[str]] | None = None
+        for meta, resolved, start, end in blocks:
+            if not is_visible(meta.expires_at, now):
+                continue
+            if meta.kind != "habit" or not meta.habit or meta.bots != owners:
+                continue
+            if Chunker.normalize(" ".join(meta.habit.split())) != norm_habit:
+                continue
+            sid = memory_id(today_str, resolved)
+            if not facade._may_mutate(sid, now):
+                continue
+            body = [
+                line.rstrip("\r\n")
+                for line in lines[start + 1 : end]
+                if line.strip()
+            ]
+            match = (sid, meta, body)
+            break
+        if match is None:
+            facade.archive.reindex(now)
+            now_ts = format_ts(utc_now(now))
+            for row in facade.archive.store.habit_rows(
+                now_ts, reader=current_bot_id()
+            ):
+                if decode_bots(row["bots"]) != owners:
+                    continue
+                row_habit = str(row["habit"] or "")
+                if not row_habit:
+                    continue
+                if Chunker.normalize(" ".join(row_habit.split())) != norm_habit:
+                    continue
+                sid = str(row["memory_id"])
+                if not facade._may_mutate(sid, now):
+                    continue
+                located = locate_visible_block(facade, sid, now)
+                if located is not None:
+                    match = (sid, located[0], located[1])
+                    break
+        if match is not None:
+            sid, existing_meta, body_lines = match
+            existing_days = {
+                sid.split("#", 1)[0],
+                *OBS_DAY_RE.findall("\n".join(body_lines)),
+            }
+            summary_clean = " ".join(summary.split())
+            cross_window = (
+                clean_chat is not None
+                and existing_meta.chat is not None
+                and existing_meta.chat != clean_chat
+            )
+            obs_text = clean_habit if cross_window else summary_clean
+            new_body = (
+                [*body_lines, f"  - {today_str}: {obs_text}"]
+                if today_str not in existing_days
+                else None
+            )
+            upgrade_explicit = (
+                True
+                if (habit_explicit and not existing_meta.habit_explicit)
+                else None
+            )
+            if new_body is not None or upgrade_explicit is not None:
+                facade.writer.update_memory(
+                    sid,
+                    body_lines=new_body,
+                    habit_explicit=upgrade_explicit,
+                )
+            facade.writer.reinforce(
+                sid, importance=max(existing_meta.importance, effective_importance), now=now
+            )
+            facade._refresh_index(now)
+            return sid
+        return facade.remember(
+            topic,
+            summary,
+            content=content,
+            importance=effective_importance,
+            now=now,
+            proj=proj,
+            chat=chat,
+            bots=bots,
+            kind="habit",
+            habit=clean_habit,
+            habit_explicit=habit_explicit,
+        )
 
 
 def sweep_bot_habits(facade, bot_id: str, bot_user_path, now=None) -> list[str]:
@@ -215,20 +367,27 @@ def parse_bot_habits(text: str) -> list[str]:
     return labels
 
 
-def strip_auto_habits(text: str) -> str:
-    """Remove ONLY the exact auto-generated habits block.
-
-    Returns the manual profile text unchanged around it. A well-formed
-    block drops through AUTO_END; a start marker without its end hides
-    the rest of the file (the tail is auto-generated garbage, not user
-    content). No file rewrite — projection-time stripping only."""
-    if not isinstance(text, str) or AUTO_START not in text:
-        return text if isinstance(text, str) else ""
-    head, _, tail = text.partition(AUTO_START)
-    if AUTO_END not in tail:
+def _strip_marker_block(text: str, start: str, end: str) -> str:
+    if start not in text:
+        return text
+    head, _, tail = text.partition(start)
+    if end not in tail:
         return head.rstrip("\n") + ("\n" if head.endswith("\n") else "")
-    _, _, rest = tail.partition(AUTO_END)
+    _, _, rest = tail.partition(end)
     return head + rest
+
+
+def strip_auto_habits(text: str) -> str:
+    """Remove auto-generated habits and profile blocks for projection-time safety.
+
+    Returns the manual profile text unchanged around them. Well-formed
+    blocks drop through their end marker; a start marker without its end
+    hides the rest of the file (auto-generated tail, not user content).
+    No file rewrite — projection-time stripping only."""
+    if not isinstance(text, str):
+        return ""
+    out = _strip_marker_block(text, AUTO_START, AUTO_END)
+    return _strip_marker_block(out, PROFILE_AUTO_START, PROFILE_AUTO_END)
 
 
 def known_habit_labels(
@@ -244,7 +403,8 @@ def known_habit_labels(
         if not collapsed or "<!--" in collapsed:
             continue
         seen.setdefault(Chunker.normalize(collapsed), collapsed)
-    if bot_user_path is not None:
+    view = current_memory_view()
+    if bot_user_path is not None and not (view is not None and view.is_group):
         path = Path(bot_user_path)
         try:
             text = path.read_text(encoding="utf-8") if path.is_file() else ""

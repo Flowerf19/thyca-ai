@@ -5,6 +5,7 @@ from collections.abc import Callable
 from dataclasses import replace
 
 from thyca.conversations.runtime import ConversationManager, calibration_factor
+from thyca.conversations.runtime.wire import is_sidecar_message
 from thyca.core.protocol import Message
 from thyca.core.protocol import estimate_tokens as _chars_to_tokens
 from thyca.llms.pricing import cost_for
@@ -12,7 +13,7 @@ from thyca.llms.prompt_manager import PromptManager
 from thyca.memories.active import ActiveSnapshot
 
 from .act import Act
-from .assemble import Assemble
+from .assemble import Assemble, _is_compaction_marker
 from .compacting import Summarizer, compact_with_llm
 from .events import EventSink, TurnEvent, emit_event
 from .observe import Observe
@@ -42,6 +43,14 @@ def _delta_callback(
             pass
 
     return on_delta
+
+
+def _compaction_signature(messages: list[Message]) -> tuple[str, ...]:
+    return tuple(
+        str(message.content or "")
+        for message in messages
+        if _is_compaction_marker(message) and not is_sidecar_message(message)
+    )
 
 
 def _resolve_cost(stage: Stage, model: str | None, pricing: dict | None) -> None:
@@ -113,9 +122,9 @@ class AgentLoop:
     ) -> object:
         tool_names = self._tool_names()
         can_read = tool_names is None or bool(
-            tool_names & {"memory_search", "memory_recent", "memory_get", "memory_tasks"}
+            tool_names & {"memory_search", "memory_get"}
         )
-        can_write = tool_names is None or "memory_remember" in tool_names
+        can_write = tool_names is None or "memory_task" in tool_names
 
         from thyca.bots.workspace_context import WorkspaceContextBuilder  # noqa: PLC0415 -- reason: break circular import with bots.workspace_context
 
@@ -128,6 +137,7 @@ class AgentLoop:
             tools_tokens=self._tools_tokens(),
             can_read=can_read,
             can_write=can_write,
+            prompts=self._prompts,
         )
 
     async def run(
@@ -251,8 +261,21 @@ class AgentLoop:
             )
             if not stage.reply.tool_calls:
                 return self._observe.assistant(stage)
+            markers_before_act = _compaction_signature(
+                self._conversations.current.messages
+            )
             await self._act.act(stage, event_sink)
             self._observe.observe(stage)
+            if (
+                _compaction_signature(self._conversations.current.messages)
+                != markers_before_act
+            ):
+                stage.hot = self._with_context_budget(
+                    hot, pending_tokens=0, calibration=calibration
+                )
+                stage.messages = list(self._conversations.current.messages)
+                self._assemble.assemble(stage, "", append_user=False)
+                run_start = max(0, len(stage.messages) - (1 + len(stage.results)))
             stage.llm_estimate_tokens = None
             if stage.round == self._loop_max:
                 return self._observe.loop_limit(stage)

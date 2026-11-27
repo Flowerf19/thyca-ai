@@ -13,8 +13,10 @@ instance (same lifetime as the app: constructed once in __init__).
 from __future__ import annotations
 
 import hashlib
+import inspect
 import time
 from collections.abc import Callable
+from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -31,6 +33,7 @@ from thyca.memories.facade import MemoryFacade
 from thyca.memories.habits import habit_observations
 from thyca.memories.identity import bind_bot_id, reset_bot_id
 from thyca.memories.profile import format_card_line
+from thyca.memories.visibility import MemoryView, bound_memory_view, current_memory_view
 
 if TYPE_CHECKING:
     from thyca.app.webui_channel import WindowRef
@@ -82,7 +85,8 @@ class BackgroundJobsService:
         self._idle_swept: dict[tuple[str, str], tuple[str, int, str, str]] = {}
 
     async def _flush_bot_memory(self, bot_id: str, messages, turn_cfg,
-                                room_id: str | None = None) -> None:
+                                room_id: str | None = None, *,
+                                strict: bool = False) -> None:
         """Extract memories from a bot transcript about to compact (CBE-4).
 
         Same machinery and order as the room idle sweep: the existing
@@ -101,38 +105,79 @@ class BackgroundJobsService:
         matters before compacting itself via the ``compact`` tool)."""
 
         card = self._deps.bots.require(bot_id)
+        msg_list = list(messages)
+        binding = None
+        if room_id:
+            try:
+                binding = self._deps.runtime.workspaces.store.get_binding(
+                    bot_id, room_id
+                )
+            except Exception:
+                binding = None
+        after_cursor = binding.memory_cursor if binding is not None else None
+        transcript = mem_jobs.transcript_tail(msg_list, after_cursor=after_cursor)
+        if not transcript.strip():
+            return
+        next_cursor = mem_jobs.latest_extraction_cursor(msg_list)
+
         provider = resolve_bot_provider(turn_cfg, card)
         connect = self._deps.injected_connect or ConnectFactory.create(
             provider.api, provider
         )
         owns = self._deps.injected_connect is None
         try:
-            transcript = mem_jobs.transcript_tail(list(messages))
-            if not transcript.strip():
-                return
-
             facade = self.job_facade()
             bot_user_path = self._deps.bots.bot_dir(bot_id) / "USER.md"
+            resolved_window = None
+            if room_id and current_memory_view() is None:
+                if binding is not None and binding.window is not None:
+                    resolved_window = binding.window
+                if resolved_window is None:
+                    try:
+                        room_conv = self._deps.conversations.store.load(room_id)
+                        resolved_window = self._deps.window_for(room_conv)
+                    except Exception:
+                        resolved_window = None
+            view_ctx = (
+                bound_memory_view(
+                    MemoryView(window=resolved_window, bot_id=bot_id, thyca_dir=self._deps.root)
+                )
+                if resolved_window is not None and current_memory_view() is None
+                else nullcontext()
+            )
             token = bind_bot_id(bot_id)
             try:
-                open_tasks = facade.tasks(status="open").get("tasks", [])
-                today_entries = facade.today_entries(chat=room_id, reader=bot_id)
-                known_habits = mem_habits.known_habit_labels(
-                    facade, bot_id, bot_user_path
-                )
+                with view_ctx:
+                    open_tasks = facade.tasks(status="open").get("tasks", [])
+                    today_entries = facade.today_entries(chat=room_id, reader=bot_id)
+                    known_habits = mem_habits.known_habit_labels(
+                        facade, bot_id, bot_user_path
+                    )
             finally:
                 reset_bot_id(token)
-            extracted = await mem_jobs.extract_from_transcript(
-                connect, turn_cfg.provider.model, transcript,
-                open_tasks=open_tasks,
-                today_entries=today_entries,
-                known_habits=known_habits,
-            )
-            if extracted:
-                mem_jobs.apply_extracted(
-                    facade, extracted, default_bot=bot_id,
-                    open_tasks=open_tasks, chat=room_id,
+            try:
+                await mem_jobs.extract_memories(
+                    connect,
+                    facade,
+                    transcript,
+                    bot_id=bot_id,
+                    open_tasks=open_tasks,
+                    today_entries=today_entries,
+                    known_habits=known_habits,
+                    chat=room_id,
+                    strict=True,
                 )
+            except mem_jobs.ExtractionError:
+                if strict:
+                    raise
+                return
+            if room_id and next_cursor is not None:
+                try:
+                    self._deps.runtime.workspaces.store.set_memory_cursor(
+                        bot_id, room_id, next_cursor
+                    )
+                except Exception:
+                    pass
             try:
                 sweep_token = bind_bot_id(bot_id)
                 try:
@@ -228,9 +273,19 @@ class BackgroundJobsService:
                     return None
                 entry = {"idle_since": last_ts}
                 try:
+                    flush_kwargs: dict[str, Any] = {"room_id": window_id}
+                    try:
+                        params = inspect.signature(self._flush_bot_memory).parameters
+                        if "strict" in params or any(
+                            p.kind is inspect.Parameter.VAR_KEYWORD
+                            for p in params.values()
+                        ):
+                            flush_kwargs["strict"] = True
+                    except (TypeError, ValueError):
+                        pass
                     await self._flush_bot_memory(
                         bot_id, list(sweep_item.messages), bot_cfg,
-                        room_id=window_id,
+                        **flush_kwargs,
                     )
                     sweep_manager.load(conversation_id)
                     compacted = sweep_manager.compact_manual()
@@ -271,6 +326,20 @@ class BackgroundJobsService:
                 if result is not None:
                     key, entry = result
                     bot_report[key] = entry
+        facade = self.job_facade()
+        for doc in self._deps.bots.list():
+            if not doc.ok or doc.card is None:
+                continue
+            bot_id = doc.card.bot_id
+            try:
+                bot_user_path = self._deps.bots.bot_dir(bot_id) / "USER.md"
+                sweep_token = bind_bot_id(bot_id)
+                try:
+                    mem_habits.sweep_bot_habits(facade, bot_id, bot_user_path)
+                finally:
+                    reset_bot_id(sweep_token)
+            except Exception:
+                pass
         try:
             profiles_aggregated = self.aggregate_team_profiles()
         except Exception:
@@ -279,15 +348,22 @@ class BackgroundJobsService:
                 "profiles_aggregated": profiles_aggregated}
 
     def _user_direct_profile_observations(self) -> list[dict]:
-        """kind='habit' observations the user stated directly (no owner)."""
+        """kind='habit' observations the user stated directly (unowned or explicit to Thyca)."""
 
         try:
             records = habit_observations(self.job_facade(), None)
         except Exception:
             return []
-        return [
-            record for record in records if record.get("bots") is None
-        ]
+        out: list[dict] = []
+        for record in records:
+            bots = record.get("bots")
+            if bots is None or (
+                isinstance(bots, (list, tuple))
+                and "thyca" in bots
+                and bool(record.get("habit_explicit"))
+            ):
+                out.append(record)
+        return out
 
     def _profile_card_line(self, bot_id: str) -> str:
 

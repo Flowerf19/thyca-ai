@@ -114,20 +114,21 @@ def test_legacy_card_gets_baseline_but_policies_still_win() -> None:
     legacy = BotCard(bot_id="coder", name="coder", role="C", description="D",
                      persona="P", tools=("read",))
     kept = {s["function"]["name"] for s in filtered_tool_schemas(
-        schemas("bot_send", "bot_fetch", "task_open", "memory_remember", "read"),
+        schemas("bot_send", "bot_fetch", "task_open", "memory_note", "memory_task", "read"),
         legacy)}
-    assert {"bot_fetch", "task_open", "bot_send", "memory_remember", "read"} <= kept
+    assert {"bot_fetch", "task_open", "bot_send", "memory_note", "memory_task", "read"} <= kept
 
     masked = BotCard(bot_id="coder", name="coder", role="C", description="D",
                      persona="P", tools=("read",), hidden_tools=("bot_fetch",),
                      memory=BotMemoryPolicy(read=True, write=False),
                      bash="deny")
     kept = {s["function"]["name"] for s in filtered_tool_schemas(
-        schemas("bot_fetch", "task_open", "memory_remember", "memory_search",
+        schemas("bot_fetch", "task_open", "memory_note", "memory_task", "memory_search",
                 "bash", "read"),
         masked)}
     assert "bot_fetch" not in kept
-    assert "memory_remember" not in kept
+    assert "memory_note" not in kept
+    assert "memory_task" not in kept
     assert "bash" not in kept
     assert {"task_open", "memory_search", "read"} <= kept
 
@@ -1089,22 +1090,29 @@ def test_idle_sweep_retries_after_error_then_skips_unchanged(
             last = messages[-1].content if messages else ""
             if "You extract durable memories from a chat transcript" in (last or ""):
                 self.extract_calls += 1
-                return ChatReply(content=_json.dumps([
-                    {"topic": "Env", "summary": "Recovered fact"}
-                ]))
+                return ChatReply(
+                    content="",
+                    tool_calls=[
+                        ToolCall(
+                            id="ext-1",
+                            name="memory_note",
+                            arguments={"topic": "Env", "summary": "Recovered fact"},
+                        )
+                    ],
+                )
             return ChatReply(content="ok")
 
-    real_apply = jobs.apply_extracted
+    real_apply = jobs.apply_memory_tool_calls
     apply_attempts = 0
 
-    def flaky_apply(*args, **kwargs):
+    async def flaky_apply(*args, **kwargs):
         nonlocal apply_attempts
         apply_attempts += 1
         if apply_attempts == 1:
             raise RuntimeError("boom")
-        return real_apply(*args, **kwargs)
+        return await real_apply(*args, **kwargs)
 
-    monkeypatch.setattr(jobs, "apply_extracted", flaky_apply)
+    monkeypatch.setattr(jobs, "apply_memory_tool_calls", flaky_apply)
 
     llm = ExtractorLLM()
     app = _chat(tmp_path, llm)
@@ -1126,3 +1134,48 @@ def test_idle_sweep_retries_after_error_then_skips_unchanged(
         assert llm.extract_calls == 2
     finally:
         app.shutdown()
+
+
+def test_idle_sweep_persists_memory_cursor_across_restart_and_extracts_delta_only(
+    tmp_path: Path,
+) -> None:
+    class DeltaExtractorLLM:
+        def __init__(self) -> None:
+            self.extract_prompts: list[str] = []
+
+        async def chat(self, messages, tools=None, **kwargs):
+            last = messages[-1].content if messages else ""
+            if "You extract durable memories from a chat transcript" in (last or ""):
+                self.extract_prompts.append(last)
+                return ChatReply(content="[]")
+            return ChatReply(content="noted")
+
+    llm1 = DeltaExtractorLLM()
+    app1 = _chat(tmp_path, llm1)
+    try:
+        dm_id = app1.bot_dm("thyca")["conversation_id"]
+        app1.turn(dm_id, "OLD_FACT_DAY1_UNIQUE")
+        app1.sweep_idle_conversations(idle_s=0)
+        assert len(llm1.extract_prompts) == 1
+        assert "OLD_FACT_DAY1_UNIQUE" in llm1.extract_prompts[0]
+        binding = app1._runtime.workspaces.store.get_binding("thyca", dm_id)
+        assert binding is not None and binding.memory_cursor is not None
+    finally:
+        app1.shutdown()
+
+    llm2 = DeltaExtractorLLM()
+    app2 = _chat(tmp_path, llm2)
+    try:
+        app2.sweep_idle_conversations(idle_s=0)
+        assert llm2.extract_prompts == []
+
+        app2.turn(dm_id, "NEW_FACT_DAY2_UNIQUE")
+        app2.sweep_idle_conversations(idle_s=0)
+        assert len(llm2.extract_prompts) == 1
+        prompt = llm2.extract_prompts[0]
+        assert "NEW TRANSCRIPT:" in prompt
+        _, new_section = prompt.split("NEW TRANSCRIPT:", 1)
+        assert "NEW_FACT_DAY2_UNIQUE" in new_section
+        assert "OLD_FACT_DAY1_UNIQUE" not in new_section
+    finally:
+        app2.shutdown()

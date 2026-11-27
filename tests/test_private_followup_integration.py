@@ -588,10 +588,9 @@ def test_scripted_tool_call_pipeline(tmp_path: Path, sender: str) -> None:
                                "question": "deploy secret?"})])
             if not work_id_box:
                 return ChatReply(content=None, tool_calls=[ToolCall(
-                    id="t1", name="memory_remember",
+                    id="t1", name="memory_task",
                     arguments={"topic": "deploy plan",
-                               "summary": "deploy-steps",
-                               "new_task": True})])
+                               "summary": "deploy-steps"})])
             return ChatReply(content="done")
 
     llm = ScriptedLLM()
@@ -602,7 +601,7 @@ def test_scripted_tool_call_pipeline(tmp_path: Path, sender: str) -> None:
                 bot_id="coder", name="coder", role="Coder",
                 description="Codes.", persona="PERSONA-coder",
                 tools=("ask_private", "private_followup",
-                       "memory_remember", "task_open"),
+                       "memory_task", "task_open"),
             ))
         else:
             _coder(app)
@@ -654,8 +653,8 @@ def test_new_task_wrapper_records_owner(tmp_path: Path) -> None:
         group = app.create(bots=["thyca", "coder"])
         token = _ctx(app, tmp_path, "coder", group["conversation_id"])
         try:
-            out = asyncio.run(app._registry.get("memory_remember").handler(
-                {"topic": "deploy", "summary": "x", "new_task": True}))
+            out = asyncio.run(app._registry.get("memory_task").handler(
+                {"topic": "deploy", "summary": "x"}))
         finally:
             _unctx(token)
         data = json.loads(out)

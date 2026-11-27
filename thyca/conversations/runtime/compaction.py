@@ -11,6 +11,7 @@ from thyca.core.protocol import estimate_tokens as _chars_to_tokens
 
 _EXCERPT_LIMIT = 1000
 _PRIOR_EXCERPT_LIMIT = _EXCERPT_LIMIT // 2
+PRIOR_CLEARED_MARKER = "[compaction: prior context cleared]"
 
 CALIBRATION_MIN = 0.5
 CALIBRATION_MAX = 2.5
@@ -156,6 +157,7 @@ class CompactionPlan:
     total_messages: int = 0
     total_turns: int = 0
     total_chars: int = 0
+    drop_prior: bool = False
 
     @property
     def prior_text(self) -> str:
@@ -176,16 +178,20 @@ class ConversationCompactor:
         force: bool = False,
         calibration: float = 1.0,
         body_chars: int = _EXCERPT_LIMIT,
+        drop_prior: bool = False,
     ) -> CompactionPlan | None:
         """Split keep/omit for one compaction, or None when none is due.
 
         ``body_chars`` reserves room for the marker body the caller will
         render (1000-char excerpt, or a longer LLM summary), so the tail
-        budget already accounts for it.
+        budget already accounts for it. When ``drop_prior`` is True, earlier
+        compaction summaries are discarded instead of carried forward; if the
+        only compactable state is a prior marker, a clear-only plan is
+        returned so the stale summary is replaced with ``PRIOR_CLEARED_MARKER``.
         """
         overhead = hot_tokens + tools_tokens + pending_user_tokens
         cap_raw = context_tokens / _safe_calibration(calibration)
-        if not force and (
+        if not force and not drop_prior and (
             sum(estimate_tokens(msg) for msg in messages) + overhead
             <= int(cap_raw * BACKSTOP_RATIO)
         ):
@@ -197,20 +203,21 @@ class ConversationCompactor:
         body = messages[leading:]
         turns = self._turns(body)
 
-        budget = int((cap_raw - overhead - _marker_reserve_tokens(body_chars)) * 0.6)
-        kept: list[list[Message]] = []
-        used = 0
-        for turn in reversed(turns):
-            cost = sum(estimate_tokens(msg) for msg in turn)
-            if kept and used + cost > budget:
-                break
-            kept.append(turn)
-            used += cost
-        kept.reverse()
+        if drop_prior:
+            kept = turns[-1:] if turns else []
+        else:
+            budget = int((cap_raw - overhead - _marker_reserve_tokens(body_chars)) * 0.6)
+            kept = []
+            used = 0
+            for turn in reversed(turns):
+                cost = sum(estimate_tokens(msg) for msg in turn)
+                if kept and used + cost > budget:
+                    break
+                kept.append(turn)
+                used += cost
+            kept.reverse()
         tail = [msg for turn in kept for msg in turn]
         omitted = messages[:leading] + body[: len(body) - len(tail)]
-        if len(tail) == len(body):
-            return None
         prior_parts: list[str] = []
         prior_messages = 0
         prior_turns = 0
@@ -220,6 +227,8 @@ class ConversationCompactor:
             if msg.role == "system" and (msg.content or "").startswith(
                 "[compaction: "
             ):
+                if (msg.content or "").strip() == PRIOR_CLEARED_MARKER:
+                    continue
                 part = self._prior_excerpt(msg.content or "")
                 if part:
                     prior_parts.append(part)
@@ -236,6 +245,26 @@ class ConversationCompactor:
                 )
             else:
                 fresh.append(msg)
+        has_prior_to_drop = (
+            bool(prior_parts)
+            or prior_messages > 0
+            or prior_turns > 0
+            or prior_chars > 0
+        )
+        if drop_prior:
+            if len(tail) == len(body) and not has_prior_to_drop:
+                return None
+            return CompactionPlan(
+                tail=tail,
+                fresh=[],
+                prior_parts=[],
+                total_messages=0,
+                total_turns=0,
+                total_chars=0,
+                drop_prior=True,
+            )
+        if len(tail) == len(body):
+            return None
         return CompactionPlan(
             tail=tail,
             fresh=fresh,
@@ -247,6 +276,8 @@ class ConversationCompactor:
 
     def excerpt_body(self, plan: CompactionPlan) -> str:
         """Rule-based marker body: prior reserve + tail of fresh text."""
+        if plan.drop_prior and not plan.fresh:
+            return ""
         prior_kept = (
             self._clip_excerpt(plan.prior_text, _PRIOR_EXCERPT_LIMIT)
             if plan.prior_text
@@ -275,6 +306,17 @@ class ConversationCompactor:
         bodies: store/assemble only key on the ``[compaction: `` prefix,
         and re-compaction carries the prior body through this label.
         """
+        if plan.drop_prior and not plan.fresh and not body:
+            marker = Message(
+                role="system",
+                content=PRIOR_CLEARED_MARKER,
+                meta={
+                    "omitted_messages": 0,
+                    "omitted_turns": 0,
+                    "omitted_chars": 0,
+                },
+            )
+            return [marker, *plan.tail]
         marker = Message(
             role="system",
             content=(
@@ -299,6 +341,7 @@ class ConversationCompactor:
         pending_user_tokens: int = 0,
         force: bool = False,
         calibration: float = 1.0,
+        drop_prior: bool = False,
     ) -> list[Message] | None:
         plan = self.plan(
             messages,
@@ -308,6 +351,7 @@ class ConversationCompactor:
             pending_user_tokens=pending_user_tokens,
             force=force,
             calibration=calibration,
+            drop_prior=drop_prior,
         )
         if plan is None:
             return None

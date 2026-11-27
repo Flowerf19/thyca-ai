@@ -35,7 +35,7 @@ async def test_update_content_without_summary_is_rejected(tmp_path) -> None:
         await gateway.submit(
             ToolCall(
                 id="r1",
-                name="memory_remember",
+                name="memory_note",
                 arguments={"topic": "cafe", "summary": "orig-summary", "content": "orig-details"},
             )
         )
@@ -45,7 +45,7 @@ async def test_update_content_without_summary_is_rejected(tmp_path) -> None:
     refused = await gateway.submit(
         ToolCall(
             id="u1",
-            name="memory_update",
+            name="memory_note",
             arguments={"memory_id": sid, "content": "new-details"},
         )
     )
@@ -64,7 +64,7 @@ async def test_update_content_with_title_but_no_summary_is_rejected(tmp_path) ->
         await gateway.submit(
             ToolCall(
                 id="r1",
-                name="memory_remember",
+                name="memory_note",
                 arguments={"topic": "cafe", "summary": "orig-summary"},
             )
         )
@@ -74,7 +74,7 @@ async def test_update_content_with_title_but_no_summary_is_rejected(tmp_path) ->
     refused = await gateway.submit(
         ToolCall(
             id="u1",
-            name="memory_update",
+            name="memory_note",
             arguments={"memory_id": sid, "topic": "tra da", "content": "new-details"},
         )
     )
@@ -92,7 +92,7 @@ async def test_update_with_no_fields_and_blank_fields_rejected(tmp_path) -> None
         await gateway.submit(
             ToolCall(
                 id="r1",
-                name="memory_remember",
+                name="memory_note",
                 arguments={"topic": "cafe", "summary": "orig-summary"},
             )
         )
@@ -106,7 +106,7 @@ async def test_update_with_no_fields_and_blank_fields_rejected(tmp_path) -> None
         {"memory_id": sid, "content": ""},
     ):
         refused = await gateway.submit(
-            ToolCall(id="u", name="memory_update", arguments=arguments)
+            ToolCall(id="u", name="memory_note", arguments=arguments)
         )
         assert refused.is_error, arguments
         assert _daily_text(tmp_path) == before
@@ -122,44 +122,36 @@ async def test_update_positive_cases_still_work(tmp_path) -> None:
         await gateway.submit(
             ToolCall(
                 id="r1",
-                name="memory_remember",
+                name="memory_note",
                 arguments={"topic": "cafe", "summary": "orig-summary", "content": "orig-details"},
             )
         )
     ).content
     sid = json.loads(sid)["memory_id"]
     ok = await gateway.submit(
-        ToolCall(id="u1", name="memory_update", arguments={"memory_id": sid, "topic": "tra da"})
+        ToolCall(id="u1", name="memory_note", arguments={"memory_id": sid, "topic": "tra da"})
     )
     assert not ok.is_error
     body = (
         await gateway.submit(
-            ToolCall(id="g1", name="memory_get", arguments={"memory_id": sid})
+            ToolCall(id="g1", name="memory_get", arguments={"id": sid})
         )
     ).content
     assert "tra da" in body and "orig-summary" in body and "orig-details" in body
     ok = await gateway.submit(
         ToolCall(
             id="u2",
-            name="memory_update",
+            name="memory_note",
             arguments={"memory_id": sid, "summary": "new-summary", "content": ""},
         )
     )
     assert not ok.is_error
     body = (
         await gateway.submit(
-            ToolCall(id="g2", name="memory_get", arguments={"memory_id": sid})
+            ToolCall(id="g2", name="memory_get", arguments={"id": sid})
         )
     ).content
     assert "new-summary" in body and "orig-details" not in body
-    ok = await gateway.submit(
-        ToolCall(
-            id="u3",
-            name="memory_update",
-            arguments={"memory_id": sid, "proj": "/home/flowerf/Projects/thyca-ai"},
-        )
-    )
-    assert not ok.is_error
 
 
 def test_facade_update_validation_leaves_data_intact(tmp_path) -> None:
@@ -226,7 +218,6 @@ async def test_get_rejects_zero_and_multiple_selectors(tmp_path) -> None:
     for arguments in combos:
         result = await gateway.submit(ToolCall(id="g", name="memory_get", arguments=arguments))
         assert result.is_error, arguments
-        assert "exactly one" in result.content, arguments
     assert facade.archive.store.usage.get_map() == {}
     assert facade.archive.store.usage.search_map() == {}
 
@@ -240,17 +231,17 @@ async def test_get_rejects_blank_and_wrong_type_selectors(tmp_path) -> None:
     gateway = ToolGateway(registry, TaskStore())
     before = (tmp_path / "memory" / "2026-08-13.md").read_text(encoding="utf-8")
     for arguments in (
-        {"chunk_id": ""},
-        {"memory_id": "   "},
-        {"chunk_id": 123},
-        {"memory_id": sid, "chunk_id": ""},
+        {"id": ""},
+        {"id": "   "},
+        {"id": 123},
+        {"id": sid, "chunk_id": ""},
     ):
         result = await gateway.submit(ToolCall(id="g", name="memory_get", arguments=arguments))
         assert result.is_error, arguments
     assert facade.archive.store.usage.get_map() == {}
     assert (tmp_path / "memory" / "2026-08-13.md").read_text(encoding="utf-8") == before
     got = await gateway.submit(
-        ToolCall(id="g", name="memory_get", arguments={"memory_id": sid})
+        ToolCall(id="g", name="memory_get", arguments={"id": sid})
     )
     assert not got.is_error
     assert "first cafe leaf" in got.content and "second cafe leaf" in got.content
@@ -295,7 +286,7 @@ async def test_canonical_search_then_get_reads_without_profile_mutation(tmp_path
         assert not found.is_error
         hits = json.loads(found.content)["hits"]
         hit = next(h for h in hits if h["memory_id"] == session_prefix)
-        for selector in ({"chunk_id": hit["chunk_id"]}, {"memory_id": hit["memory_id"]}):
+        for selector in ({"id": hit["chunk_id"]}, {"id": hit["memory_id"]}):
             got = await gateway.submit(
                 ToolCall(id="g", name="memory_get", arguments=selector)
             )
@@ -323,13 +314,13 @@ async def test_canonical_chunk_is_leaf_session_is_whole(tmp_path) -> None:
         h for h in json.loads(found.content)["hits"] if h["memory_id"] == "canonical#soul"
     )
     leaf = await gateway.submit(
-        ToolCall(id="g1", name="memory_get", arguments={"chunk_id": "canonical#soul#1"})
+        ToolCall(id="g1", name="memory_get", arguments={"id": "canonical#soul#1"})
     )
     assert not leaf.is_error
     assert "first paragraph" in leaf.content
     assert "second paragraph" not in leaf.content
     whole = await gateway.submit(
-        ToolCall(id="g2", name="memory_get", arguments={"memory_id": "canonical#soul"})
+        ToolCall(id="g2", name="memory_get", arguments={"id": "canonical#soul"})
     )
     assert not whole.is_error
     assert "first paragraph" in whole.content and "second paragraph" in whole.content
@@ -346,7 +337,7 @@ async def test_get_path_selector_is_rejected(tmp_path) -> None:
         ToolCall(
             id="g",
             name="memory_get",
-            arguments={"path": str(tmp_path / "memory" / "2026-08-13.md")},
+            arguments={"id": _sid, "path": str(tmp_path / "memory" / "2026-08-13.md")},
         )
     )
     assert refused.is_error

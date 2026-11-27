@@ -133,11 +133,11 @@ def test_bot_create_explicit_tools_union_and_hidden_wins(tmp_path: Path) -> None
         "tools": ["read", "memory_search"],
         "hidden_tools": ["memory_search", "bot_send"],
     })
-    assert "read" in card.tools and "memory_remember" in card.tools
-    schemas = _schemas("bot_send", "memory_remember", "memory_search",
+    assert "read" in card.tools and "memory_note" in card.tools and "memory_task" in card.tools
+    schemas = _schemas("bot_send", "memory_note", "memory_task", "memory_search",
                        "memory_get", "read")
     names = [s["function"]["name"] for s in filtered_tool_schemas(schemas, card)]
-    assert "read" in names and "memory_remember" in names
+    assert "read" in names and "memory_note" in names and "memory_task" in names
     assert "memory_search" not in names
     assert "bot_send" not in names
 
@@ -148,7 +148,7 @@ def test_bot_create_memory_policy_still_filters_baseline(tmp_path: Path) -> None
         "bot_id": "helper", "role": "Helper", "description": "Helps.",
         "memory": {"read": False, "write": False},
     })
-    schemas = _schemas("bot_send", "memory_remember", "memory_search",
+    schemas = _schemas("bot_send", "memory_note", "memory_task", "memory_search",
                        "memory_get")
     names = [s["function"]["name"] for s in filtered_tool_schemas(schemas, card)]
     assert names == ["bot_send"]

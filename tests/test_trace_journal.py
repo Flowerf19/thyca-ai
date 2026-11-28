@@ -156,8 +156,9 @@ def test_usage_markup_and_trace_renderer_contract() -> None:
     combined = dashboard + "\n" + index_html
     renderer = TRACE_JS.read_text(encoding="utf-8")
     for needle in (
-        'id="stat-grid"', 'data-preset="1"', 'data-preset="7"',
-        'data-preset="30"', 'data-preset="all"', 'id="analysis-details"',
+        'id="usage-chart-total"', 'id="cost-chart-total"', 'id="trace-head-summary"',
+        'data-preset="1"', 'data-preset="7"',
+        'data-preset="30"', 'id="usage-chart-mode"', 'id="cost-chart-mode"',
         'id="filter-q"', 'id="filter-model"', 'id="filter-status"',
         'id="trace-conversations"', 'id="trace-more"', 'id="turn-detail-view"',
         'id="detail-back"', 'id="detail-status"', 'id="detail-body"',
@@ -165,6 +166,7 @@ def test_usage_markup_and_trace_renderer_contract() -> None:
         '/api/traces/groups/${encodeURIComponent(ref.group_id)}/${turn}',
     ):
         assert needle in combined, needle
+    assert 'id="analysis-details"' not in combined
     assert "FIRST_PAGE = 15" in dashboard and "MORE_PAGE = 50" in dashboard
     assert "window.ThycaTraceDetail.render(detailData)" in dashboard
     assert "window.ThycaTraceDetail = Object.freeze({" in renderer
@@ -303,20 +305,26 @@ def test_filters_ride_the_query_and_q_trims(node: str) -> None:
     assert out["filters"]["q"] == "tìm"
 
 
-def test_reload_list_rejects_an_inverted_range(node: str) -> None:
-    """Từ > Đến in the filter bar is a toast — the list is not refetched."""
+def test_invalid_preset_and_group_switches_never_refetch(node: str) -> None:
+    """Removed custom ranges and invalid metric/group switches never trigger
+    network calls or leave controls in an invalid state."""
     out = _eval_trace(
         node,
         """(async () => {
-          document.querySelector('#range-from').value = '2026-09-22';
-          document.querySelector('#range-to').value = '2026-09-20';
           const before = __jsonCalls.length;
-          applyRange();
-          return { calls: __jsonCalls.length - before, toasts: __toasts };
+          setPreset('all');
+          setPreset('custom');
+          setDayMetric('requests');
+          setUsageGroup('parts');
+          const reqGroup = effectiveUsageGroup();
+          setCostGroup('parts');
+          const cGroup = effectiveCostGroup();
+          return { calls: __jsonCalls.length - before, reqGroup, cGroup };
         })().then((v) => console.log(JSON.stringify(v)))""",
     )
     assert out["calls"] == 0
-    assert out["toasts"] == ["Ngày bắt đầu phải trước hoặc bằng ngày kết thúc."]
+    assert out["reqGroup"] == "model"
+    assert out["cGroup"] == "model"
 
 
 def test_stale_list_response_is_dropped(node: str) -> None:

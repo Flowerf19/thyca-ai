@@ -9,7 +9,6 @@ from thyca.memories.archive_store import decode_bots
 from thyca.memories.chunk import Chunk
 from thyca.memories.heading import format_ts, is_expired, utc_now
 
-SNIPPET_LEN = 250
 EXPIRE_SOON_DAYS = 14
 SUGGEST_IDLE_DAYS = 7
 L2_MEMORY_RE = re.compile(
@@ -106,24 +105,34 @@ class MemoryStats:
         files: list[CanonicalFile] | None = None,
         bot_id: str | None = None,
     ) -> MemoryStatsResult:
-        by_id: dict[str, LeafStat] = {}
+        by_chunk: dict[str, tuple[int, LeafStat]] = {}
         for row in archived:
             if not _belongs_to(decode_bots(row.get("bots")), bot_id):
                 continue
             stat = _from_archived(row, gets, searches, today)
             if stat is not None:
-                by_id[stat.chunk_id] = stat
+                raw_ord = row.get("leaf_ord")
+                leaf_ord = (
+                    raw_ord
+                    if isinstance(raw_ord, int) and not isinstance(raw_ord, bool)
+                    else _chunk_ord(stat.chunk_id)
+                )
+                by_chunk[stat.chunk_id] = (leaf_ord, stat)
         for chunk in today_chunks:
             if not _belongs_to(chunk.bots, bot_id):
                 continue
-            if chunk.chunk_id in by_id:
+            if chunk.chunk_id in by_chunk:
                 continue
             if is_expired(chunk.expires_at, _parse_ts(now_ts)):
                 continue
             stat = _from_today(chunk, gets, searches)
             if stat is not None:
-                by_id[stat.chunk_id] = stat
-        leaves = sorted(by_id.values(), key=lambda item: (-item.get_count, item.chunk_id))
+                by_chunk[stat.chunk_id] = (chunk.leaf_ord, stat)
+        by_memory: dict[str, list[tuple[int, LeafStat]]] = {}
+        for entry in by_chunk.values():
+            by_memory.setdefault(entry[1].memory_id, []).append(entry)
+        merged = [_merge_memory_group(group) for group in by_memory.values()]
+        leaves = sorted(merged, key=lambda item: (-item.get_count, item.chunk_id))
         unused = [item for item in leaves if item.get_count == 0]
         suggest = [
             item
@@ -147,6 +156,61 @@ class MemoryStats:
         )
 
 
+def _chunk_ord(chunk_id: str) -> int:
+    tail = chunk_id.rsplit("#", 1)[-1]
+    return int(tail) if tail.isdigit() else 0
+
+
+def _latest_ts(values) -> str | None:
+    best_raw: str | None = None
+    best_dt: datetime | None = None
+    for raw in values:
+        if not raw:
+            continue
+        parsed = _parse_ts(raw)
+        if best_raw is None:
+            best_raw, best_dt = raw, parsed
+            continue
+        if (
+            parsed is not None
+            and best_dt is not None
+            and (parsed.tzinfo is None) == (best_dt.tzinfo is None)
+        ):
+            if parsed > best_dt:
+                best_raw, best_dt = raw, parsed
+            continue
+        if raw > best_raw:
+            best_raw, best_dt = raw, parsed
+    return best_raw
+
+
+def _merge_memory_group(group: list[tuple[int, LeafStat]]) -> LeafStat:
+    ordered = sorted(group, key=lambda item: (item[0], item[1].chunk_id))
+    if len(ordered) == 1:
+        return ordered[0][1]
+    first = ordered[0][1]
+    parts = [item.snippet for _, item in ordered if item.snippet]
+    return LeafStat(
+        chunk_id=first.chunk_id,
+        memory_id=first.memory_id,
+        heading=first.heading,
+        snippet="\n".join(parts),
+        source_kind=first.source_kind,
+        timeline_day=first.timeline_day,
+        get_count=sum(item.get_count for _, item in ordered),
+        last_get_at=_latest_ts(item.last_get_at for _, item in ordered),
+        expires_at=first.expires_at,
+        is_today=any(item.is_today for _, item in ordered),
+        search_count=sum(item.search_count for _, item in ordered),
+        last_search_at=_latest_ts(item.last_search_at for _, item in ordered),
+        bots=first.bots,
+        kind=first.kind,
+        task=first.task,
+        status=first.status,
+        habit=first.habit,
+    )
+
+
 def _from_archived(
     row: dict[str, object],
     gets: dict[str, tuple[int, str]],
@@ -166,7 +230,7 @@ def _from_archived(
         chunk_id=chunk_id,
         memory_id=memory_id,
         heading=str(row["heading_raw"] or ""),
-        snippet=str(row["text_raw"])[:SNIPPET_LEN],
+        snippet=str(row["text_raw"]),
         source_kind=str(row["source_kind"]),
         timeline_day=timeline_day,
         get_count=count,
@@ -196,7 +260,7 @@ def _from_today(
         chunk_id=chunk.chunk_id,
         memory_id=chunk.memory_id,
         heading=chunk.heading_raw,
-        snippet=chunk.text_raw[:SNIPPET_LEN],
+        snippet=chunk.text_raw,
         source_kind=chunk.source_kind,
         timeline_day=chunk.timeline_day,
         get_count=count,

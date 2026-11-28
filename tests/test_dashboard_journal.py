@@ -138,21 +138,22 @@ def test_page_is_a_single_screen_shell_document() -> None:
 
 
 def test_page_markup_covers_every_region() -> None:
-    """Dashboard template + factory carry the full contract: range
-    picker + presets, five stat cards, day/hour charts, bot/model rows and
-    the paged trace table with its deep-link convention."""
+    """Dashboard template + factory carry the unified 1-chart-per-tab contract:
+    1/7/30-day presets, inline metric/group toggles on Usage and Cost, dynamic
+    chart legends (no collapsed analysis drawer or duplicate breakdown cards),
+    and the paged Trace list."""
     js_src = DASH_JS.read_text(encoding="utf-8")
     src = js_src + "\n" + (WEBUI / "chat" / "index.html").read_text(encoding="utf-8")
     for needle in (
-        'id="stat-grid"', 'id="range-note"', 'id="range-from"',
-        'id="range-to"', 'id="range-apply"',
-        'id="range-custom-toggle"', 'id="range-custom-bar"',
+        'id="range-note"',
         'data-preset="1"', 'data-preset="7"', 'data-preset="30"',
-        'data-day-metric="tokens"', 'data-day-metric="requests"',
-        'id="chart-day"', 'id="chart-day-note"', 'id="chart-cost"',
-        'button.id = \'usage-overview-scope\'', 'Lượt chưa gắn bot chỉ có trong Tổng quan.',
-        'id="rows-bot"',
-        'id="rows-model"', 'id="chart-hour"',
+        'id="usage-chart-mode"', 'value="tokens:parts"', 'value="tokens:model"',
+        'value="tokens:bot"', 'value="requests:model"', 'value="requests:bot"',
+        'id="cost-chart-mode"',
+        'id="usage-chart-total"', 'id="cost-chart-total"', 'id="trace-head-summary"',
+        'id="usage-chart-footer"', 'id="usage-chart-legend"', 'id="usage-chart-summary"',
+        'id="cost-chart-footer"', 'id="cost-chart-legend"', 'id="cost-chart-summary"',
+        'id="chart-day"', 'id="chart-cost"',
         'id="filter-q"', 'id="filter-model"', 'id="filter-status"', 'id="trace-refresh"',
         'id="trace-status"', 'id="trace-wrap"', 'id="trace-conversations"',
         'id="trace-empty"', 'id="trace-empty-hint"',
@@ -161,7 +162,18 @@ def test_page_markup_covers_every_region() -> None:
         '/api/traces/stats?', '/api/traces?',
     ):
         assert needle in src, needle
-    assert 'class="token-summary-grid"' not in src
+    for removed in (
+        'id="stat-grid"', 'id="range-custom-toggle"', 'id="range-custom-bar"',
+        'id="range-from"', 'id="range-to"', 'id="range-apply"',
+        'data-preset="all"', 'id="chart-day-note"', 'id="chart-cost-note"',
+        'id="usage-scope-note"', 'class="token-summary-grid"',
+        'id="analysis-details"', 'id="card-bot"', 'id="card-bot-cost"',
+        'id="rows-bot"', 'id="rows-model"', 'id="rows-bot-cost"',
+        'id="rows-model-cost"', 'id="chart-hour"',
+        'id="usage-metric-toggle"', 'id="usage-group-toggle"', 'id="cost-group-toggle"',
+        'usage-overview-scope',
+    ):
+        assert removed not in src, removed
     assert re.search(
         r'data-preset="7"[^>]*aria-pressed="true"', src)
     assert not re.search(
@@ -172,15 +184,15 @@ def test_page_markup_covers_every_region() -> None:
 
 def test_shell_navigation_lists_dashboard_without_trace_workspace() -> None:
     src = UTIL_JS.read_text(encoding="utf-8")
-    assert "['dashboard', 'Sử dụng', '../dashboard/index.html']" in src
-    assert "['trace', 'Trace', '../trace/index.html']" not in src
+    assert "['dashboard', 'Sử dụng', '../dashboard/index.html', 'nav-dashboard']" in src
+    assert "['trace', 'Trace', '../trace/index.html'" not in src
     assert 'is-current' in src and 'aria-current="page"' in src
 
 
 def test_boot_fetches_stats_and_first_page_for_last_7_days(node: str) -> None:
     """boot() defaults to the last 7 days, fetches stats + the first
-    15-row page, fills the range inputs and runs bootShell() for the roster."""
-    stats = {"totals": {"requests": 1}, "by_bot": [
+    15-row page, records rangeFrom/rangeTo and runs bootShell() for the roster."""
+    stats = {"totals": {"requests": 1, "total_tokens": 5}, "by_bot": [
         {"bot_id": "coder", "requests": 1, "total_tokens": 5,
          "cost_usd": 0.0, "last_started_at": "2026-09-20T09:00:00Z"}]}
     out = _eval_dash(
@@ -188,12 +200,12 @@ def test_boot_fetches_stats_and_first_page_for_last_7_days(node: str) -> None:
         "(async () => {\n"
         "await __releaseShell();\n"
         "await new Promise(r => setTimeout(r, 0));\n"
+        "setUsageGroup('bot');\n"
         "return {"
         " calls: __jsonCalls.slice(0, 2),"
-        " from: document.querySelector('#range-from').value,"
-        " to: document.querySelector('#range-to').value,"
+        " from: rangeFrom, to: rangeTo,"
         " note: document.querySelector('#range-note').textContent,"
-        " botHtml: document.querySelector('#rows-bot').innerHTML };\n"
+        " botLegend: document.querySelector('#usage-chart-legend').innerHTML };\n"
         "})().then((v) => console.log(JSON.stringify(v)))",
         setup="__jsonResponder = async (url) => url.includes('stats')"
         f" ? {json.dumps(stats)} : {{ traces: [], total: 0 }};\n",
@@ -208,48 +220,33 @@ def test_boot_fetches_stats_and_first_page_for_last_7_days(node: str) -> None:
     assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", out["to"])
     assert out["from"] <= out["to"]
     assert out["note"].startswith("Kỳ ")
-    assert "<ava:coder/>" in out["botHtml"] and ">Coder</span>" in out["botHtml"]
-    assert "Chưa gắn bot" not in out["botHtml"]
+    assert 'data-bot-id="coder"' in out["botLegend"] and ">Coder</span>" in out["botLegend"]
+    assert "Chưa gắn bot" not in out["botLegend"]
 
 
-def test_apply_range_rejects_inverted_dates_without_fetching(node: str) -> None:
-    """Từ > Đến is a toast, not a request — the range (and both fetches)
-    stay untouched."""
+def test_set_preset_accepts_only_1_7_30_and_refetches_both_surfaces(node: str) -> None:
+    """Only 1, 7, and 30-day presets are valid; invalid/removed presets
+    such as 'all' are ignored without fetching, while a valid preset refetches
+    both /api/traces/stats and /api/traces from offset=0."""
     out = _eval_dash(
         node,
         "(async () => {\n"
         "await new Promise(r => setTimeout(r, 0));\n"
-        "const before = __jsonCalls.length;\n"
-        "document.querySelector('#range-from').value = '2026-09-22';\n"
-        "document.querySelector('#range-to').value = '2026-09-20';\n"
-        "applyRange();\n"
-        "return { before, after: __jsonCalls.length,"
-        " toasts: __toasts, from: rangeFrom, to: rangeTo };\n"
-        "})().then((v) => console.log(JSON.stringify(v)))",
-    )
-    assert out["after"] == out["before"]
-    assert out["toasts"] == ["Ngày bắt đầu phải trước hoặc bằng ngày kết thúc."]
-
-
-def test_apply_range_refetches_both_surfaces(node: str) -> None:
-    """A valid Áp dụng sends the new range to BOTH endpoints and restarts
-    the table at offset 0 with the 15-row first page."""
-    out = _eval_dash(
-        node,
-        "(async () => {\n"
+        "const beforeInvalid = __jsonCalls.length;\n"
+        "setPreset('all');\n"
+        "const afterInvalid = __jsonCalls.length;\n"
+        "setPreset(30);\n"
         "await new Promise(r => setTimeout(r, 0));\n"
-        "const before = __jsonCalls.length;\n"
-        "document.querySelector('#range-from').value = '2026-09-01';\n"
-        "document.querySelector('#range-to').value = '2026-09-30';\n"
-        "applyRange();\n"
-        "await new Promise(r => setTimeout(r, 0));\n"
-        "return { urls: __jsonCalls.slice(before) };\n"
+        "return { beforeInvalid, afterInvalid, urls: __jsonCalls.slice(afterInvalid), from: rangeFrom, to: rangeTo, rangeAll };\n"
         "})().then((v) => console.log(JSON.stringify(v)))",
+        setup="__jsonResponder = async url => url.includes('stats') ? { totals: {}, models: [], by_status: [] } : { traces: [], total: 0 };",
     )
+    assert out["afterInvalid"] == out["beforeInvalid"]
+    assert out["rangeAll"] is False
     assert len(out["urls"]) == 2
     stats_url, traces_url = out["urls"]
-    assert stats_url == "/api/traces/stats?from=2026-09-01&to=2026-09-30"
-    assert traces_url.startswith("/api/traces?from=2026-09-01&to=2026-09-30")
+    assert stats_url == f"/api/traces/stats?from={out['from']}&to={out['to']}"
+    assert traces_url.startswith(f"/api/traces?from={out['from']}&to={out['to']}")
     assert "limit=15" in traces_url and "offset=0" in traces_url
 
 
@@ -381,6 +378,31 @@ def test_trace_row_escapes_and_deep_links(node: str) -> None:
     assert '&lt;b&gt;m&lt;/b&gt;' in html
     assert 'data-conv="dm:s &lt;x&gt;"' in html and 'data-turn="0"' in html
     assert "s &lt;x&gt;" in html
+    assert "0 gọi tool" not in html and "0 tool" not in html
+
+
+def test_trace_row_avoids_duplicate_dm_name_and_hides_zero_tools(node: str) -> None:
+    """DM turns whose title matches the bot name omit the redundant title
+    instead of printing 'march7th march7th'; zero tool calls stay silent while
+    non-zero tool calls render beside request count."""
+    dm_zero = {
+        "kind": "dm", "bot_id": "march7th", "title": "march7th", "turn_index": 21,
+        "model": "muse-ember-1.0", "status": "completed",
+        "started_at": "2026-11-28T08:09:00Z",
+        "requests": 1, "tool_calls": 0, "total_tokens": 37087,
+        "cost_usd": 0.003815, "latency_ms": 1900,
+    }
+    dm_tools = {**dm_zero, "turn_index": 24, "requests": 2, "tool_calls": 1}
+    out = _eval_dash(
+        node,
+        "globalThis.__roster.march7th = { id: 'march7th', name: 'march7th', color: '#c46', state: 'idle' };\n"
+        f"console.log(JSON.stringify([turnRowHtml({json.dumps(dm_zero)}), turnRowHtml({json.dumps(dm_tools)})]))",
+    )
+    zero_html, tool_html = out
+    assert 'class="tl-turn-title"' not in zero_html
+    assert "<b>march7th</b>" in zero_html and "Chat riêng" in zero_html
+    assert "1 lần gọi" in zero_html and "tool" not in zero_html
+    assert "2 lần gọi · 1 tool" in tool_html
 
 
 def test_status_chip_maps_the_four_statuses(node: str) -> None:
@@ -524,11 +546,11 @@ def test_formatters_vi_vn_and_edges(node: str) -> None:
 
 
 def test_render_stats_paints_every_region(node: str) -> None:
-    """One stats payload fans out to all six regions: stat cards, day
-    chart, bot rows, model rows, the 24-column hour chart and both filter
-    selects — the overview has no dead panels."""
+    """One stats payload paints daily charts on multi-day ranges, switches
+    automatically to 24-hour stacked charts on a 1-day range, populates model
+    and bot legends, and fills both Trace filter selects."""
     stats = {
-        "totals": {"requests": 2, "tool_calls": 1, "prompt_tokens": 10,
+        "totals": {"requests": 2, "turns": 1, "tool_calls": 1, "prompt_tokens": 10,
                    "cached_tokens": 2, "completion_tokens": 4,
                    "total_tokens": 14, "cost_usd": 0.5,
                    "latency_ms_p50": 500, "latency_ms_p90": 900},
@@ -538,86 +560,94 @@ def test_render_stats_paints_every_region(node: str) -> None:
         "by_bot": [{"bot_id": "coder", "requests": 2, "tool_calls": 1,
                     "total_tokens": 14, "cost_usd": 0.5,
                     "last_started_at": "2026-09-20T09:00:00Z"}],
-        "by_day": [{"day": "2026-09-20", "requests": 2, "cost_usd": 0.5}],
-        "by_hour": [{"hour": "09", "requests": 2, "cost_usd": 0.5}],
+        "by_day": [{"day": "2026-09-20", "requests": 2, "prompt_tokens": 10,
+                    "cached_tokens": 2, "completion_tokens": 4, "total_tokens": 14,
+                    "cost_usd": 0.5,
+                    "by_model": [{"model": "m", "requests": 2, "total_tokens": 14, "cost_usd": 0.5}],
+                    "by_bot": [{"bot_id": "coder", "requests": 2, "total_tokens": 14, "cost_usd": 0.5}]}],
+        "by_hour": [{"hour": "09", "requests": 2, "prompt_tokens": 10,
+                     "cached_tokens": 2, "completion_tokens": 4, "total_tokens": 14,
+                     "cost_usd": 0.5,
+                     "by_model": [{"model": "m", "requests": 2, "total_tokens": 14, "cost_usd": 0.5}],
+                     "by_bot": [{"bot_id": "coder", "requests": 2, "total_tokens": 14, "cost_usd": 0.5}]}],
         "by_status": [{"status": "completed", "requests": 2}],
         "models": ["m"],
     }
     out = _eval_dash(
         node,
-        f"statsData = {json.dumps(stats)};\n"
+        f"rangeFrom = '2026-09-14'; rangeTo = '2026-09-20'; statsData = {json.dumps(stats)};\n"
         "renderStats(statsData);\n"
+        "const dayHtml = document.querySelector('#chart-day').innerHTML;\n"
+        "const costLegend = document.querySelector('#cost-chart-legend').innerHTML;\n"
+        "setUsageGroup('bot'); const botLegend = document.querySelector('#usage-chart-legend').innerHTML;\n"
+        "rangeFrom = '2026-09-20'; rangeTo = '2026-09-20'; renderStats(statsData);\n"
         "console.log(JSON.stringify({"
-        " grid: document.querySelector('#stat-grid').innerHTML.length,"
-        " day: document.querySelector('#chart-day').innerHTML,"
-        " hour: document.querySelector('#chart-hour').innerHTML,"
-        " bot: document.querySelector('#rows-bot').innerHTML,"
-        " model: document.querySelector('#rows-model').innerHTML,"
+        " usageTotal: document.querySelector('#usage-chart-total').textContent,"
+        " costTotal: document.querySelector('#cost-chart-total').textContent,"
+        " traceSummary: document.querySelector('#trace-head-summary').textContent,"
+        " dayHtml, costLegend, botLegend,"
+        " hourTitle: document.querySelector('#usage-chart-title').textContent,"
+        " hourCostTitle: document.querySelector('#cost-chart-title').textContent,"
+        " hourHtml: document.querySelector('#chart-day').innerHTML,"
         " mOpts: document.querySelector('#filter-model').options.length,"
         " sOpts: document.querySelector('#filter-status').options.length }))",
     )
-    assert out["grid"] > 0
-    assert 'class="day-chart"' in out["day"]
-    assert 'class="hour-chart"' in out["hour"]
-    assert out["hour"].count('class="hc-col"') == 24
-    assert "09:00–09:59" in out["hour"]
-    assert "Coder" in out["bot"] or "coder" in out["bot"]
-    assert '>m</span>' in out["model"] or '"m"' in out["model"]
+    assert out["usageTotal"] == "14"
+    assert out["costTotal"] == "$0.5000"
+    assert "500 ms" in out["traceSummary"]
+    assert 'class="day-chart"' in out["dayHtml"]
+    assert out["hourTitle"] == "Token theo giờ"
+    assert out["hourCostTitle"] == "Chi phí theo giờ"
+    assert 'class="day-chart is-hourly"' in out["hourHtml"]
+    assert out["hourHtml"].count('class="dc-col') == 24
+    assert "09:00–09:59" in out["hourHtml"]
+    assert "Coder" in out["botLegend"] or "coder" in out["botLegend"]
+    assert ">m</span>" in out["costLegend"]
     assert out["mOpts"] == 2
     assert out["sOpts"] == 5
 
 
 def test_usage_input_total_excludes_cache_read(node: str) -> None:
-    """The Usage Input card shows prompt_tokens minus cached_tokens (the
-    same Input-excluding-cache rule the hero hint already uses), with copy
-    that no longer claims the cache is included."""
+    """Usage Token + Loại shows prompt_tokens minus cached_tokens in the legend;
+    switching to Lần gọi defaults to stacked-by-Model with a model legend."""
     src = DASH_JS.read_text(encoding="utf-8") + "\n" + (WEBUI / "chat" / "index.html").read_text(encoding="utf-8")
     assert "Không bao gồm Cache read." in src
     assert "Đã bao gồm Cache read." not in src
     assert "Tính riêng, không nằm trong Input." in src
     assert "Nằm trong tổng Input." not in src
     stats = {
-        "totals": {"requests": 2, "tool_calls": 1, "prompt_tokens": 1000,
+        "totals": {"requests": 2, "turns": 1, "tool_calls": 1, "prompt_tokens": 1000,
                    "cached_tokens": 100, "completion_tokens": 200,
                    "total_tokens": 1200, "cost_usd": 0.5,
                    "latency_ms_p50": 10, "latency_ms_p90": 20},
-        "by_model": [], "by_bot": [], "by_day": [], "by_hour": [],
-        "by_status": [], "models": [],
+        "by_model": [{"model": "model-a", "requests": 2, "total_tokens": 1200, "cost_usd": 0.5}],
+        "by_bot": [], "by_day": [], "by_hour": [],
+        "by_status": [], "models": ["model-a"],
     }
     out = _eval_dash(
         node,
-        f"statsData = {json.dumps(stats)};\n"
+        f"rangeFrom = '2026-09-14'; rangeTo = '2026-09-20'; statsData = {json.dumps(stats)};\n"
         "renderStats(statsData);\n"
-        "console.log(JSON.stringify({"
-        " input: document.querySelector('#usage-input-total').textContent,"
-        " cache: document.querySelector('#usage-cache-total').textContent,"
-        " output: document.querySelector('#usage-output-total').textContent,"
-        " grid: document.querySelector('#stat-grid').innerHTML }))",
+        "const tokState = {"
+        " total: document.querySelector('#usage-chart-total').textContent,"
+        " legend: document.querySelector('#usage-chart-legend').innerHTML,"
+        " group: effectiveUsageGroup() };\n"
+        "setDayMetric('requests');\n"
+        "const reqState = {"
+        " title: document.querySelector('#usage-chart-title').textContent,"
+        " total: document.querySelector('#usage-chart-total').textContent,"
+        " sub: document.querySelector('#usage-chart-sub').textContent,"
+        " legend: document.querySelector('#usage-chart-legend').innerHTML,"
+        " group: effectiveUsageGroup() };\n"
+        "console.log(JSON.stringify({ tokState, reqState }))",
     )
-    assert out["input"] == "900"
-    assert out["cache"] == "100"
-    assert out["output"] == "200"
-    assert "Input 900" in out["grid"]
-
-
-def test_custom_range_bar_collapses_for_presets_and_opens_for_custom_dates(node: str) -> None:
-    out = _eval_dash(
-        node,
-        """(async () => {
-          await __releaseShell(); await __controller.ready;
-          const initialHidden = document.querySelector('#range-custom-bar').hidden;
-          document.querySelector('#range-custom-toggle').listeners.click[0]();
-          const toggledOpen = !document.querySelector('#range-custom-bar').hidden;
-          setPreset('all');
-          const allHidden = document.querySelector('#range-custom-bar').hidden;
-          document.querySelector('#range-from').value = '2026-09-01';
-          document.querySelector('#range-to').value = '2026-09-10';
-          applyRange();
-          const customOpen = !document.querySelector('#range-custom-bar').hidden;
-          setPreset(7);
-          const presetClosed = document.querySelector('#range-custom-bar').hidden;
-          return { initialHidden, toggledOpen, allHidden, customOpen, presetClosed };
-        })().then(v => console.log(JSON.stringify(v)))""",
-        setup="__jsonResponder = async url => url.includes('stats') ? { totals: {}, models: [], by_status: [] } : { traces: [], total: 0 };",
-    )
-    assert out == {"initialHidden": True, "toggledOpen": True, "allHidden": True, "customOpen": True, "presetClosed": True}
+    assert out["tokState"]["total"] == "1.200"
+    assert out["tokState"]["group"] == "parts"
+    assert 'id="usage-input-total">900</strong>' in out["tokState"]["legend"]
+    assert 'id="usage-cache-total">100</strong>' in out["tokState"]["legend"]
+    assert 'id="usage-output-total">200</strong>' in out["tokState"]["legend"]
+    assert out["reqState"]["title"] == "Lần gọi theo ngày"
+    assert out["reqState"]["total"] == "2"
+    assert out["reqState"]["sub"] == "1 lượt"
+    assert out["reqState"]["group"] == "model"
+    assert "model-a" in out["reqState"]["legend"] and "<strong>2</strong>" in out["reqState"]["legend"]

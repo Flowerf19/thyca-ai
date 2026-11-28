@@ -13,49 +13,94 @@ function setupLocked() {
   const router = window.ThycaRouter;
   return typeof router?.setupState === 'function' && router.setupState() !== 'ready';
 }
-function closePageMenu() {
-  const btn = $('#page-menu-toggle');
-  const wrap = btn?.closest?.('.header-right') || $('.header-right');
-  wrap?.classList?.remove('page-menu-open');
-  btn?.setAttribute('aria-expanded', 'false');
-}
 function syncSidebarChrome() {
-  const sidebar = $('#chat-sidebar'), shell = $('.notebook-shell');
+  const sidebar = $('#chat-sidebar'), navSidebar = $('#nav-sidebar'), shell = $('.notebook-shell');
   const locked = setupLocked();
-  const pageMenuBtn = $('#page-menu-toggle');
-  if (pageMenuBtn) {
-    pageMenuBtn.disabled = locked;
-    if (locked) closePageMenu();
-  }
   const narrow = matchMedia('(max-width:850px)').matches;
-  const sep = $('.splitter');
-  if (sep) sep.inert = locked || narrow;
-  if (!sidebar) return;
+  const navCollapsed = !narrow && shell?.dataset.navCollapsed === 'true';
   const collapsed = !narrow && shell?.dataset.sidebarCollapsed === 'true';
-  const open = !locked && (narrow ? sidebar.classList.contains('mobile-open') : !collapsed);
-  sidebar.inert = locked || (narrow && !open);
+  const navOpen = !locked && (narrow ? Boolean(navSidebar?.classList.contains('mobile-open')) : true);
+  const open = !locked && (narrow ? Boolean(sidebar?.classList.contains('mobile-open')) : !collapsed);
+  if (shell) shell.dataset.mobileDrawerOpen = String(narrow && (open || navOpen));
+  const navBtn = $('#nav-toggle');
+  if (navBtn) {
+    navBtn.disabled = locked;
+    const navLabel = narrow
+      ? (navOpen ? 'Đóng điều hướng' : 'Mở điều hướng')
+      : (navCollapsed ? 'Mở rộng điều hướng' : 'Thu gọn điều hướng');
+    navBtn.setAttribute('aria-expanded', String(narrow ? navOpen : (!locked && !navCollapsed)));
+    navBtn.setAttribute('aria-label', navLabel);
+    navBtn.title = navLabel;
+    navBtn.dataset.collapsed = String(navCollapsed);
+  }
+  if (navSidebar) navSidebar.inert = locked || (narrow && !navOpen);
+  const menuBtn = $('.menu-button');
+  if (menuBtn) {
+    menuBtn.disabled = locked;
+    const label = narrow
+      ? (open ? 'Đóng thanh bot' : 'Mở thanh bot')
+      : (collapsed ? 'Mở rộng thanh bot' : 'Thu gọn thanh bot');
+    menuBtn.setAttribute('aria-expanded', String(open));
+    menuBtn.setAttribute('aria-label', label);
+    menuBtn.title = label;
+    menuBtn.dataset.collapsed = String(collapsed);
+  }
+  if (!sidebar) return;
+  sidebar.inert = locked || !open;
+  const railVisible = !locked && (narrow ? (!open && !navOpen) : collapsed);
+  const railWrap = $('#header-rail-wrap');
+  if (railWrap) railWrap.setAttribute('aria-hidden', String(!railVisible));
   const railList = $('#rail-avatar-list');
-  if (railList) railList.inert = locked;
-  $('.menu-button')?.setAttribute('aria-expanded', String(narrow && open));
+  if (railList) railList.inert = !railVisible;
+  $('.menu-button')?.setAttribute('aria-expanded', String(open));
+}
+function openNavMobile() {
+  if (setupLocked()) return;
+  const navSidebar = $('#nav-sidebar');
+  if (!navSidebar) return;
+  const sidebar = $('#chat-sidebar');
+  if (sidebar?.classList.contains('mobile-open')) sidebar.classList.remove('mobile-open');
+  navSidebar.inert = false;
+  navSidebar.classList.add('mobile-open');
+  $('#mobile-overlay').hidden = false;
+  syncSidebarChrome();
+  const cur = $('#nav-sidebar .page-links a.is-current') || $('#nav-sidebar .page-links a');
+  cur?.focus?.();
+}
+function closeNavMobile(restoreFocus = true) {
+  const navSidebar = $('#nav-sidebar');
+  const wasOpen = Boolean(navSidebar?.classList.contains('mobile-open'));
+  navSidebar?.classList.remove('mobile-open');
+  if (!$('#chat-sidebar')?.classList.contains('mobile-open')) $('#mobile-overlay').hidden = true;
+  syncSidebarChrome();
+  if (restoreFocus && wasOpen && matchMedia('(max-width:850px)').matches) $('#nav-toggle')?.focus();
 }
 function openMobile() {
   if (setupLocked()) return;
+  const navSidebar = $('#nav-sidebar');
+  if (navSidebar?.classList.contains('mobile-open')) navSidebar.classList.remove('mobile-open');
   $('#chat-sidebar').inert = false;
   $('#chat-sidebar').classList.add('mobile-open');
   $('#mobile-overlay').hidden = false;
   $('.menu-button')?.setAttribute('aria-expanded', 'true');
+  syncSidebarChrome();
   const c = $('#team-shared-create');
   const onChat = !document.body?.dataset?.activePage || document.body.dataset.activePage === 'chat';
   if (c && onChat) c.focus();
   else $$('#chat-sidebar .bot-select')[0]?.focus?.();
 }
 function closeMobile() {
-  const wasOpen = $('#chat-sidebar').classList.contains('mobile-open');
-  $('#chat-sidebar').classList.remove('mobile-open');
+  const wasSide = $('#chat-sidebar')?.classList.contains('mobile-open');
+  const wasNav = $('#nav-sidebar')?.classList.contains('mobile-open');
+  $('#chat-sidebar')?.classList.remove('mobile-open');
+  $('#nav-sidebar')?.classList.remove('mobile-open');
   $('#mobile-overlay').hidden = true;
   $('.menu-button')?.setAttribute('aria-expanded', 'false');
   syncSidebarChrome();
-  if (wasOpen && matchMedia('(max-width:850px)').matches) $('.menu-button')?.focus();
+  if (matchMedia('(max-width:850px)').matches) {
+    if (wasSide) $('.menu-button')?.focus();
+    else if (wasNav) $('#nav-toggle')?.focus();
+  }
 }
 function rebuildExpressionBots() {
   const sel = $('#expression-bot');
@@ -89,33 +134,49 @@ function initShellApp() {
   $$('.dialog-close').forEach(btn => btn.onclick = () => btn.closest('dialog').close());
   $$('dialog').forEach(d => d.addEventListener('click', e => { if (e.target === d) { const r = d.getBoundingClientRect(); if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) d.close(); } }));
 
-  const sidebarBand = () => matchMedia('(max-width:850px)').matches ? 'narrow' : matchMedia('(max-width:1150px)').matches ? 'medium' : 'wide';
+  const sidebarBand = () => matchMedia('(max-width:850px)').matches
+    ? 'narrow'
+    : matchMedia('(max-width:1024px)').matches
+      ? 'medium'
+      : matchMedia('(max-width:1240px)').matches
+        ? 'compact'
+        : 'wide';
   let currentBand = sidebarBand();
   const shellEl = $('.notebook-shell');
-  if (shellEl && currentBand === 'medium') shellEl.dataset.sidebarCollapsed = 'true';
-  else if (shellEl && currentBand === 'wide' && !shellEl.dataset.sidebarCollapsed) shellEl.dataset.sidebarCollapsed = 'false';
+  if (shellEl) {
+    if (currentBand === 'medium') {
+      shellEl.dataset.navCollapsed = 'true';
+      shellEl.dataset.sidebarCollapsed = 'true';
+    } else if (currentBand === 'compact') {
+      shellEl.dataset.navCollapsed = 'true';
+      if (!shellEl.dataset.sidebarCollapsed) shellEl.dataset.sidebarCollapsed = 'false';
+    } else if (currentBand === 'wide') {
+      if (!shellEl.dataset.navCollapsed) shellEl.dataset.navCollapsed = 'false';
+      if (!shellEl.dataset.sidebarCollapsed) shellEl.dataset.sidebarCollapsed = 'false';
+    }
+  }
 
-  const menuBtn = $('.menu-button');
-  if (menuBtn) menuBtn.onclick = () => { if (matchMedia('(max-width:850px)').matches) { $('#chat-sidebar').classList.contains('mobile-open') ? closeMobile() : openMobile(); } else $('#team-shared-create')?.focus(); };
-  const pageMenuBtn = $('#page-menu-toggle');
-  if (pageMenuBtn) {
-    pageMenuBtn.onclick = e => {
-      e?.stopPropagation?.();
+  const navBtn = $('#nav-toggle');
+  if (navBtn) {
+    navBtn.onclick = () => {
       if (setupLocked()) return;
-      const wrap = pageMenuBtn.closest?.('.header-right') || $('.header-right');
-      if (!wrap) return;
-      const open = wrap.classList.toggle('page-menu-open');
-      pageMenuBtn.setAttribute('aria-expanded', String(open));
-    };
-    document.addEventListener('click', e => {
-      const wrap = pageMenuBtn.closest?.('.header-right') || $('.header-right');
-      if (!wrap?.classList?.contains('page-menu-open')) return;
-      if (e?.target && wrap.contains?.(e.target)) {
-        if (e.target.closest?.('[data-page-link]')) closePageMenu();
-        return;
+      if (isNarrow()) {
+        $('#nav-sidebar')?.classList.contains('mobile-open') ? closeNavMobile() : openNavMobile();
+      } else {
+        setNavMode(shellEl?.dataset.navCollapsed !== 'true');
       }
-      closePageMenu();
-    });
+    };
+  }
+  const menuBtn = $('.menu-button');
+  if (menuBtn) {
+    menuBtn.onclick = () => {
+      if (setupLocked()) return;
+      if (isNarrow()) {
+        $('#chat-sidebar').classList.contains('mobile-open') ? closeMobile() : openMobile();
+      } else {
+        setSidebarMode(shellEl?.dataset.sidebarCollapsed !== 'true');
+      }
+    };
   }
   const teamNavTitle = $('#team-nav-title');
   if (teamNavTitle) {
@@ -132,70 +193,118 @@ function initShellApp() {
     });
   }
   $('#mobile-overlay').onclick = () => closeMobile();
-  document.addEventListener('keydown', e => { if (e.key === 'Escape') { closeMobile(); closePageMenu(); } });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') closeMobile(); });
   syncSidebarChrome();
+
+  const themeBtn = $('#theme-toggle');
+  if (themeBtn) {
+    themeBtn.onclick = () => {
+      const dark = document.documentElement?.dataset?.theme === 'dark';
+      if (typeof setPrefs === 'function') setPrefs({ theme: dark ? 'light' : 'dark' });
+    };
+  }
+  window.ThycaThemeSync = () => {
+    if (typeof refreshAllBotPalettes === 'function') refreshAllBotPalettes();
+    if (typeof renderTeam === 'function') renderTeam();
+    if ($('#expressions-dialog')?.open && typeof buildExpressions === 'function') buildExpressions();
+    if (typeof registerLiveRigs === 'function') registerLiveRigs();
+    if (typeof wakeEyeLoop === 'function') wakeEyeLoop();
+  };
 
   if ($('#motion-toggle')) $('#motion-toggle').onclick = () => toggleMotion(!motionPaused);
   if (reduced.matches) toggleMotion(true);
 
   const nextBlink = new WeakMap();
   setInterval(() => {
-    if (motionPaused || document.hidden || reduced.matches) return; const now = Date.now();
-    $$('.seal-avatar:not(.expression-preview)').forEach(a => {
-      if (['offline', 'done', 'error'].includes(a.dataset.state) || a.dataset.expression === 'mention' || ['hum', 'stretch', 'wink', 'sleepy'].includes(a.dataset.idle)) return;
-      if (!nextBlink.has(a)) nextBlink.set(a, now + 1500 + Math.random() * 5000); if (now < nextBlink.get(a)) return;
-      nextBlink.set(a, now + 2600 + Math.random() * 6000); a.classList.add('blink'); setTimeout(() => a.classList.remove('blink'), 220);
+    if (motionPaused || document.hidden || reduced.matches || window.ThycaIsShy) return; const now = Date.now();
+    $$('.crew-avatar:not(.expression-preview) .char-box').forEach(box => {
+      const a = box.closest('.crew-avatar');
+      if (!a || ['offline', 'done', 'error'].includes(a.dataset.state) || a.dataset.expression === 'mention' || ['hum', 'stretch', 'wink', 'sleepy'].includes(a.dataset.idle)) return;
+      if (!nextBlink.has(box)) nextBlink.set(box, now + 1500 + Math.random() * 5000); if (now < nextBlink.get(box)) return;
+      nextBlink.set(box, now + 2600 + Math.random() * 6000); box.classList.add('blink'); setTimeout(() => box.classList.remove('blink'), 175);
     });
   }, 300);
+
+  if (typeof document !== 'undefined' && document.addEventListener) {
+    document.addEventListener('pointermove', ev => {
+      window.ThycaPointer = { clientX: ev.clientX, clientY: ev.clientY };
+      if (typeof wakeEyeLoop === 'function') wakeEyeLoop();
+    });
+    $('#team-bot-list')?.addEventListener('pointerover', ev => {
+      const el = ev.target?.closest?.('.bot-card');
+      const next = el ? (el.dataset.botId || el.dataset.group || null) : null;
+      if (window.ThycaHoverCardId !== next) {
+        window.ThycaHoverCardId = next;
+        if (typeof wakeEyeLoop === 'function') wakeEyeLoop();
+      }
+    });
+    $('#team-bot-list')?.addEventListener('pointerleave', () => {
+      if (window.ThycaHoverCardId !== null) {
+        window.ThycaHoverCardId = null;
+        if (typeof wakeEyeLoop === 'function') wakeEyeLoop();
+      }
+    });
+    $('#team-bot-list')?.addEventListener('scroll', () => { if (typeof markCtmDirty === 'function') markCtmDirty(); }, { passive: true });
+    window.addEventListener?.('resize', () => { if (typeof markCtmDirty === 'function') markCtmDirty(); });
+  }
+  if (typeof registerLiveRigs === 'function') registerLiveRigs();
+  if (typeof wakeEyeLoop === 'function') wakeEyeLoop();
 
   setInterval(idleTick, 400);
   document.addEventListener('visibilitychange', () => { bots.forEach(b => { clearIdle(b, true); b.idle.nextAt = Date.now() + between(4000, 9000); }); });
 
+  const NAV_FULL_VAR = 'var(--nav-full)';
+  const NAV_RAIL_VAR = 'var(--nav-rail)';
   const FULL_WIDTH_VAR = 'var(--sidebar-full)';
-  const RAIL_WIDTH_VAR = 'var(--rail-width)';
-  const separator = $('.splitter');
+  const COLLAPSED_WIDTH = '0px';
   const isNarrow = () => matchMedia('(max-width:850px)').matches;
+  function setNavMode(collapsed) {
+    if (!shellEl) return;
+    if (isNarrow()) {
+      shellEl.dataset.navCollapsed = 'false';
+      document.documentElement.style.removeProperty('--nav-width');
+      syncSidebarChrome();
+      return;
+    }
+    shellEl.dataset.navCollapsed = collapsed ? 'true' : 'false';
+    document.documentElement.style.setProperty('--nav-width', collapsed ? NAV_RAIL_VAR : NAV_FULL_VAR);
+    syncSidebarChrome();
+  }
   function setSidebarMode(collapsed) {
     if (!shellEl) return;
     if (isNarrow()) {
       shellEl.dataset.sidebarCollapsed = 'false';
       document.documentElement.style.removeProperty('--sidebar-width');
-      if (separator) {
-        separator.setAttribute('aria-expanded', 'false');
-        separator.setAttribute('aria-hidden', 'true');
-      }
       syncSidebarChrome();
       return;
     }
     shellEl.dataset.sidebarCollapsed = collapsed ? 'true' : 'false';
-    document.documentElement.style.setProperty('--sidebar-width', collapsed ? RAIL_WIDTH_VAR : FULL_WIDTH_VAR);
-    if (separator) {
-      separator.removeAttribute('aria-hidden');
-      separator.setAttribute('aria-expanded', String(!collapsed));
-      separator.setAttribute('aria-label', collapsed ? 'Mở rộng thanh bot' : 'Thu gọn thanh bot');
-      separator.textContent = collapsed ? '›' : '‹';
-    }
+    document.documentElement.style.setProperty('--sidebar-width', collapsed ? COLLAPSED_WIDTH : FULL_WIDTH_VAR);
     syncSidebarChrome();
   }
   function syncSidebarModeFromState() {
     if (!shellEl) return;
+    setNavMode(shellEl.dataset.navCollapsed === 'true');
     setSidebarMode(shellEl.dataset.sidebarCollapsed === 'true');
   }
-  separator.onclick = () => {
-    if (setupLocked() || isNarrow()) return;
-    setSidebarMode(shellEl?.dataset.sidebarCollapsed !== 'true');
-  };
   syncSidebarModeFromState();
   addEventListener('resize', () => {
     const nextBand = sidebarBand();
     if (nextBand !== currentBand) {
       if (shellEl) {
-        if (nextBand === 'medium') shellEl.dataset.sidebarCollapsed = 'true';
-        else if (nextBand === 'wide' || nextBand === 'narrow') shellEl.dataset.sidebarCollapsed = 'false';
+        if (nextBand === 'medium') {
+          shellEl.dataset.navCollapsed = 'true';
+          shellEl.dataset.sidebarCollapsed = 'true';
+        } else if (nextBand === 'compact') {
+          shellEl.dataset.navCollapsed = 'true';
+          shellEl.dataset.sidebarCollapsed = 'false';
+        } else {
+          shellEl.dataset.navCollapsed = 'false';
+          shellEl.dataset.sidebarCollapsed = 'false';
+        }
       }
       currentBand = nextBand;
     }
-    if (innerWidth > 950) closePageMenu();
     if (!isNarrow()) closeMobile();
     syncSidebarModeFromState();
   });
@@ -205,29 +314,62 @@ function initShellApp() {
   setInterval(() => scheduleRosterSync(), 45000);
 
   window.ThycaShell = {
-    setState, mention: mentionBot, notifyText, handleEvent, setGroupActivity,
+    setState, mention: mentionBot, notifyText, handleEvent, setGroupActivity, setPeerExchange,
     playIdle: (id, key = null) => beginIdle(id, key, true), setIdleOptions, getIdleOptions: () => ({ ...idleOptions }),
+    setTheme(mode) {
+      const next = mode === 'dark' ? 'dark' : 'light';
+      if (typeof setPrefs === 'function') setPrefs({ theme: next });
+      return next;
+    },
+    getTheme() { return document.documentElement?.dataset?.theme === 'dark' ? 'dark' : 'light'; },
     setBotColor(id, color) {
       if (!/^#[a-f0-9]{6}$/i.test(color) || !getBot(id)) return false;
-      const b = getBot(id); b.color = color; b.palette = derivePalette(color); localStorage.setItem('thyca.tint.' + id, color);
-      paint($('#bot-' + id), b); $$('[data-bot-avatar="' + id + '"]').forEach(el => paint(el, b));
+      const b = getBot(id);
+      const dark = typeof isDarkMode === 'function' ? isDarkMode() : false;
+      b.color = color;
+      b.palette = derivePalette(color, dark, b.tint);
+      localStorage.setItem('thyca.tint.' + id, color);
+      paint($('#bot-' + id), b);
+      $$('[data-bot-avatar="' + id + '"]').forEach(el => paint(el, b));
       if (typeof renderHeaderBots === 'function') renderHeaderBots();
       if (typeof updateComposer === 'function') updateComposer();
-      if ($('#expressions-dialog').open) buildExpressions();
+      if ($('#expressions-dialog')?.open) buildExpressions();
       return true;
     },
     setBotShape(id, shape) {
-      if (typeof DROP_NAMES === 'undefined' || !DROP_NAMES.includes(shape) || !getBot(id)) return false;
-      const b = getBot(id); b.shape = shape; localStorage.setItem('thyca.shape.' + id, shape);
-      $$('[data-bot-avatar="' + id + '"]').forEach(el => {
-        el.setAttribute('data-drop-shape', shape);
-        const uid = 'drop' + (++avatarCounter);
-        el.innerHTML = `<span class="seal-motion">${dropMarkup(b, uid)}</span>`;
-      });
+      if (typeof CREW_IDS === 'undefined' || !CREW_IDS.includes(shape) || !getBot(id)) return false;
+      const b = getBot(id);
+      b.shape = shape;
+      localStorage.setItem('thyca.shape.' + id, shape);
+      $$('.crew-avatar[data-bot-avatar="' + id + '"]').forEach(el => syncAvatar(el, b));
       if (typeof renderHeaderBots === 'function') renderHeaderBots();
+      if (typeof syncGroupAvatars === 'function') syncGroupAvatars();
+      if ($('#expressions-dialog')?.open) buildExpressions();
       return true;
     },
-    getState() { return bots.map(b => ({ id: b.id, state: b.state, expression: expressionFor(b), color: b.color, open: b.open, elapsed: b.elapsed, idle: { activity: b.idle.active, comment: b.idle.comment } })); },
+    setBotTheme(id, theme) {
+      if (typeof THEME_IDS === 'undefined' || !THEME_IDS.includes(theme) || !getBot(id)) return false;
+      const b = getBot(id);
+      b.theme = theme;
+      localStorage.setItem('thyca.theme.' + id, theme);
+      const stage = $(`#bot-${id} .card-stage`);
+      if (stage) stage.dataset.botTheme = theme;
+      $$('.crew-avatar[data-bot-avatar="' + id + '"]').forEach(el => syncAvatar(el, b));
+      if ($('#expressions-dialog')?.open) buildExpressions();
+      return true;
+    },
+    setBotAccessory(id, accessory) {
+      if (typeof ACCESSORY_IDS === 'undefined' || !ACCESSORY_IDS.includes(accessory) || !getBot(id)) return false;
+      const b = getBot(id);
+      b.accessory = accessory;
+      localStorage.setItem('thyca.acc.' + id, accessory);
+      $$('.crew-avatar[data-bot-avatar="' + id + '"]').forEach(el => syncAvatar(el, b));
+      if (typeof syncGroupAvatars === 'function') syncGroupAvatars();
+      if ($('#expressions-dialog')?.open) buildExpressions();
+      return true;
+    },
+    getPeerExchange() { return window.ThycaPeerExchange ? { ...window.ThycaPeerExchange } : null; },
+    getState() { return bots.map(b => ({ id: b.id, state: b.state, expression: expressionFor(b), color: b.color, shape: crewShapeFor(b).id, theme: themeFor(b), accessory: accessoryFor(b), open: b.open, elapsed: b.elapsed, idle: { activity: b.idle?.active || null, comment: b.idle?.comment || '' } })); },
     getGroupActivity() { return activeGroup ? { groupId: activeGroup.id, speaker: activeGroup.speaker, startedAt: activeGroup.start } : null; },
   };
 }

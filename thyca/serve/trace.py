@@ -418,6 +418,72 @@ def _sum_tool_calls(group: list) -> int:
     return total
 
 
+def _bucket_models(group: list[TurnSummary]) -> list[dict]:
+    by_model_map: dict[str, list[TurnSummary]] = defaultdict(list)
+    for t in group:
+        by_model_map[t.model or "unknown"].append(t)
+    rows = []
+    for model, subset in sorted(by_model_map.items()):
+        requests, cost = _sum_group(subset)
+        rows.append({
+            "model": model,
+            "requests": requests,
+            "total_tokens": sum(turn.total_tokens or 0 for turn in subset),
+            "cost_usd": cost,
+        })
+    return rows
+
+
+def _bucket_bots(group: list[TurnSummary]) -> list[dict]:
+    acc_map: dict[str, dict] = {}
+    for t in group:
+        entries = [e for e in (t.bot_breakdown or []) if isinstance(e, dict)]
+        if not entries:
+            entries = [{
+                "bot_id": t.bot_id,
+                "requests": t.requests,
+                "total_tokens": t.total_tokens,
+                "cost_usd": t.cost_usd,
+            }]
+        for entry in entries:
+            raw_bot = entry.get("bot_id")
+            key = raw_bot if isinstance(raw_bot, str) and raw_bot else "unknown"
+            acc = acc_map.setdefault(key, {"requests": 0, "total_tokens": 0, "costs": []})
+            req = entry.get("requests")
+            if isinstance(req, int) and not isinstance(req, bool):
+                acc["requests"] += req
+            tok = entry.get("total_tokens")
+            if isinstance(tok, int) and not isinstance(tok, bool):
+                acc["total_tokens"] += tok
+            cost_val = entry.get("cost_usd")
+            if isinstance(cost_val, (int, float)) and not isinstance(cost_val, bool):
+                acc["costs"].append(float(cost_val))
+    return [
+        {
+            "bot_id": bot_id,
+            "requests": acc["requests"],
+            "total_tokens": acc["total_tokens"],
+            "cost_usd": round(sum(acc["costs"]), 6) if acc["costs"] else None,
+        }
+        for bot_id, acc in sorted(acc_map.items())
+    ]
+
+
+def _bucket_rollup(group: list[TurnSummary]) -> dict:
+    requests, cost = _sum_group(group)
+    return {
+        **_record_counts(group),
+        "requests": requests,
+        "cost_usd": cost,
+        "prompt_tokens": sum(turn.prompt_tokens or 0 for turn in group),
+        "cached_tokens": sum(turn.cached_tokens or 0 for turn in group),
+        "completion_tokens": sum(turn.completion_tokens or 0 for turn in group),
+        "total_tokens": sum(turn.total_tokens or 0 for turn in group),
+        "by_model": _bucket_models(group),
+        "by_bot": _bucket_bots(group),
+    }
+
+
 def aggregate(turns: list[TurnSummary]) -> dict:
     total_requests, total_cost = _sum_group(turns)
     totals = {
@@ -465,17 +531,10 @@ def aggregate(turns: list[TurnSummary]) -> dict:
             day = ""
         if day:
             by_day_map[day].append(t)
-    by_day = []
-    for day, group in sorted(by_day_map.items()):
-        requests, cost = _sum_group(group)
-        by_day.append({
-            **_record_counts(group),
-            "day": day, "requests": requests, "cost_usd": cost,
-            "prompt_tokens": sum(turn.prompt_tokens or 0 for turn in group),
-            "cached_tokens": sum(turn.cached_tokens or 0 for turn in group),
-            "completion_tokens": sum(turn.completion_tokens or 0 for turn in group),
-            "total_tokens": sum(turn.total_tokens or 0 for turn in group),
-        })
+    by_day = [
+        {"day": day, **_bucket_rollup(group)}
+        for day, group in sorted(by_day_map.items())
+    ]
     models = sorted(by.keys())
     by_status_map: dict[str, list[TurnSummary]] = defaultdict(list)
     for t in turns:
@@ -547,10 +606,10 @@ def aggregate(turns: list[TurnSummary]) -> dict:
             hour = ""
         if hour:
             by_hour_map[hour].append(t)
-    by_hour = []
-    for hour, group in sorted(by_hour_map.items()):
-        requests, cost = _sum_group(group)
-        by_hour.append({"hour": hour, "requests": requests, "cost_usd": cost})
+    by_hour = [
+        {"hour": hour, **_bucket_rollup(group)}
+        for hour, group in sorted(by_hour_map.items())
+    ]
     return {
         "totals": totals,
         "by_model": by_model,

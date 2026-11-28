@@ -96,3 +96,38 @@ def test_facade_scopes_today_and_archived_using_stored_owner_metadata(tmp_path):
     assert scoped.leaves[0].get_count == scoped.leaves[0].search_count == 1
     assert facade.stats(now=tomorrow).total == 4
     assert facade.stats(now=tomorrow, bot_id="absent").total == 0
+
+
+def test_owner_scoped_stats_merges_multichunk_entries(tmp_path):
+    now = datetime(2026, 8, 17, 12, tzinfo=ZoneInfo("Asia/Ho_Chi_Minh"))
+    tomorrow = datetime(2026, 8, 18, 12, tzinfo=ZoneInfo("Asia/Ho_Chi_Minh"))
+    facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
+    own = facade.remember(
+        "Coder long entry",
+        "Đoạn mở đầu rất dài để chắc chắn vượt ngưỡng tách chunk " + ("chi tiết kỹ thuật " * 55) + "PART_ONE.",
+        content="Đoạn bổ sung thứ hai sau dấu chấm để tách sang chunk tiếp theo. " + ("dữ liệu cấu hình " * 45) + "PART_TWO.",
+        bots=["coder"],
+        now=now,
+    )
+    facade.remember(
+        "Researcher long entry",
+        "Đoạn một của researcher rất dài " + ("nghiên cứu hệ thống " * 55) + "RES_ONE.",
+        content="Đoạn hai của researcher tiếp theo RES_TWO.",
+        bots=["researcher"],
+        now=now,
+    )
+    facade.archive.reindex(tomorrow)
+    assert facade.archive.store.memory_leaf_count(own, format_ts(tomorrow)) >= 2
+    facade.archive.store.usage.record_gets([f"{own}#1"], own, format_ts(tomorrow))
+    facade.archive.store.usage.record_searches([f"{own}#2"], own, format_ts(tomorrow))
+
+    scoped = facade.stats(now=tomorrow, bot_id="coder")
+    assert scoped.total == 1
+    assert scoped.used == 1
+    assert scoped.searched == 1
+    assert len(scoped.leaves) == 1
+    leaf = scoped.leaves[0]
+    assert leaf.memory_id == own
+    assert leaf.chunk_id == f"{own}#1"
+    assert "PART_ONE" in leaf.snippet and "PART_TWO" in leaf.snippet
+    assert facade.stats(now=tomorrow).total == 2

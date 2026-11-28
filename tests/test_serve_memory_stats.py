@@ -108,7 +108,7 @@ def test_stats_json_and_static(tmp_path: Path) -> None:
         assert b"'/api/memory/forget'" in memory_js
         assert 'id="memory-bot"' not in html and b'id="memory-bot"' not in memory_js
         assert 'id="memory-kind"' in html
-        assert 'id="memory-use"' in html
+        assert 'id="memory-use"' not in html and 'id="memory-reload"' not in html
         assert 'id="memory-scope-card"' in html
         assert b'mem-scope-clear' in memory_js
         assert b"'?bot=' + encodeURIComponent" in memory_js
@@ -329,7 +329,7 @@ def test_profile_screen_renders_markdown() -> None:
     shell_css = (WEBUI / "ui" / "share" / "app-shell.css").read_text(encoding="utf-8")
     memories = (WEBUI / "ui" / "memories" / "js" / "memories.js").read_text(encoding="utf-8")
 
-    assert "['profile', 'Hồ sơ', '../profile/index.html']" in util
+    assert "['profile', 'Hồ sơ', '../profile/index.html', 'nav-profile']" in util
     app = (WEBUI / "ui" / "chat" / "index.html").read_text(encoding="utf-8")
     assert 'src="../profile/js/profile.js"' in app
     assert "../share/shell.js" in app
@@ -436,5 +436,52 @@ def test_null_byte_path_is_404_not_dropped(tmp_path: Path) -> None:
             assert exc.code == 404
         else:
             raise AssertionError("expected 404 for null-byte path")
+    finally:
+        _stop(httpd, thread)
+
+
+def test_stats_endpoint_merges_multichunk_and_returns_full_text(tmp_path: Path) -> None:
+    httpd, thread, facade = _start(tmp_path)
+    try:
+        now = _fresh_now()
+        long_summary = (
+            "Đoạn mở đầu rất dài vượt ngưỡng tách chunk "
+            + ("chi tiết kỹ thuật " * 55)
+            + "MID_TOKEN."
+        )
+        sid = facade.remember(
+            "Ghi chú nhiều đoạn",
+            long_summary,
+            content="Phần kết thúc cuối cùng sau hơn một nghìn ký tự. " + ("nội dung mở rộng " * 30) + "END_TOKEN_HTTP.",
+            now=now,
+        )
+        assert len([c for c in facade._today_chunks(now) if c.memory_id == sid]) >= 2
+        with urlopen(_url(httpd, "/api/memory/stats"), timeout=2) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        assert payload["total"] == 1
+        assert len(payload["leaves"]) == 1
+        leaf = payload["leaves"][0]
+        assert leaf["memory_id"] == sid
+        assert leaf["chunk_id"] == f"{sid}#1"
+        assert "MID_TOKEN" in leaf["snippet"]
+        assert "END_TOKEN_HTTP" in leaf["snippet"]
+        assert len(leaf["snippet"]) > 900
+        for field_name in (
+            "chunk_id",
+            "memory_id",
+            "heading",
+            "snippet",
+            "timeline_day",
+            "get_count",
+            "search_count",
+            "expires_at",
+            "is_today",
+            "bots",
+            "kind",
+            "task",
+            "status",
+            "habit",
+        ):
+            assert field_name in leaf, field_name
     finally:
         _stop(httpd, thread)

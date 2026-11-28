@@ -98,12 +98,18 @@ BROWSER_SCRIPT = r"""
       overviewRowGap: getComputedStyle(overviewSection).rowGap,
       workspaceDisplay,
       activePanel: activePanel?.id || null,
-      botCostHidden: view.querySelector('#card-bot-cost').hidden,
+      costBotToggleHidden: view.querySelector('#cost-chart-mode').hidden,
+      noAnalysisDrawer: !view.querySelector('#analysis-details') && !view.querySelector('#rows-bot') && !view.querySelector('#card-bot-cost'),
       headerControlsHidden: view.querySelector('#usage-header-controls').hidden,
-      rangeControlsVisible: ['.range-presets', '#range-custom-toggle'].every(selector => {
+      rangeControlsVisible: ['.range-presets'].every(selector => {
         const rect = view.querySelector(selector).getBoundingClientRect();
         return rect.width > 0 && rect.height > 0;
-      }),
+      }) && !view.querySelector('#range-custom-toggle') && !view.querySelector('#stat-grid'),
+      filterBarSingleRow: (() => {
+        const tabsRect = view.querySelector('#usage-view-tabs').getBoundingClientRect();
+        const presetsRect = view.querySelector('.range-presets').getBoundingClientRect();
+        return Math.abs(tabsRect.top - presetsRect.top) <= 4;
+      })(),
       rangeActionsFit: rangeActionsRect.left >= view.querySelector('.page-nav').getBoundingClientRect().left - 1 &&
         rangeActionsRect.right <= view.querySelector('.page-nav').getBoundingClientRect().right + 1 &&
         rangeActions.scrollWidth <= rangeActions.clientWidth + 1 && rangeChildren.every(el => {
@@ -122,7 +128,10 @@ BROWSER_SCRIPT = r"""
         navAlign: getComputedStyle(view.querySelector('.page-nav')).alignItems,
       },
       detailVisible: show(view, '#turn-detail-view'),
-      statValues: [...view.querySelectorAll('#stat-grid .stat-value')].map(el => el.textContent.trim()),
+      statValues: [
+        view.querySelector('#usage-chart-total').textContent.trim(),
+        view.querySelector('#cost-chart-total').textContent.trim(),
+      ],
       visibleTurnText: view.querySelector('#trace-conversations').textContent,
       view: new URLSearchParams(ThycaRouter.currentRoute().search).get('view') || 'usage',
       detailText: view.querySelector('#detail-body').textContent,
@@ -172,12 +181,14 @@ BROWSER_SCRIPT = r"""
     const groupId = detailPayload.group_id;
     const groupTurn = turns.find(turn => turn.group_id === groupId && turn.turn_index === 0);
     if (!groupTurn) throw new Error('canonical group turn missing from all-time overview API response');
-    const statValues = [...view.querySelectorAll('#stat-grid .stat-value')].map(el => el.textContent.trim());
+    const statValues = [
+      view.querySelector('#usage-chart-total').textContent.trim(),
+      view.querySelector('#cost-chart-total').textContent.trim(),
+    ];
     const total = payloads.stats.totals || {};
     const costText = value => '$' + Number(value || 0).toFixed(value >= 1 ? 2 : value >= 0.01 ? 4 : 6);
     if (statValues[0] !== Number(total.total_tokens || 0).toLocaleString('vi-VN') ||
-        statValues[1] !== costText(total.cost_usd) ||
-        statValues[2] !== Number(total.requests || 0).toLocaleString('vi-VN')) throw new Error('overview stat cards disagree with the exact stats API response: ' + JSON.stringify({ statValues, total }));
+        statValues[1] !== costText(total.cost_usd)) throw new Error('overview tab totals disagree with the exact stats API response: ' + JSON.stringify({ statValues, total }));
     const groupButton = [...view.querySelectorAll('#trace-conversations button[data-conv]')]
       .find(button => button.dataset.conv === 'group:' + groupId && button.dataset.turn === '0');
     // A group turn's API title is its group id, so the row reads as the
@@ -199,17 +210,29 @@ BROWSER_SCRIPT = r"""
       .find(button => button.dataset.conv === 'group:' + groupId && button.dataset.turn === '0');
     if (!filteredButton) throw new Error('filtered group turn row missing');
     const scroller = view.querySelector('#usage-scroll');
-    scroller.scrollTop = Math.min(60, scroller.scrollHeight);
-    filteredButton.focus({ preventScroll: true });
-    const scrollBefore = scroller.scrollTop;
     const overviewScreenshot = captureLayout(view, true);
     const beforeTabCounts = { stats: window.__sourceApiCalls.filter(entry => entry.url.startsWith('/api/traces/stats')).length,
       lists: window.__sourceApiCalls.filter(entry => new URL(entry.url, location.origin).pathname === '/api/traces').length };
+    view.querySelector('[data-usage-view="usage"]').click();
+    await wait(() => !view.querySelector('#usage-panel-usage').hidden, 'Usage content view');
+    const modeSelect = view.querySelector('#usage-chart-mode');
+    modeSelect.value = 'requests:model';
+    modeSelect.dispatchEvent(new Event('change', { bubbles: true }));
+    await wait(() => view.querySelector('#usage-chart-title').textContent.includes('Lần gọi') &&
+      view.querySelector('#usage-chart-legend').textContent.includes('fixture-model'), 'Requests stacked by model');
+    const requestsStackedByModel = view.querySelectorAll('#chart-day .dc-seg-series').length > 0;
+    modeSelect.value = 'requests:bot';
+    modeSelect.dispatchEvent(new Event('change', { bubbles: true }));
+    await wait(() => view.querySelector('#usage-chart-legend').textContent.includes('Coder'), 'Requests stacked by bot');
     view.querySelector('[data-usage-view="cost"]').click();
-    await wait(() => !view.querySelector('#usage-panel-cost').hidden, 'Cost content view');
+    await wait(() => !view.querySelector('#usage-panel-cost').hidden &&
+      view.querySelector('#cost-chart-legend').textContent.includes('fixture-model'), 'Cost content view');
     if (window.__sourceApiCalls.filter(entry => entry.url.startsWith('/api/traces/stats')).length !== beforeTabCounts.stats) throw new Error('view change refetched stats');
     view.querySelector('[data-usage-view="trace"]').click();
     await wait(() => !view.querySelector('#usage-panel-trace').hidden, 'Trace content view');
+    scroller.scrollTop = Math.min(60, scroller.scrollHeight);
+    filteredButton.focus({ preventScroll: true });
+    const scrollBefore = scroller.scrollTop;
     filteredButton.click();
     await wait(() => !detail.hidden && ThycaRouter.currentRoute().hash === '#groups/' + groupId + '/0' &&
       view.querySelector('#detail-body').textContent.includes('GROUP_CANONICAL_REPLY'), 'filtered canonical detail reopened');
@@ -237,8 +260,8 @@ BROWSER_SCRIPT = r"""
     const scopedStats = window.__sourceResponses.filter(entry => entry.path === '/api/traces/stats' && entry.search.includes('bot_id=coder')).at(-1)?.payload;
     if (!scopedStats || scopedStats.totals?.requests !== total.requests || scopedStats.totals?.total_tokens !== total.total_tokens) throw new Error('coder private/shared attribution does not match authoritative source totals: ' + JSON.stringify(scopedStats?.totals));
     view.querySelector('[data-usage-view="cost"]').click();
-    await wait(() => !view.querySelector('#usage-panel-cost').hidden && view.querySelector('#card-bot-cost').hidden, 'scoped Cost hides the team bot breakdown');
-    const scopedCostHidden = view.querySelector('#card-bot-cost').hidden;
+    await wait(() => !view.querySelector('#usage-panel-cost').hidden && view.querySelector('#cost-chart-mode').hidden, 'scoped Cost hides the bot mode selector');
+    const scopedCostHidden = view.querySelector('#cost-chart-mode').hidden;
     view.querySelector('[data-usage-view="trace"]').click();
     await wait(() => !view.querySelector('#usage-panel-trace').hidden, 'scoped Trace content');
     const scopedGroup = [...view.querySelectorAll('#trace-conversations button[data-conv]')].find(button => button.dataset.conv === 'group:' + groupId && button.dataset.turn === '0');
@@ -249,8 +272,9 @@ BROWSER_SCRIPT = r"""
     if (!scopedDetailText.includes('Đóng góp của Coder') || !scopedDetailText.includes('toàn bộ lượt')) throw new Error('bot contribution and complete turn context are not distinguished');
     view.querySelector('#detail-back').click();
     await wait(() => detail.hidden && ThycaRouter.currentRoute().hash === '' && new URLSearchParams(ThycaRouter.currentRoute().search).get('bot') === 'coder', 'return to scoped Trace');
-    document.querySelector('#chat-sidebar #usage-overview-scope').click();
-    await wait(() => !new URLSearchParams(ThycaRouter.currentRoute().search).has('bot') && new URLSearchParams(ThycaRouter.currentRoute().search).get('view') === 'trace', 'dedicated Overview scope clears bot');
+    if (document.querySelector('#chat-sidebar #usage-overview-scope')) throw new Error('sidebar must not inject an Overview button');
+    view.querySelector('#scope-clear').click();
+    await wait(() => !new URLSearchParams(ThycaRouter.currentRoute().search).has('bot') && new URLSearchParams(ThycaRouter.currentRoute().search).get('view') === 'trace', 'scope card clear button clears bot');
     if (window.__sourceApiCalls.some(entry => entry.method !== 'GET')) throw new Error('read-only Usage E2E made a non-GET API call');
     if (document.querySelectorAll('iframe').length) throw new Error('SPA introduced an iframe');
     await new Promise(resolve => setTimeout(resolve, 100));
@@ -261,7 +285,7 @@ BROWSER_SCRIPT = r"""
       groupTurn, statValues, searchUrl: filtered.search, searchTotal: filtered.payload.total,
       overviewApiCounts: { stats: statsCount, lists: window.__sourceResponses.filter(entry => entry.path === '/api/traces').length,
         detail: reopened.length }, scopedBot: 'coder', scopedSessions: scopedStats.totals.conversations,
-      scopedTraceDetail: true, scopedCostHidden,
+      scopedTraceDetail: true, scopedCostHidden, requestsStackedByModel,
       mobileMenuClosed: innerWidth > 850 || !document.querySelector('#chat-sidebar').classList.contains('mobile-open'),
       overview: overviewScreenshot, returnedOverview: captureLayout(view, true),
       focusRestored, scrollBefore, scrollAfter,
@@ -395,6 +419,8 @@ def test_source_usage_detail_and_overview_are_canonical_read_only(tmp_path: Path
     assert result["overview"].get("activePanel") == "usage-panel-trace"
     assert result["scopedBot"] == "coder" and result["scopedSessions"] == 2
     assert result["scopedTraceDetail"] is True and result["scopedCostHidden"] is True
+    assert result["requestsStackedByModel"] is True
+    assert result["overview"].get("noAnalysisDrawer") is True
     assert all(call["method"] == "GET" for call in result["apiCalls"])
     assert artifact.exists()
 
@@ -421,6 +447,8 @@ def test_source_usage_overview_and_detail_responsive_screenshots(tmp_path: Path)
         assert layout["overflows"] == [], layout
         if mode == "source-overview":
             assert layout["rangeControlsVisible"] and layout["rangeActionsFit"], layout
+            if width >= 375:
+                assert layout["filterBarSingleRow"] is True, layout
         assert layout["detailVisible"] is (mode == "source-detail"), layout
         assert layout["workspaceDisplay"] == "flex", layout
         assert layout["overviewVisible"] is (mode == "source-overview"), layout

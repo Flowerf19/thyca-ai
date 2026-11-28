@@ -12,6 +12,12 @@ import json
 
 from thyca.core.protocol import Message, ToolCall, parse_ts
 from thyca.memories.identity import bind_bot_id, reset_bot_id
+from thyca.memories.ledger_common import (
+    DuplicateCandidateError,
+    is_strict_label_overlap,
+    label_key,
+)
+from thyca.memories.task_ledger import match_open_tasks
 from thyca.tools.memory_tools import (
     bind_chat_conversation,
     reset_chat_conversation,
@@ -251,16 +257,74 @@ def extraction_prompt(
         "group related facts.\n"
         "5. HABITS: Use memory_note(habit=..., explicit=...) for recurring preferences, "
         "formatting rules (e.g. URL wrapping, plain-text layout), or workflow conventions; "
-        "reuse an exact label from KNOWN HABIT LABELS when matching.\n"
-        "6. TASKS: Use memory_task with an existing task id from OPEN MEMORY TASKS for "
-        "genuine progress, decisions, or done/cancelled closure; omit task only for a new "
-        "multi-step goal. Never create a new task for work already in TODAY'S CLOSED TASKS. "
-        "NEVER attach stable facts to an open task.\n\n"
+        "always scan KNOWN HABIT LABELS by meaning and reuse an exact existing label when matching.\n"
+        "6. TASKS: Always scan OPEN MEMORY TASKS by meaning first and pass that exact task id "
+        "to memory_task for genuine progress, decisions, or done/cancelled closure; omit task "
+        "only for a genuinely new multi-step goal. Never create a new task for work already in "
+        "TODAY'S CLOSED TASKS. NEVER attach stable facts to an open task.\n\n"
         f"{_open_tasks_block(open_tasks)}\n\n"
         f"{_today_closed_tasks_block(today_entries)}\n\n"
         f"{_today_notes_block(today_entries)}\n\n"
         f"{_known_habits_block(known_habits)}\n\n"
         f"TRANSCRIPT:\n{transcript}"
+    )
+
+
+def _format_task_conflict_message(
+    open_candidates: list[dict], closed_candidates: list[dict]
+) -> str:
+    lines: list[str] = []
+    for entry in open_candidates[:3]:
+        summary = str(entry.get("summary") or "")[:120]
+        line = (
+            f"- [OPEN] {entry['task_id']}: {entry.get('title', '')} "
+            f"(last_day={entry.get('last_day', '?')})"
+        )
+        if summary:
+            line += f" — {summary}"
+        lines.append(line)
+    for entry in closed_candidates[:3]:
+        status = entry.get("status") or "done"
+        body = " ".join(str(entry.get("body") or "").split())[:120]
+        line = f"- [CLOSED:{status}] {entry.get('task', '?')}: {entry.get('title', '')}"
+        if body:
+            line += f" — {body}"
+        lines.append(line)
+    return (
+        "Possible duplicate of existing task(s):\n"
+        + "\n".join(lines)
+        + "\nPass task='<task_id>' to update an OPEN task, omit the call if already "
+        "covered by a CLOSED task, or retry with force_new=true if this is a distinct new task."
+    )
+
+
+def _format_habit_conflict_message(labels: list[str]) -> str:
+    lines = [f"- habit={label!r}" for label in labels[:3]]
+    return (
+        "Possible duplicate of existing habit(s):\n"
+        + "\n".join(lines)
+        + "\nReuse the exact existing habit label to reinforce it, or retry with "
+        "force_new=true if this is a distinct habit."
+    )
+
+
+def _conflict_resolution_prompt(conflicts: list[dict[str, object]]) -> str:
+    blocks: list[str] = []
+    for index, item in enumerate(conflicts, start=1):
+        call = item["call"]
+        name = getattr(call, "name", "")
+        raw_args = getattr(call, "arguments", {})
+        args_json = json.dumps(raw_args, ensure_ascii=False)
+        blocks.append(f"{index}. Proposed call: {name}({args_json})\n   Warning:\n   {item['message']}")
+    return (
+        "Some of your proposed memory tool calls may duplicate existing open/closed tasks "
+        "or known habits.\n"
+        "Resolve ONLY the items listed below (all other calls were already applied):\n"
+        "- If it belongs to an OPEN task, call memory_task with that exact task='<task_id>'.\n"
+        "- If it matches an existing habit, call memory_note with that exact habit label.\n"
+        "- If it is genuinely a distinct new task or habit, call the tool again with force_new=true.\n"
+        "- If it is already covered by a CLOSED task or duplicate, call no tool for it.\n\n"
+        + "\n\n".join(blocks)
     )
 
 
@@ -271,24 +335,39 @@ async def apply_memory_tool_calls(
     bot_id: str = "thyca",
     open_tasks=(),
     today_entries=(),
+    known_habits=(),
     chat: str | None = None,
+    collect_conflicts: list[dict[str, object]] | None = None,
 ) -> dict:
     """Execute sidecar ``memory_note`` / ``memory_task`` tool calls under ``bot_id``."""
     catalog = [entry for entry in (open_tasks or ()) if isinstance(entry, dict)]
     known = {str(entry["task_id"]): entry for entry in catalog if entry.get("task_id")}
-    open_by_title = {
-        " ".join(str(entry.get("title", "")).strip().split()).casefold(): str(entry["task_id"])
-        for entry in catalog
-        if entry.get("task_id") and str(entry.get("title", "")).strip()
-    }
-    closed_today_titles = {
-        " ".join(str(entry.get("title", "")).strip().split()).casefold()
+    open_by_title: dict[str, list[str]] = {}
+    for entry in catalog:
+        tid = entry.get("task_id")
+        title = str(entry.get("title", "")).strip()
+        if tid and title:
+            key = label_key(title)
+            if key:
+                open_by_title.setdefault(key, []).append(str(tid))
+    closed_today_entries = [
+        entry
         for entry in (today_entries or ())
         if isinstance(entry, dict)
         and entry.get("task")
         and entry.get("status") in ("done", "cancelled")
         and str(entry.get("title", "")).strip()
-    }
+    ]
+    closed_today_titles = {
+        label_key(str(entry.get("title", "")))
+        for entry in closed_today_entries
+    } - {""}
+    known_habit_list = [
+        " ".join(str(label).split())
+        for label in (known_habits or ())
+        if isinstance(label, str) and label.strip()
+    ]
+    known_habit_keys = {label_key(label): label for label in known_habit_list if label_key(label)}
     minted: dict[str, str] = {}
     last_written_task: dict[str, str] = {}
     written: list[str] = []
@@ -323,26 +402,79 @@ async def apply_memory_tool_calls(
                     raw_topic = args.get("topic")
                     if not isinstance(raw_topic, str) or not raw_topic.strip():
                         continue
-                    key = " ".join(raw_topic.strip().split()).casefold()
-                    if key in closed_today_titles:
+                    key = label_key(raw_topic)
+                    if args.get("force_new") is not True:
+                        if key in closed_today_titles:
+                            continue
+                        matched_open_ids = open_by_title.get(key, [])
+                        if len(matched_open_ids) == 1:
+                            task_id = matched_open_ids[0]
+                            args["task"] = task_id
+                            target = last_written_task.get(task_id) or known[task_id].get(
+                                "latest_memory_id"
+                            )
+                            if isinstance(target, str) and target.strip():
+                                args["memory_id"] = target.strip()
+                        elif key in minted:
+                            task_id = minted[key]
+                            args["task"] = task_id
+                            target = last_written_task.get(task_id)
+                            if target:
+                                args["memory_id"] = target
+                        else:
+                            exact_open, similar_open = match_open_tasks(raw_topic, catalog)
+                            open_candidates = exact_open if len(exact_open) > 1 else similar_open
+                            closed_candidates = [
+                                entry
+                                for entry in closed_today_entries
+                                if is_strict_label_overlap(
+                                    raw_topic,
+                                    str(entry.get("title") or ""),
+                                    candidate_extra=str(entry.get("body") or ""),
+                                )
+                            ]
+                            if open_candidates or closed_candidates:
+                                if collect_conflicts is not None:
+                                    collect_conflicts.append(
+                                        {
+                                            "call": call,
+                                            "message": _format_task_conflict_message(
+                                                open_candidates, closed_candidates
+                                            ),
+                                        }
+                                    )
+                                continue
+            elif (
+                name == "memory_note"
+                and args.get("memory_id") is None
+                and isinstance(args.get("habit"), str)
+                and args["habit"].strip()
+                and args.get("force_new") is not True
+            ):
+                raw_habit = args["habit"].strip()
+                h_key = label_key(raw_habit)
+                if h_key not in known_habit_keys:
+                    similar_labels = [
+                        label
+                        for label in known_habit_list
+                        if is_strict_label_overlap(raw_habit, label)
+                    ]
+                    if similar_labels:
+                        if collect_conflicts is not None:
+                            collect_conflicts.append(
+                                {
+                                    "call": call,
+                                    "message": _format_habit_conflict_message(similar_labels),
+                                }
+                            )
                         continue
-                    if key in open_by_title:
-                        task_id = open_by_title[key]
-                        args["task"] = task_id
-                        target = last_written_task.get(task_id) or known[task_id].get(
-                            "latest_memory_id"
-                        )
-                        if isinstance(target, str) and target.strip():
-                            args["memory_id"] = target.strip()
-                    elif key in minted:
-                        task_id = minted[key]
-                        args["task"] = task_id
-                        target = last_written_task.get(task_id)
-                        if target:
-                            args["memory_id"] = target
 
             try:
                 raw_out = await spec.handler(args)
+            except DuplicateCandidateError as exc:
+                if collect_conflicts is not None:
+                    collect_conflicts.append({"call": call, "message": str(exc)})
+                continue
             except ValueError:
                 continue
 
@@ -359,15 +491,56 @@ async def apply_memory_tool_calls(
                 out_tid = payload.get("task_id")
                 if isinstance(out_tid, str) and out_tid:
                     if payload.get("created") and isinstance(args.get("topic"), str):
-                        key = " ".join(args["topic"].strip().split()).casefold()
+                        topic_clean = args["topic"].strip()
+                        key = label_key(topic_clean)
                         minted[key] = out_tid
-                        known[out_tid] = {"task_id": out_tid, "latest_memory_id": mid}
+                        new_entry = {
+                            "task_id": out_tid,
+                            "title": topic_clean,
+                            "latest_memory_id": mid,
+                            "last_day": (
+                                mid.split("#", 1)[0]
+                                if isinstance(mid, str) and "#" in mid
+                                else "?"
+                            ),
+                            "summary": str(args.get("summary") or ""),
+                        }
+                        known[out_tid] = new_entry
+                        catalog.append(new_entry)
+                        if key:
+                            open_by_title.setdefault(key, []).append(out_tid)
                     if isinstance(mid, str) and mid:
                         last_written_task[out_tid] = mid
+            elif name == "memory_note" and isinstance(args.get("habit"), str) and args["habit"].strip():
+                h_label = " ".join(args["habit"].split())
+                h_key = label_key(h_label)
+                if h_key and h_key not in known_habit_keys:
+                    known_habit_keys[h_key] = h_label
+                    known_habit_list.append(h_label)
     finally:
         reset_chat_conversation(chat_tok)
         reset_bot_id(bot_tok)
     return {"written": written}
+
+
+def _merge_round2_open_tasks(open_tasks, facade, bot_id: str) -> list[dict]:
+    merged: dict[str, dict] = {}
+    for entry in open_tasks or ():
+        if isinstance(entry, dict) and entry.get("task_id"):
+            merged[str(entry["task_id"])] = entry
+    token = bind_bot_id(bot_id)
+    try:
+        live = facade.tasks(
+            status="open",
+            limit=50,
+            allow_own_cross_window=False,
+        ).get("tasks", [])
+    finally:
+        reset_bot_id(token)
+    for entry in live:
+        if isinstance(entry, dict) and entry.get("task_id"):
+            merged[str(entry["task_id"])] = entry
+    return list(merged.values())
 
 
 async def extract_memories(
@@ -382,8 +555,9 @@ async def extract_memories(
     chat: str | None = None,
     strict: bool = False,
 ) -> dict:
-    """Single-round tool-calling extraction using built-in memory_note/memory_task."""
+    """Tool-calling extraction using built-in memory_note/memory_task with 1-round conflict check."""
     registry = sidecar_memory_tools(facade)
+    tools = registry.to_openai_schema()
     prompt = extraction_prompt(
         transcript,
         open_tasks=open_tasks,
@@ -393,7 +567,7 @@ async def extract_memories(
     try:
         reply = await connect.chat(
             [Message(role="user", content=prompt)],
-            registry.to_openai_schema(),
+            tools,
         )
     except Exception as exc:
         if strict:
@@ -402,11 +576,45 @@ async def extract_memories(
     calls = list(getattr(reply, "tool_calls", None) or ())
     if not calls:
         return {"written": []}
-    return await apply_memory_tool_calls(
+    conflicts: list[dict[str, object]] = []
+    first = await apply_memory_tool_calls(
         registry,
         calls,
         bot_id=bot_id,
         open_tasks=open_tasks,
         today_entries=today_entries,
+        known_habits=known_habits,
         chat=chat,
+        collect_conflicts=conflicts,
     )
+    written = list(first["written"])
+    if not conflicts:
+        return {"written": written}
+    resolve_prompt = _conflict_resolution_prompt(conflicts)
+    try:
+        followup = await connect.chat(
+            [Message(role="user", content=resolve_prompt)],
+            tools,
+        )
+    except Exception as exc:
+        if strict:
+            raise ExtractionError(f"extractor conflict chat failed: {type(exc).__name__}") from exc
+        return {"written": written}
+    followup_calls = list(getattr(followup, "tool_calls", None) or ())
+    if not followup_calls:
+        return {"written": written}
+    round2_open_tasks = _merge_round2_open_tasks(open_tasks, facade, bot_id)
+    second = await apply_memory_tool_calls(
+        registry,
+        followup_calls,
+        bot_id=bot_id,
+        open_tasks=round2_open_tasks,
+        today_entries=today_entries,
+        known_habits=known_habits,
+        chat=chat,
+        collect_conflicts=None,
+    )
+    for mid in second["written"]:
+        if mid not in written:
+            written.append(mid)
+    return {"written": written}

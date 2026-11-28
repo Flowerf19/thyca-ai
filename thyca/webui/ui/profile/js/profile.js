@@ -11,11 +11,11 @@ const CANONICAL_META = {
 };
 const CANONICAL_ORDER = { 'USER.md': 0, 'SOUL.md': 1, 'IDENTITY.md': 2 };
 const FALLBACK_DESCRIPTION = 'File hồ sơ được đưa vào ngữ cảnh của Thyca.';
-const BASH_LABELS = { ask: 'lệnh: hỏi trước', allow: 'lệnh: tự chạy', deny: 'lệnh: tắt' };
+const BASH_LABELS = { ask: 'Lệnh: hỏi trước', allow: 'Lệnh: tự chạy', deny: 'Lệnh: tắt' };
 const BOT_LIMIT_DEFS = [
   { key: 'loopMax', label: 'Số vòng agent tối đa', min: 1, max: 200, def: 200 },
   { key: 'hotTailKB', label: 'Dung lượng nhớ nóng (KB)', min: 1, max: 64, def: 4 },
-  { key: 'contextTokens', label: 'Trần ngữ cảnh (tokens)', min: 32000, max: 1000000, def: 272000 },
+  { key: 'contextTokens', label: 'Ngữ cảnh (token)', min: 32000, max: 1000000, def: 272000 },
   { key: 'softTimeoutS', label: 'Soft timeout chờ tool (giây)', min: 1, max: 300, def: 60 },
 ];
 
@@ -36,13 +36,11 @@ const el = {
   root: $('#profile-root'),
   title: $('#profile-title'),
   status: $('#profile-status'),
-  reload: $('#profile-reload'),
-  shared: $('#profile-shared'),
 };
 const state = {
   files: [], tab: '', doc: '', busy: false, opener: null,
   editing: '', editBase: '', editDraft: '', editMode: 'split',
-  sectionEdit: null,
+  sectionEdit: null, openSections: new Set(),
 };
 let bootTouched = false;
 let rosterReady = false;
@@ -223,19 +221,51 @@ function retainBotSettingsDraft(forBot = botCfg.bot || state.tab) {
   else if ($('#bot-model')) botDrafts.delete(botLoadedCfg.bot);
 }
 
-function updateBotSave() {
+function updateBotSave({ clearError = false } = {}) {
   const save = $('#save-bot-settings');
+  const cancel = $('#cancel-bot-settings');
+  const hint = $('#bot-settings-hint');
   const sel = $('#bot-model');
   if (!save) return;
   const active = state.tab;
-  save.disabled = botCfg.loading || !!botCfg.savingFor || !active || !getBot(active)
-    || !botCatalog || !botCfg.settings || !sel || !botModelKnown(sel.value);
+  const dirty = Boolean(botFormDraft(active));
+  const ready = !botCfg.loading && !botCfg.savingFor && !!active && !!getBot(active)
+    && !!botCatalog && !!botCfg.settings && !!sel && botModelKnown(sel.value);
+  save.disabled = !ready || !dirty;
+  if (cancel) cancel.hidden = !dirty || botCfg.loading || !!botCfg.savingFor;
+  if (hint && !botCfg.loading && !botCfg.savingFor) {
+    if (dirty) {
+      if (clearError || !hint.textContent || hint.textContent === 'Đã lưu.') hint.textContent = 'Chưa lưu';
+    } else if (hint.textContent && hint.textContent !== 'Đã lưu.') {
+      hint.textContent = '';
+    }
+  }
+}
+
+function botInheritedThinking(modelId, effective) {
+  const pid = botDraftProviderId(modelId);
+  const provEffort = pid ? (botCatalog?.providers?.[pid]?.reasoningEffort || '') : '';
+  if (provEffort) return provEffort;
+  if (botLoadedCfg && botLoadedCfg.thinking === null && modelId === botLoadedCfg.model) {
+    return effective?.thinking || '';
+  }
+  return '';
 }
 
 function paintBotProviderPreview() {
-  const sel = $('#bot-model'), preview = $('#bot-provider-preview');
+  const sel = $('#bot-model'), thinkSel = $('#bot-thinking'), preview = $('#bot-provider-preview'), effEl = $('#bot-effective');
   if (!sel || !preview || !botCatalog) return;
   const selVal = sel.value || 'default';
+  const thinkVal = thinkSel ? thinkSel.value : '';
+  if (effEl) {
+    const eff = botCfg.settings?.effective || {};
+    const inherited = selVal === 'default' || !thinkVal;
+    const effModel = selVal === 'default' ? (botCatalog.defaultModel || eff.model || '') : selVal;
+    const effThinking = thinkVal || botInheritedThinking(selVal, eff);
+    const text = effModel ? `Đang dùng: ${effModel}${effThinking ? ` · ${effThinking}` : ''}` : '';
+    effEl.hidden = !inherited || !text || !botModelKnown(selVal);
+    effEl.textContent = text;
+  }
   if (!botModelKnown(selVal)) {
     preview.textContent = 'Provider: — (model không còn trong danh mục)';
     return;
@@ -264,8 +294,10 @@ function botFieldsHtml(modelId, thinking, effective, limitValues, advOpen) {
   const known = botModelKnown(modelId);
   const list = known ? ids : [...ids, modelId];
   const choices = botEffortChoices(modelId === 'default' ? def : modelId);
-  const effModel = (effective && effective.model) || modelId;
-  const effThinking = effective && effective.thinking;
+  const effModel = modelId === 'default' ? (def || (effective && effective.model) || '') : modelId;
+  const effThinking = thinking || botInheritedThinking(modelId, effective);
+  const showEffective = known && (modelId === 'default' || !thinking) && Boolean(effModel);
+  const effectiveText = effModel ? `Đang dùng: ${effModel}${effThinking ? ` · ${effThinking}` : ''}` : '';
   const initProvider = known
     ? (botDraftProviderId(modelId) || (effective && effective.provider) || '')
     : '';
@@ -287,8 +319,8 @@ function botFieldsHtml(modelId, thinking, effective, limitValues, advOpen) {
    </div>
    <p class="field-hint" id="bot-model-notice"${known ? ' hidden' : ''}>${known ? '' : 'Model đã lưu không còn trong danh mục — chọn model khác rồi lưu.'}</p>
    <div class="bot-model-meta">
-    <span class="bot-effective"><strong>${escapeHTML(effModel)}</strong>${effThinking ? ` · ${escapeHTML(effThinking)}` : ''}</span>
     <span class="bot-provider-line" id="bot-provider-preview">${escapeHTML(initProviderLine)}</span>
+    <span class="bot-effective" id="bot-effective"${showEffective ? '' : ' hidden'}>${escapeHTML(effectiveText)}</span>
    </div>
    <details class="profile-bot-advanced" id="bot-advanced"${advOpen ? ' open' : ''}>
     <summary class="profile-adv-toggle"><span>Nâng cao</span><span class="profile-adv-badge" id="bot-limits-badge" data-custom="${custom}">${custom ? 'Tự cấu hình' : 'Mặc định'}</span></summary>
@@ -307,6 +339,14 @@ function bindBotSettingsControls() {
   if (form) form.onsubmit = e => { e.preventDefault(); void submitBotSettings(); };
   const def = botCatalog?.defaultModel || '';
   const modelSel = $('#bot-model');
+  const thinkSel = $('#bot-thinking');
+  const cancelBtn = $('#cancel-bot-settings');
+  if (cancelBtn) {
+    cancelBtn.onclick = () => {
+      if (state.tab) botDrafts.delete(state.tab);
+      renderBotSettingsForm();
+    };
+  }
   if (!modelSel) return;
   modelSel.onchange = () => {
     const next = $('#bot-thinking');
@@ -318,11 +358,17 @@ function bindBotSettingsControls() {
     );
     next.value = list.includes(keep) ? keep : '';
     paintBotProviderPreview();
-    updateBotSave();
+    updateBotSave({ clearError: true });
   };
+  if (thinkSel) {
+    thinkSel.onchange = () => {
+      paintBotProviderPreview();
+      updateBotSave({ clearError: true });
+    };
+  }
   for (const item of BOT_LIMIT_DEFS) {
     const input = $(`#bot-limit-${item.key}`);
-    if (input) input.oninput = () => { syncBotLimitsChrome(); };
+    if (input) input.oninput = () => { syncBotLimitsChrome(); updateBotSave({ clearError: true }); };
   }
   const resetBtn = $('#bot-limits-reset');
   if (resetBtn) {
@@ -332,6 +378,7 @@ function bindBotSettingsControls() {
         if (input) input.value = '';
       }
       syncBotLimitsChrome();
+      updateBotSave({ clearError: true });
     };
   }
   syncBotLimitsChrome();
@@ -729,22 +776,29 @@ function renderSectionEditorForm(isNew) {
 function renderSectionCard(sec, isEditingSection) {
   if (isEditingSection) {
     return `<article class="profile-section-card" data-editing="true" data-section-index="${sec.index}">
-      <div class="profile-section-head">
+      <div class="profile-section-edit-head">
         <h3 class="profile-section-title">${escapeHTML(sec.title)}</h3>
       </div>
       ${renderSectionEditorForm(false)}
     </article>`;
   }
   const hasVisible = hasVisibleMarkdown(sec.editBody);
-  return `<article class="profile-section-card"${hasVisible ? '' : ' data-empty="true"'} data-section-index="${sec.index}">
-    <div class="profile-section-head">
+  const isOpen = state.openSections.has(sec.index);
+  return `<details class="profile-section-card"${hasVisible ? '' : ' data-empty="true"'} data-section-index="${sec.index}"${isOpen ? ' open' : ''}>
+    <summary class="profile-section-head">
+      <span class="profile-section-caret" aria-hidden="true">${icon('chevron')}</span>
       <h3 class="profile-section-title">${escapeHTML(sec.title)}</h3>
-      <button class="quiet-button profile-section-btn" type="button" data-edit-section="${sec.index}"${state.busy ? ' disabled' : ''}>Sửa</button>
+      ${hasVisible ? '' : '<span class="profile-section-tag">Trống</span>'}
+    </summary>
+    <div class="profile-section-content">
+      ${hasVisible
+        ? `<div class="markdown-body profile-section-body">${contentHtml(sec.editBody)}</div>`
+        : '<p class="profile-section-empty">Chưa có nội dung — nhấn Sửa để điền.</p>'}
+      <div class="profile-section-foot">
+        <button class="quiet-button profile-section-btn" type="button" data-edit-section="${sec.index}"${state.busy ? ' disabled' : ''}>Sửa</button>
+      </div>
     </div>
-    ${hasVisible
-      ? `<div class="markdown-body profile-section-body">${contentHtml(sec.editBody)}</div>`
-      : '<p class="profile-section-empty">Chưa có nội dung — nhấn Sửa để điền.</p>'}
-  </article>`;
+  </details>`;
 }
 
 function bindSectionEditor() {
@@ -782,7 +836,7 @@ function renderShared() {
   const tabsHtml = `<div class="profile-doc-tabs" id="profile-doc-tabs" role="tablist" aria-label="Tài liệu hồ sơ">${
     state.files.map(item => {
       const active = item.name === file.name;
-      return `<button type="button" class="profile-doc-tab" role="tab" data-doc="${escapeHTML(item.name)}" aria-selected="${active}" data-active="${active}"><span>${escapeHTML(item.tab)}</span><small>${escapeHTML(item.name)}</small></button>`;
+      return `<button type="button" class="profile-doc-tab" role="tab" data-doc="${escapeHTML(item.name)}" title="${escapeHTML(item.name)}" aria-selected="${active}" data-active="${active}"><span>${escapeHTML(item.tab)}</span></button>`;
     }).join('')
   }</div>`;
 
@@ -806,12 +860,11 @@ function renderShared() {
     const cardsHtml = parsed.sections.map(sec => renderSectionCard(sec, Boolean(se && se.index === sec.index))).join('');
     const newCardHtml = se && se.index === -1
       ? `<article class="profile-section-card" data-editing="true" data-section-index="-1">
-           <div class="profile-section-head"><h3 class="profile-section-title">Mục mới</h3></div>
+           <div class="profile-section-edit-head"><h3 class="profile-section-title">Mục mới</h3></div>
            ${renderSectionEditorForm(true)}
          </article>`
       : '';
-    const single = parsed.sections.length + (se?.index === -1 ? 1 : 0) <= 1 && !se;
-    bodyHtml = `${introHtml}<div class="profile-section-grid"${single ? ' data-single="true"' : ''}>${cardsHtml}${newCardHtml}</div>`;
+    bodyHtml = `${introHtml}<div class="profile-section-grid">${cardsHtml}${newCardHtml}</div>`;
   }
 
   el.root.innerHTML = `${tabsHtml}<section class="paper-card profile-doc" id="file-${escapeHTML(file.name)}" aria-label="${escapeHTML(file.name)}">
@@ -832,9 +885,9 @@ function renderShared() {
 
 function botFacts(b) {
   return [
-    b.bash ? (BASH_LABELS[b.bash] || `bash: ${b.bash}`) : '',
-    b.memory ? (b.memory.read && b.memory.write ? 'bộ nhớ: đọc + ghi' : b.memory.read ? 'bộ nhớ: chỉ đọc' : 'bộ nhớ: tắt') : '',
-    b.system ? 'bot hệ thống' : '',
+    b.bash ? (BASH_LABELS[b.bash] || `Lệnh: ${b.bash}`) : '',
+    b.memory ? (b.memory.read && b.memory.write ? 'Bộ nhớ: đọc + ghi' : b.memory.read ? 'Bộ nhớ: chỉ đọc' : 'Bộ nhớ: tắt') : '',
+    b.system ? 'Bot hệ thống' : '',
   ].filter(Boolean);
 }
 
@@ -860,18 +913,19 @@ function renderBotDossier(b) {
           <div id="bot-settings-fields"><p class="empty-note">Đang tải cài đặt bot…</p></div>
           <div class="profile-bot-save-row">
             <button class="primary-action" type="submit" id="save-bot-settings" disabled>Lưu</button>
+            <button class="quiet-button" type="button" id="cancel-bot-settings" hidden>Hủy</button>
             <span class="form-hint" id="bot-settings-hint"></span>
           </div>
         </form>
       </aside>
       <div class="profile-bot-body">
         <div class="profile-twin-head">
-          <code class="profile-file-badge">TWIN.md</code>
+          <span class="profile-twin-title" title="TWIN.md">Tính cách</span>
           <span class="profile-readonly">Chỉ đọc — bot tự cập nhật qua chat</span>
         </div>
         ${b.persona.trim()
           ? `<article class="markdown-body profile-content">${contentHtml(b.persona)}</article>`
-          : '<p class="empty-note"><strong>Chưa có persona.</strong>TWIN.md của bot này không có phần thân.</p>'}
+          : '<p class="empty-note"><strong>Chưa có persona.</strong>Bot này chưa có mô tả tính cách.</p>'}
       </div>
     </div>
   </section>`;
@@ -909,6 +963,7 @@ function selectDoc(name) {
   if (!confirmDiscardEdit()) return;
   state.editing = ''; state.editBase = ''; state.editDraft = '';
   state.sectionEdit = null;
+  state.openSections.clear();
   state.doc = name;
   renderContent();
   ctx.updateRoute({ search: '', hash: '#' + encodeURIComponent(name) });
@@ -921,6 +976,7 @@ function showShared(anchor = '') {
   bootTouched = true;
   state.editing = ''; state.editBase = ''; state.editDraft = '';
   state.sectionEdit = null;
+  state.openSections.clear();
   state.tab = '';
   if (anchor) {
     const fileName = anchor.replace(/^file-/, '');
@@ -929,7 +985,6 @@ function showShared(anchor = '') {
   el.title.textContent = 'Hồ sơ chung';
   selectedBot = '';
   ctx.highlightBot('');
-  el.shared.hidden = true;
   ctx.renderTeam();
   fixSidebarLabels();
   renderContent();
@@ -951,7 +1006,6 @@ function showTab(id, anchor = '') {
   el.title.textContent = 'Bạn và ' + b.name;
   selectedBot = id;
   ctx.highlightBot(id);
-  el.shared.hidden = false;
   ctx.renderTeam();
   fixSidebarLabels();
   renderContent();
@@ -993,29 +1047,6 @@ async function loadFiles() {
   }
 }
 
-async function reloadProfile() {
-  if (!confirmDiscardEdit()) return;
-  retainBotSettingsDraft();
-  state.editing = ''; state.editBase = ''; state.editDraft = '';
-  state.sectionEdit = null;
-  await loadFiles();
-  void loadBotCatalog();
-  if (typeof loadRoster === 'function') {
-    try {
-      await loadRoster();
-      ctx.renderTeam();
-      fixSidebarLabels();
-    } catch (err) {
-      toast('Không tải được đội bot: ' + (err.message || ''));
-    }
-  }
-  if (state.tab && getBot(state.tab)) {
-    botCfg.bot = '';
-    botCfg.settings = null;
-  }
-  renderContent();
-}
-
 function setBusy(busy) {
   state.busy = busy;
   $$('#edit-form button, #edit-form textarea, #section-edit-form button, #section-edit-form input, #section-edit-form textarea, [data-edit], [data-doc], [data-edit-mode], [data-edit-section], [data-add-section]', el.root)
@@ -1054,6 +1085,7 @@ function openSectionEdit(fileName, index, opener) {
     if (!sec) return false;
     initTitle = sec.title;
     initBody = sec.editBody;
+    state.openSections.add(index);
   }
   state.sectionEdit = {
     file: file.name, index,
@@ -1105,6 +1137,7 @@ async function submitSectionEdit(e) {
     await postJson('/api/memory/canonical', { name: file.name, content });
     file.content = content;
     state.sectionEdit = null;
+    state.openSections.add(savedIndex);
     const reloaded = await loadFiles();
     if (!reloaded) renderContent();
     const nextOpener = [...el.root.querySelectorAll('[data-edit-section]')]
@@ -1162,6 +1195,7 @@ async function submitEdit(e) {
     const targetFile = state.files.find(f => f.name === name);
     if (targetFile) targetFile.content = content;
     state.editing = ''; state.editBase = ''; state.editDraft = '';
+    state.openSections.clear();
     const reloaded = await loadFiles();
     if (!reloaded) renderContent();
     const nextOpener = [...el.root.querySelectorAll('[data-edit]')].find(button => button.dataset.edit === name);
@@ -1185,8 +1219,14 @@ window.addEventListener('thyca:config-saved', () => {
   if (botCfg.savingFor || !ctx.isActive()) { botCatalogDirty = true; return; }
   void loadBotCatalog();
 });
-el.reload.addEventListener('click', () => reloadProfile());
-el.shared.onclick = () => showShared();
+el.root.addEventListener('toggle', e => {
+  const details = e.target;
+  if (!details || details.tagName !== 'DETAILS' || !details.classList?.contains('profile-section-card')) return;
+  const idx = Number(details.dataset?.sectionIndex);
+  if (!Number.isInteger(idx)) return;
+  if (details.open) state.openSections.add(idx);
+  else state.openSections.delete(idx);
+}, true);
 el.root.addEventListener('click', e => {
   const docBtn = e.target.closest('[data-doc]');
   if (docBtn) { selectDoc(docBtn.dataset.doc); return; }
@@ -1212,7 +1252,7 @@ function applyRoute(nextTab = state.tab, hash = decodeHash()) {
     state.sectionEdit = null;
     state.tab = nextTab;
     selectedBot = ''; ctx.highlightBot(''); ctx.renderTeam(); fixSidebarLabels();
-    el.shared.hidden = false; el.title.textContent = 'Không tìm thấy bot';
+    el.title.textContent = 'Không tìm thấy bot';
     renderContent();
     routeKey = ctx.route.search + ctx.route.hash;
     return true;

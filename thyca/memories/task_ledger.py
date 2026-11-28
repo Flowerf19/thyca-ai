@@ -22,6 +22,8 @@ from thyca.memories.ledger_common import (
     TASK_UPDATED_DAY_RE,
     extract_task_updated_day,
     first_summary_line,
+    is_strict_label_overlap,
+    label_key,
     locate_visible_block,
     today_blocks,
     validate_entry_fields,
@@ -364,7 +366,10 @@ def upsert_task_card(
             new_topic = (
                 None
                 if existing_meta.title
-                and clean_topic.casefold() in _GENERIC_TASK_TOPICS
+                and (
+                    clean_topic.casefold() in _GENERIC_TASK_TOPICS
+                    or label_key(clean_topic) == label_key(existing_meta.title)
+                )
                 else clean_topic
             )
             new_kind = None if existing_meta.kind == "habit" else "checkpoint"
@@ -483,3 +488,27 @@ def format_task_catalog(
             f"(+{dormant_count} older open tasks — call memory_search(scope='tasks') if user brings them up)"
         )
     return "\n".join(lines)
+
+
+def match_open_tasks(
+    topic: str, open_tasks: list[dict]
+) -> tuple[list[dict], list[dict]]:
+    """Return ``(exact_matches, similar_candidates)`` for ``topic`` among ``open_tasks``."""
+    target = label_key(topic)
+    if not target:
+        return [], []
+    exact: list[dict] = []
+    similar: list[dict] = []
+    for entry in open_tasks:
+        if not isinstance(entry, dict) or not entry.get("task_id"):
+            continue
+        title = str(entry.get("title") or "").strip()
+        if not title:
+            continue
+        if label_key(title) == target:
+            exact.append(entry)
+        elif is_strict_label_overlap(
+            topic, title, candidate_extra=str(entry.get("summary") or "")
+        ):
+            similar.append(entry)
+    return exact, similar

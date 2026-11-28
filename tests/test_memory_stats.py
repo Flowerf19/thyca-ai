@@ -89,11 +89,19 @@ def test_get_memory_increments_each_returned_leaf(tmp_path: Path) -> None:
     now = at("2026-08-17")
     facade.archive.reindex(now)
     facade.get(memory_id="2026-08-13#dddddddd", now=now)
+    raw_gets = {cid: count for cid, (count, _) in facade.archive.store.usage.get_map().items()}
+    assert raw_gets == {"2026-08-13#dddddddd#1": 1, "2026-08-13#dddddddd#2": 1}
     stats = facade.stats(now=now)
-    counts = {item.chunk_id: item.get_count for item in stats.leaves}
-    assert counts == {"2026-08-13#dddddddd#1": 1, "2026-08-13#dddddddd#2": 1}
-    assert stats.used == 2
+    assert stats.total == 1
+    assert stats.used == 1
     assert stats.unused == 0
+    assert len(stats.leaves) == 1
+    leaf = stats.leaves[0]
+    assert leaf.memory_id == "2026-08-13#dddddddd"
+    assert leaf.chunk_id == "2026-08-13#dddddddd#1"
+    assert leaf.get_count == 2
+    assert "first cafe leaf is long enough" in leaf.snippet
+    assert "second cafe leaf is long enough" in leaf.snippet
 
 
 def test_get_miss_does_not_record(tmp_path: Path) -> None:
@@ -433,3 +441,110 @@ def test_m5_memory_ids_excluded_from_stats() -> None:
         now_ts="2026-08-17T00:00:00Z",
     )
     assert result.total == 0
+
+
+def test_stats_merges_multichunk_memory_with_full_text_and_latest_timestamps(tmp_path: Path) -> None:
+    long_first = "- Đoạn một rất dài để vượt ngưỡng 250 ký tự " + ("alpha " * 45) + "END_FIRST"
+    second_line = "- Đoạn hai kiểm tra giữ nguyên nội dung đầy đủ BETA_SECOND"
+    third_line = "- Đoạn ba nằm cuối cùng sau hơn bốn trăm ký tự TAIL_MARKER_999"
+    (tmp_path / "memory").mkdir()
+    (tmp_path / "memory" / "2026-08-13.md").write_text(
+        "# 2026-08-13\n"
+        '## 08:00 — Bản tổng hợp dài <!-- thyca {"id":"11223344","imp":3,"exp":"2026-08-24T10:00:00Z"} -->\n'
+        f"{long_first}\n"
+        f"{second_line}\n"
+        f"{third_line}\n",
+        encoding="utf-8",
+    )
+    facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
+    now = datetime(2026, 8, 17, 10, 0, tzinfo=UTC)
+    facade.archive.reindex(now)
+    sid = "2026-08-13#11223344"
+    assert facade.archive.store.memory_leaf_count(sid, "2026-08-17T10:00:00Z") >= 3
+
+    facade.archive.store.usage.record_gets([f"{sid}#1"], sid, "2026-08-15T08:00:00Z")
+    facade.archive.store.usage.record_gets([f"{sid}#3"], sid, "2026-08-16T09:30:00Z")
+    facade.archive.store.usage.record_searches([f"{sid}#2"], sid, "2026-08-15T11:00:00Z")
+    facade.archive.store.usage.record_searches([f"{sid}#3"], sid, "2026-08-16T14:45:00Z")
+
+    stats = facade.stats(now=now)
+    assert stats.total == 1
+    assert stats.used == 1
+    assert stats.unused == 0
+    assert stats.searched == 1
+    assert stats.untouched == 0
+    assert len(stats.expiring) == 1
+    assert stats.suggest_removal == []
+    leaf = stats.leaves[0]
+    assert leaf.chunk_id == f"{sid}#1"
+    assert leaf.memory_id == sid
+    assert leaf.get_count == 2
+    assert leaf.last_get_at == "2026-08-16T09:30:00Z"
+    assert leaf.search_count == 2
+    assert leaf.last_search_at == "2026-08-16T14:45:00Z"
+    assert len(leaf.snippet) > 350
+    assert "END_FIRST" in leaf.snippet
+    assert "BETA_SECOND" in leaf.snippet
+    assert "TAIL_MARKER_999" in leaf.snippet
+    assert leaf.snippet.index("END_FIRST") < leaf.snippet.index("BETA_SECOND") < leaf.snippet.index("TAIL_MARKER_999")
+
+
+def test_stats_partial_chunk_usage_prevents_false_suggest_removal(tmp_path: Path) -> None:
+    (tmp_path / "memory").mkdir()
+    (tmp_path / "memory" / "2026-08-01.md").write_text(
+        "# 2026-08-01\n"
+        '## 08:00 — Multi chunk <!-- thyca {"id":"55667788","imp":4,"exp":"2026-09-20T00:00:00Z"} -->\n'
+        "- first chunk untouched long enough line\n"
+        "- second chunk hit by search long enough\n",
+        encoding="utf-8",
+    )
+    facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
+    now = at("2026-08-17")
+    facade.archive.reindex(now)
+    sid = "2026-08-01#55667788"
+    facade.archive.store.usage.record_searches([f"{sid}#2"], sid, "2026-08-02T10:00:00Z")
+    stats = facade.stats(now=now)
+    assert stats.total == 1
+    assert stats.searched == 1
+    assert stats.untouched == 0
+    assert stats.suggest_removal == []
+
+
+def test_stats_orders_chunks_numerically_beyond_ten() -> None:
+    sid = "2026-08-16#abcdef01"
+    rows = [
+        {
+            "chunk_id": f"{sid}#10",
+            "memory_id": sid,
+            "heading_raw": "## 09:00 — Many chunks",
+            "text_raw": "- chunk ten",
+            "source_kind": "daily",
+            "timeline_day": "2026-08-16",
+            "expires_at": None,
+            "leaf_ord": 10,
+        },
+        {
+            "chunk_id": f"{sid}#2",
+            "memory_id": sid,
+            "heading_raw": "## 09:00 — Many chunks",
+            "text_raw": "- chunk two",
+            "source_kind": "daily",
+            "timeline_day": "2026-08-16",
+            "expires_at": None,
+            "leaf_ord": 2,
+        },
+        {
+            "chunk_id": f"{sid}#1",
+            "memory_id": sid,
+            "heading_raw": "## 09:00 — Many chunks",
+            "text_raw": "- chunk one",
+            "source_kind": "daily",
+            "timeline_day": "2026-08-16",
+            "expires_at": None,
+            "leaf_ord": 1,
+        },
+    ]
+    result = MemoryStats.build(rows, [], {}, {}, "2026-08-17", "2026-08-17T00:00:00Z")
+    assert result.total == 1
+    assert result.leaves[0].chunk_id == f"{sid}#1"
+    assert result.leaves[0].snippet == "- chunk one\n- chunk two\n- chunk ten"

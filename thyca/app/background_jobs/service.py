@@ -148,29 +148,28 @@ class BackgroundJobsService:
             token = bind_bot_id(bot_id)
             try:
                 with view_ctx:
-                    open_tasks = facade.tasks(status="open").get("tasks", [])
+                    open_tasks = facade.tasks(status="open", limit=50).get("tasks", [])
                     today_entries = facade.today_entries(chat=room_id, reader=bot_id)
                     known_habits = mem_habits.known_habit_labels(
                         facade, bot_id, bot_user_path
                     )
-            finally:
-                reset_bot_id(token)
-            try:
-                await mem_jobs.extract_memories(
-                    connect,
-                    facade,
-                    transcript,
-                    bot_id=bot_id,
-                    open_tasks=open_tasks,
-                    today_entries=today_entries,
-                    known_habits=known_habits,
-                    chat=room_id,
-                    strict=True,
-                )
+                    await mem_jobs.extract_memories(
+                        connect,
+                        facade,
+                        transcript,
+                        bot_id=bot_id,
+                        open_tasks=open_tasks,
+                        today_entries=today_entries,
+                        known_habits=known_habits,
+                        chat=room_id,
+                        strict=True,
+                    )
             except mem_jobs.ExtractionError:
                 if strict:
                     raise
                 return
+            finally:
+                reset_bot_id(token)
             if room_id and next_cursor is not None:
                 try:
                     self._deps.runtime.workspaces.store.set_memory_cursor(

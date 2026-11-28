@@ -275,7 +275,7 @@ def test_provider_page_has_one_editor_and_no_persist_before_explicit_save(node: 
           namePlaceholder: markup.includes('placeholder="Không dấu, không khoảng trắng"'), noVisibleNameHint: !markup.includes('<small>Không dấu, không khoảng trắng.</small>'), nameHintSpacer: !markup.includes('name-hint-space'),
           loadButton: markup.includes(' Tải model</button>'), loadTitle: markup.includes('title="Chỉ tải danh sách, không gọi model hay lưu cấu hình."'),
           loadHintAbsent: !markup.includes('Tải chỉ kiểm tra danh sách'), discoveryHidden: $('#discovery-status').hidden, discoveryText: $('#discovery-status').textContent,
-          keyTitle: markup.includes('title="Key được lưu trên máy này và gửi tới URL API khi kết nối."'), storedKeyNote: $('#pv-key-note').textContent, priceHint: markup.includes('Nhập đủ 3 giá hoặc để trống.'),
+          keyTitle: markup.includes('title="Key được lưu trên máy này và gửi tới URL API khi kết nối."'), storedKeyNote: $('#pv-key-note').textContent, noPriceHint: !markup.includes('Nhập đủ 3 giá hoặc để trống.') && !markup.includes('Để trống để dùng mặc định.'),
           priceTitle: markup.includes('title="Giá chỉ dùng để ước tính chi phí; API không trả giá này.'),
           hasAdvancedToggle: markup.includes('<details class="model-advanced"') && markup.includes('<summary') && !$('#model-advanced').open,
           tabsPresent: markup.includes('id="connection-tabs"') && !markup.includes('connection-picker') && !markup.includes('load-row'),
@@ -284,9 +284,12 @@ def test_provider_page_has_one_editor_and_no_persist_before_explicit_save(node: 
           loadInModelRow: (() => {{ const row = markup.slice(markup.indexOf('class="model-pick-row"'), markup.indexOf('id="discovery-status"')); return row.includes('id="m-picker"') && row.includes('id="v-submit"'); }})(),
           currentDefault: $('#current-default').textContent,
           apiInConnectionFields: (() => {{ const seg = markup.slice(markup.indexOf('class="connection-fields"'), markup.indexOf('class="model-editor"')); return seg.includes('id="pv-key"') && seg.includes('id="pv-api"'); }})(),
-          noRemovedIds: ['id="reload-config"', 'id="save-catalog"', 'id="test-provider"', 'id="m-loop"', 'id="m-hot"', 'id="cfg-default-provider"', 'id="m-provider"', 'id="pv-effort"', 'id="m-id"', 'id="connection-extra"', 'class="advanced"'].every(id => !markup.includes(id))}};
+          noRemovedIds: ['id="reload-config"', 'id="save-catalog"', 'id="test-provider"', 'id="delete-model"', 'id="m-loop"', 'id="m-hot"', 'id="cfg-default-provider"', 'id="m-provider"', 'id="pv-effort"', 'id="m-id"', 'id="connection-extra"', 'class="advanced"'].every(id => !markup.includes(id)),
+          cleanSaveDisabled: $('#save-use').disabled,
+          cleanCancelHidden: $('#cancel-editor').hidden}};
         openNewConnection();
         copy.pvIdShownOnNew = !$('#pv-id-field').hidden;
+        copy.savedHiddenOnNew = $('#saved-models').hidden;
         copy.newKeyNote = $('#pv-key-note').textContent; copy.newDiscoveryHidden = $('#discovery-status').hidden;
         $('#pv-id').value = 'fresh'; $('#pv-base-url').value = 'https://fresh.invalid/v1'; $('#pv-key').value = 'mock-fresh-key';
         await verifyQuick(); const listingStatus = $('#discovery-status').textContent; chooseModel('new/model');
@@ -314,7 +317,7 @@ def test_provider_page_has_one_editor_and_no_persist_before_explicit_save(node: 
         "discoveryText": "",
         "keyTitle": True,
         "storedKeyNote": "Đã lưu key",
-        "priceHint": True,
+        "noPriceHint": True,
         "priceTitle": True,
         "hasAdvancedToggle": True,
         "tabsPresent": True,
@@ -324,7 +327,10 @@ def test_provider_page_has_one_editor_and_no_persist_before_explicit_save(node: 
         "loadInModelRow": True,
         "apiInConnectionFields": True,
         "noRemovedIds": True,
+        "cleanSaveDisabled": True,
+        "cleanCancelHidden": True,
         "currentDefault": "Hiện tại: global-only · alpha",
+        "savedHiddenOnNew": True,
         "newKeyNote": "",
         "newDiscoveryHidden": True,
     }, out["copy"]
@@ -355,7 +361,7 @@ def test_provider_page_has_one_editor_and_no_persist_before_explicit_save(node: 
             "discoveryText": "",
             "keyTitle": True,
             "storedKeyNote": "Đã lưu key",
-            "priceHint": True,
+            "noPriceHint": True,
             "priceTitle": True,
             "hasAdvancedToggle": True,
             "tabsPresent": True,
@@ -365,7 +371,10 @@ def test_provider_page_has_one_editor_and_no_persist_before_explicit_save(node: 
             "loadInModelRow": True,
             "apiInConnectionFields": True,
             "noRemovedIds": True,
+            "cleanSaveDisabled": True,
+            "cleanCancelHidden": True,
             "currentDefault": "Hiện tại: global-only · alpha",
+            "savedHiddenOnNew": True,
             "newKeyNote": "",
             "newDiscoveryHidden": True,
         },
@@ -1217,7 +1226,7 @@ def test_provider_styles_are_scoped_to_provider_shell() -> None:
     selectors = [
         part.strip()
         for part in re.findall(r"([^{}]+)\{", css)
-        if not part.strip().startswith("@media")
+        if not part.strip().startswith(("@media", "@container"))
     ]
     assert selectors and all(
         all(selector.strip().startswith(".provider-shell") for selector in group.split(","))
@@ -1274,19 +1283,26 @@ def test_set_default_posts_only_the_default_change(node: str) -> None:
         {_mock_fetch(_config())}
         await __controller.ready; await tick(10);
         openExistingConnection('alpha'); chooseModel('owned-alpha');
+        const cleanAfterInspect = !editorIsDirty();
+        $('#m-in').value = '9'; $('#m-in').dispatch('input');
         const dirtyBlocked = await setDefaultModel('owned-alpha');
         const dirtyStatus = $('#editor-status').textContent;
         cancelEditor();
         const setDefault = await setDefaultModel('owned-alpha');
-        return {{dirtyBlocked, dirtyStatus, setDefault, posts: configPosts.length,
+        chooseModel('owned-alpha');
+        $('#m-in').value = '0.15'; $('#m-in').dispatch('input');
+        await submitEditor(null);
+        const defaultSaveNote = $('#editor-status').textContent;
+        return {{cleanAfterInspect, dirtyBlocked, dirtyStatus, setDefault, posts: configPosts.length,
                 posted: configPosts[0], events: configSavedEvents,
-                defaultLine: $('#current-default').textContent}};
+                defaultLine: $('#current-default').textContent, defaultSaveNote}};
     """,
         via="provider",
     )
+    assert out["cleanAfterInspect"] is True
     assert out["dirtyBlocked"] is False
     assert "Lưu hoặc hủy" in out["dirtyStatus"]
-    assert out["setDefault"] and out["posts"] == 1
+    assert out["setDefault"] and out["posts"] == 2
     assert out["posted"]["defaultModel"] == "owned-alpha"
     assert out["posted"]["defaultProvider"] == "alpha"
     assert out["posted"]["models"]["owned-alpha"] == {
@@ -1296,8 +1312,12 @@ def test_set_default_posts_only_the_default_change(node: str) -> None:
         "output": 0.2,
     }
     assert out["posted"]["models"]["owned-beta"]["provider"] == "beta"
-    assert out["events"] == [{"type": "thyca:config-saved", "detail": None}]
+    assert out["events"] == [
+        {"type": "thyca:config-saved", "detail": None},
+        {"type": "thyca:config-saved", "detail": None},
+    ]
     assert out["defaultLine"] == "Hiện tại: owned-alpha · alpha"
+    assert out["defaultSaveNote"] == "Đã lưu owned-alpha."
 
 
 def test_set_default_rechecks_fresh_state_and_skips_gone_models(node: str) -> None:
@@ -1570,7 +1590,7 @@ def test_official_vendor_presets_and_custom_api_options(node: str) -> None:
     assert out["postedProvider"]["baseUrl"] == "https://generativelanguage.googleapis.com/v1beta"
 
 
-def test_advanced_summary_updates_live_and_auto_opens_on_validation_error(node: str) -> None:
+def test_advanced_panel_defaults_collapsed_and_auto_opens_on_validation_error(node: str) -> None:
     out = _run(
         node,
         f"""
@@ -1580,13 +1600,13 @@ def test_advanced_summary_updates_live_and_auto_opens_on_validation_error(node: 
         const editBtn = [...document.querySelectorAll('#saved-model-rows button')].find(btn => btn.dataset.action === 'edit');
         editBtn.click();
         const editingRow = document.querySelector('#saved-model-rows .saved-model-row').dataset.editing;
+        const editingBadge = document.querySelector('#saved-model-rows .saved-model-editing')?.textContent || '';
         const modeTag = [$('#model-editor-mode').hidden, $('#model-editor-mode').textContent];
-        const summaryBefore = $('#model-advanced-summary').textContent;
+        const noSummaryMarkup = !workspace._inserted.join('').includes('model-advanced-summary');
         const closedBefore = $('#model-advanced').open;
         $('#m-in').value = '1.5';
         $('#m-cache').value = '';
         $('#connection-form').dispatch('input');
-        const summaryPartial = $('#model-advanced-summary').textContent;
         const saved = await submitEditor(null);
         const openedAfterError = $('#model-advanced').open;
         const invalidCache = $('#m-cache').getAttribute('aria-invalid');
@@ -1596,19 +1616,72 @@ def test_advanced_summary_updates_live_and_auto_opens_on_validation_error(node: 
         globalThis.matchMedia = () => ({{ matches: false, media: '', addEventListener() {{}}, removeEventListener() {{}}, addListener() {{}}, removeListener() {{}} }});
         initAdvancedState();
         const openMobile = $('#model-advanced').open;
-        return {{editingRow, modeTag, summaryBefore, closedBefore, summaryPartial, saved, openedAfterError, invalidCache, openDesktop, openMobile}};
+        cancelEditor();
+        await verifyQuick();
+        const pickerGroups = [...$('#m-picker').children].filter(el => el.tagName === 'OPTGROUP').map(el => el.label);
+        chooseModel('vendor/model-a');
+        const newModeTag = [$('#model-editor-mode').hidden, $('#model-editor-mode').textContent];
+        const newSaveEnabled = !$('#save-use').disabled;
+        return {{editingRow, editingBadge, modeTag, noSummaryMarkup, closedBefore, saved, openedAfterError, invalidCache, openDesktop, openMobile, pickerGroups, newModeTag, newSaveEnabled}};
     """,
         via="provider",
     )
     assert out["editingRow"] == "true"
-    assert out["modeTag"] == [False, "Đang sửa"]
-    assert "$0.1/$0.01/$0.2" in out["summaryBefore"] and "272k" in out["summaryBefore"]
+    assert out["editingBadge"] == "Đang sửa"
+    assert out["modeTag"] == [True, ""]
+    assert out["noSummaryMarkup"] is True
     assert out["closedBefore"] is False
-    assert "Giá chưa đủ 3 mức" in out["summaryPartial"]
     assert (
         out["saved"] is False and out["openedAfterError"] is True and out["invalidCache"] == "true"
     )
-    assert out["openDesktop"] is True and out["openMobile"] is False
+    assert out["openDesktop"] is False and out["openMobile"] is False
+    assert out["pickerGroups"] == ["Đã lưu", "Từ API"]
+    assert out["newModeTag"] == [False, "Model mới"]
+    assert out["newSaveEnabled"] is True
+
+
+def test_saved_model_click_blocked_while_busy_and_provider_revert_clears_dirty(node: str) -> None:
+    cfg = _config(
+        {
+            "owned-alpha-1": {"provider": "alpha", "input": 0.1, "cache": 0.01, "output": 0.2},
+            "owned-alpha-2": {"provider": "alpha", "input": 0.2, "cache": 0.02, "output": 0.4},
+        }
+    )
+    out = _run(
+        node,
+        f"""
+        {_mock_fetch(cfg)}
+        await __controller.ready; await tick(10);
+        openExistingConnection('alpha');
+        chooseModel('owned-alpha-1');
+        $('#pv-base-url').value = 'https://changed.invalid/v1';
+        $('#pv-base-url').dispatch('input');
+        const dirtyAfterUrlEdit = editorIsDirty();
+        chooseModel('owned-alpha-2');
+        const stillDirtyWhileUrlEdited = editorIsDirty();
+        $('#pv-base-url').value = 'https://alpha.invalid/v1';
+        $('#pv-base-url').dispatch('input');
+        const cleanAfterUrlRevert = !editorIsDirty() && $('#save-use').disabled && $('#cancel-editor').hidden;
+        const firstInfo = document.querySelector('#saved-model-rows .saved-model-row[data-editing="false"] .saved-model-info');
+        state.saving = true;
+        firstInfo.onclick();
+        const selectedWhileSaving = selectedModelId();
+        const directBlocked = chooseModel('owned-alpha-1');
+        state.saving = false;
+        return {{
+            dirtyAfterUrlEdit, stillDirtyWhileUrlEdited, cleanAfterUrlRevert,
+            selectedWhileSaving, directBlocked,
+        }};
+    """,
+        via="provider",
+    )
+    assert out == {
+        "dirtyAfterUrlEdit": True,
+        "stillDirtyWhileUrlEdited": True,
+        "cleanAfterUrlRevert": True,
+        "selectedWhileSaving": "owned-alpha-2",
+        "directBlocked": False,
+    }
 
 
 @pytest.mark.skipif(

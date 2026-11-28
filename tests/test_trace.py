@@ -181,11 +181,27 @@ def test_aggregate_by_model_and_unknown_cost() -> None:
     assert models["foo/bar"]["last_started_at"] == "2026-08-25T09:12:03Z"
     days = {row["day"]: row for row in data["by_day"]}
     assert days["2026-08-26"]["requests"] == 1
+    assert days["2026-08-26"]["by_model"] == [
+        {"model": "gpt-4o-mini", "requests": 1, "total_tokens": 12, "cost_usd": 0.00001}
+    ]
+    assert days["2026-08-26"]["by_bot"] == [
+        {"bot_id": "unknown", "requests": 1, "total_tokens": 12, "cost_usd": 0.00001}
+    ]
     assert days["2026-08-25"]["cost_usd"] is None
+    assert days["2026-08-25"]["by_model"] == [
+        {"model": "foo/bar", "requests": 1, "total_tokens": 6, "cost_usd": None}
+    ]
     statuses = {row["status"]: row["requests"] for row in data["by_status"]}
     assert statuses["completed"] == 2
-    hours = {row["hour"]: row["requests"] for row in data["by_hour"]}
-    assert hours["09"] == 2
+    hours = {row["hour"]: row for row in data["by_hour"]}
+    assert hours["09"]["requests"] == 2
+    assert hours["09"]["total_tokens"] == 18
+    assert hours["09"]["prompt_tokens"] == 15
+    assert hours["09"]["completion_tokens"] == 3
+    assert {row["model"]: row["requests"] for row in hours["09"]["by_model"]} == {
+        "foo/bar": 1,
+        "gpt-4o-mini": 1,
+    }
 
 
 def _assistant(bot_id, prompt, completion, cost, latency, ts=TS2):

@@ -442,3 +442,310 @@ def test_transcript_tail_after_cursor_emits_delta_only() -> None:
 
     stale_only = jobs.transcript_tail([m1, m2], after_cursor=cursor)
     assert stale_only == ""
+
+
+def test_apply_memory_tool_calls_matches_accent_and_punctuation_variants(tmp_path: Path) -> None:
+    facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
+    tid_open = facade.new_task_id()
+    sid_open = facade.remember(
+        "Triển khai CI/CD",
+        "Đang chuẩn bị pipeline",
+        task=tid_open,
+        kind="checkpoint",
+        status="open",
+        importance=5,
+        chat="thyca",
+    )
+    tid_done = facade.new_task_id()
+    facade.remember(
+        "Dựng pipeline backup Postgres lên S3",
+        "Hoàn tất 100%",
+        task=tid_done,
+        kind="checkpoint",
+        status="done",
+        importance=5,
+        chat="thyca",
+    )
+    open_tasks = facade.tasks(status="open")["tasks"]
+    today = facade.today_entries(chat="thyca", reader="thyca")
+    registry = sidecar_memory_tools(facade)
+
+    out = asyncio.run(
+        jobs.apply_memory_tool_calls(
+            registry,
+            [
+                ToolCall(
+                    id="u1",
+                    name="memory_task",
+                    arguments={
+                        "topic": "trien khai ci - cd",
+                        "summary": "Đã chạy pass toàn bộ job CI",
+                    },
+                ),
+                ToolCall(
+                    id="d1",
+                    name="memory_task",
+                    arguments={
+                        "topic": "Dung pipeline backup Postgres len S3",
+                        "summary": "Đã hoàn thành backup",
+                        "status": "done",
+                    },
+                ),
+            ],
+            bot_id="thyca",
+            open_tasks=open_tasks,
+            today_entries=today,
+            chat="thyca",
+        )
+    )
+    assert out["written"] == [sid_open]
+    assert [t["task_id"] for t in facade.tasks(status="open")["tasks"]] == [tid_open]
+    assert [t["task_id"] for t in facade.tasks(status="done")["tasks"]] == [tid_done]
+    assert "pass toàn bộ job CI" in facade.tasks(status="open")["tasks"][0]["summary"]
+
+
+def test_extract_memories_resolves_near_duplicate_task_and_habit_in_followup(tmp_path: Path) -> None:
+    facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
+    tid = facade.new_task_id()
+    facade.remember(
+        "Dựng pipeline backup Postgres lên S3",
+        "Đang cấu hình lịch chạy đêm",
+        task=tid,
+        kind="checkpoint",
+        status="open",
+        importance=5,
+        bots=["thyca"],
+        chat="thyca",
+    )
+    habit_sid = facade.record_habit_entry(
+        "Trà",
+        "Uống trà buổi sáng",
+        habit="uống trà buổi sáng",
+        bots=["thyca"],
+        chat="thyca",
+    )
+    open_tasks = facade.tasks(status="open")["tasks"]
+    today = facade.today_entries(chat="thyca", reader="thyca")
+
+    class TwoRoundConnect:
+        def __init__(self) -> None:
+            self.prompts: list[str] = []
+
+        async def chat(self, messages, tools=None):
+            prompt = messages[-1].content or ""
+            self.prompts.append(prompt)
+            if len(self.prompts) == 1:
+                return ChatReply(
+                    content="",
+                    tool_calls=[
+                        ToolCall(
+                            id="ok1",
+                            name="memory_note",
+                            arguments={"topic": "Server", "summary": "Cổng nội bộ 8088"},
+                        ),
+                        ToolCall(
+                            id="dup-t",
+                            name="memory_task",
+                            arguments={
+                                "topic": "Backup Postgres lên S3",
+                                "summary": "Đã hoàn tất script upload S3",
+                            },
+                        ),
+                        ToolCall(
+                            id="dup-h",
+                            name="memory_note",
+                            arguments={
+                                "topic": "Trà",
+                                "summary": "Vẫn giữ thói quen uống trà sáng",
+                                "habit": "trà buổi sáng",
+                                "explicit": True,
+                            },
+                        ),
+                    ],
+                )
+            assert tid in prompt
+            assert "uống trà buổi sáng" in prompt
+            return ChatReply(
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="fix-t",
+                        name="memory_task",
+                        arguments={
+                            "task": tid,
+                            "summary": "Đã hoàn tất script upload S3",
+                        },
+                    ),
+                    ToolCall(
+                        id="fix-h",
+                        name="memory_note",
+                        arguments={
+                            "topic": "Trà",
+                            "summary": "Vẫn giữ thói quen uống trà sáng",
+                            "habit": "uống trà buổi sáng",
+                            "explicit": True,
+                        },
+                    ),
+                ],
+            )
+
+    connect = TwoRoundConnect()
+    out = asyncio.run(
+        jobs.extract_memories(
+            connect,
+            facade,
+            "User: xong script upload S3 rồi, sáng vẫn uống trà",
+            bot_id="thyca",
+            open_tasks=open_tasks,
+            today_entries=today,
+            known_habits=["uống trà buổi sáng"],
+            chat="thyca",
+        )
+    )
+    assert len(connect.prompts) == 2
+    assert len(out["written"]) == 3
+    assert habit_sid in out["written"]
+    open_after = facade.tasks(status="open")["tasks"]
+    assert len(open_after) == 1
+    assert open_after[0]["task_id"] == tid
+    assert "script upload S3" in open_after[0]["summary"]
+
+
+def test_extract_memories_round2_updates_intra_batch_and_handler_discovered_tasks(
+    tmp_path: Path,
+) -> None:
+    facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
+    preexisting_tid = facade.new_task_id()
+    facade.remember(
+        "Tối ưu hiệu năng truy vấn SQLite",
+        "Đang đo benchmark FTS5",
+        task=preexisting_tid,
+        kind="checkpoint",
+        status="open",
+        importance=5,
+        bots=["thyca"],
+        chat="thyca",
+    )
+
+    class IntraBatchAndStaleConnect:
+        def __init__(self) -> None:
+            self.prompts: list[str] = []
+
+        async def chat(self, messages, tools=None):
+            prompt = messages[-1].content or ""
+            self.prompts.append(prompt)
+            if len(self.prompts) == 1:
+                return ChatReply(
+                    content="",
+                    tool_calls=[
+                        ToolCall(
+                            id="r1-new",
+                            name="memory_task",
+                            arguments={
+                                "topic": "Dựng pipeline backup Postgres lên S3",
+                                "summary": "Bước 1: tạo bucket",
+                            },
+                        ),
+                        ToolCall(
+                            id="r1-intra",
+                            name="memory_task",
+                            arguments={
+                                "topic": "Backup Postgres lên S3",
+                                "summary": "Bước 2: xong script pg_dump",
+                            },
+                        ),
+                        ToolCall(
+                            id="r1-stale",
+                            name="memory_task",
+                            arguments={
+                                "topic": "Tối ưu truy vấn SQLite",
+                                "summary": "Đã thêm index cho bảng chunks",
+                            },
+                        ),
+                    ],
+                )
+            assert "(last_day=?)" not in prompt
+            assert preexisting_tid in prompt
+            minted_tid = next(
+                t["task_id"]
+                for t in facade.tasks(status="open")["tasks"]
+                if t["task_id"] != preexisting_tid
+            )
+            assert minted_tid in prompt
+            return ChatReply(
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="r2-intra",
+                        name="memory_task",
+                        arguments={
+                            "task": minted_tid,
+                            "summary": "Bước 2: xong script pg_dump",
+                        },
+                    ),
+                    ToolCall(
+                        id="r2-stale",
+                        name="memory_task",
+                        arguments={
+                            "task": preexisting_tid,
+                            "summary": "Đã thêm index cho bảng chunks",
+                        },
+                    ),
+                ],
+            )
+
+    connect = IntraBatchAndStaleConnect()
+    out = asyncio.run(
+        jobs.extract_memories(
+            connect,
+            facade,
+            "User: tạo bucket + xong pg_dump + thêm index SQLite",
+            bot_id="thyca",
+            open_tasks=[],
+            chat="thyca",
+        )
+    )
+    assert len(connect.prompts) == 2
+    assert len(out["written"]) == 2
+    by_title = {t["title"]: t for t in facade.tasks(status="open")["tasks"]}
+    assert len(by_title) == 2
+    assert "pg_dump" in by_title["Dựng pipeline backup Postgres lên S3"]["summary"]
+    assert "index cho bảng chunks" in by_title["Tối ưu hiệu năng truy vấn SQLite"]["summary"]
+
+
+def test_apply_memory_tool_calls_respects_force_new_on_exact_title(tmp_path: Path) -> None:
+    facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
+    tid = facade.new_task_id()
+    facade.remember(
+        "Triển khai CI/CD",
+        "Đợt 1",
+        task=tid,
+        kind="checkpoint",
+        status="open",
+        importance=5,
+        bots=["thyca"],
+        chat="thyca",
+    )
+    open_tasks = facade.tasks(status="open")["tasks"]
+    registry = sidecar_memory_tools(facade)
+    out = asyncio.run(
+        jobs.apply_memory_tool_calls(
+            registry,
+            [
+                ToolCall(
+                    id="f1",
+                    name="memory_task",
+                    arguments={
+                        "topic": "Triển khai CI/CD",
+                        "summary": "Đợt 2 tách riêng",
+                        "force_new": True,
+                    },
+                )
+            ],
+            bot_id="thyca",
+            open_tasks=open_tasks,
+            chat="thyca",
+        )
+    )
+    assert len(out["written"]) == 1
+    assert len(facade.tasks(status="open")["tasks"]) == 2

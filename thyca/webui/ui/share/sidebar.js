@@ -1,5 +1,29 @@
 'use strict';
 let activeGroup=null;
+const returningBotIds=new Set();
+function awayGroupFor(b){
+ if(!b||typeof groups==='undefined'||!Array.isArray(groups))return null;
+ if(activeGroup&&Array.isArray(activeGroup.ids)&&activeGroup.ids.includes(b.id)){
+  return groups.find(g=>g&&g.id===activeGroup.id)||null;
+ }
+ const live=groups.find(g=>g&&g.working&&Array.isArray(g.bots)&&g.bots.includes(b.id));
+ if(live)return live;
+ if(b.roomId&&['working','thinking','writing','group'].includes(b.state)){
+  return groups.find(g=>g&&g.id===b.roomId)||null;
+ }
+ return null;
+}
+function setPeerExchange(exchange){
+ const prev=typeof window!=='undefined'?window.ThycaPeerExchange:null;
+ if(typeof window!=='undefined')window.ThycaPeerExchange=exchange?{...exchange}:null;
+ const touch=new Set();
+ if(prev?.a)touch.add(prev.a);
+ if(prev?.b)touch.add(prev.b);
+ if(exchange?.a)touch.add(exchange.a);
+ if(exchange?.b)touch.add(exchange.b);
+ touch.forEach(id=>{const b=getBot(id);if(b&&typeof updateCard==='function')updateCard(b);});
+ if(typeof wakeEyeLoop==='function')wakeEyeLoop();
+}
 
 function activeSidebarBot(){const router=window.ThycaRouter;return router?.currentPage?.()?router.highlightedBot():selectedBot;}
 function sidebarActionLabel(b){const router=window.ThycaRouter;return router?.currentPage?.()?router.sidebarLabel(b.id,b.name,states[expressionFor(b)][1]):`Trò chuyện với ${b.name}`;}
@@ -47,7 +71,22 @@ function card(b){
  const activeId=activeSidebarBot();
  const groups=livePreviewGroups(b,typeof currentChatWindow==='function'?currentChatWindow():null);
  const more=groups.extra>0?`<button class="live-more" data-action="live-more" data-bot-id="${b.id}" aria-label="Xem to\u00e0n b\u1ed9 ${groups.total} vi\u1ec7c \u0111ang ch\u1ea1y c\u1ee7a ${b.name}" title="Xem to\u00e0n b\u1ed9">+${groups.extra}</button>`:'';
- return `<article class="bot-card team-cluster team-envelope" id="bot-${b.id}" data-bot-id="${b.id}" data-state="${b.state}" data-open="${b.open}" data-selected="${b.id===activeId}" style="${paletteStyle(b)}"><header class="bot-header"><button class="bot-select team-bot-item" data-action="select" data-bot-id="${b.id}" aria-label="${sidebarActionLabel(b)}">${avatar(b)}<span class="bot-heading"><span class="bot-name conversation-name">${b.name}</span><span class="bot-role">${escapeHTML(b.role||'')}</span><span class="header-status"><span class="status-dot"></span><span class="header-status-label">${states[b.state][1]}</span></span></span></button><div class="card-actions"><button class="icon-button favorite" data-action="favorite" aria-label="${b.system?`Bot h\u1ec7 th\u1ed1ng ${b.name} \u2014 lu\u00f4n \u0111\u01b0\u1ee3c ghim`:b.favorite?`B\u1ecf ghim ${b.name}`:`Ghim ${b.name} l\u00ean \u0111\u1ea7u`}" aria-pressed="${b.favorite}"${b.system?' disabled title="Bot h\u1ec7 th\u1ed1ng \u2014 kh\u00f4ng b\u1ecf ghim \u0111\u01b0\u1ee3c"':''}>${icon('star')}</button><button class="icon-button info-button" data-action="info" aria-label="Th\u00f4ng tin bot">${icon('info')}</button></div></header><div class="compact-preview"${groups.total?'':' hidden'}><span class="status-dot"></span><span class="preview-text">${escapeHTML(previewLine(b))}</span>${more}</div><div class="pocket team-pocket-viewport" id="pocket-${b.id}" ${b.open?'':'inert'}><div class="pocket-inner"><section class="thinking-paper" aria-label="Vi\u1ec7c \u0111ang ch\u1ea1y c\u1ee7a ${b.name}"><div class="thinking-heading">${dots}<span class="thinking-title">${states[b.state][1]}</span><span class="elapsed">${formatElapsed(b.elapsed)}</span></div><div class="thinking-scroll" tabindex="0" aria-label="Vi\u1ec7c \u0111ang ch\u1ea1y c\u1ee7a ${b.name}"><p class="thinking-summary"></p><ol class="progress-list"></ol></div><button class="reply-action" data-action="reply"${['waiting','confused'].includes(b.state)?'':' hidden'}>${icon('arrow')}Tr\u1ea3 l\u1eddi</button></section></div></div><footer class="paper-footer card-status"><span class="status-dot"></span><span class="info-label">${states[b.state][1]}</span></footer></article>`;
+ const ex = typeof window !== 'undefined' ? window.ThycaPeerExchange : null;
+ const ag = awayGroupFor(b);
+ const isAway = Boolean(ag);
+ const exPartner = ex && (b.id === ex.a || b.id === ex.b) ? getBot(b.id === ex.a ? ex.b : ex.a) : null;
+ const effState = isAway ? 'group' : b.state;
+ const roleText = isAway
+  ? `Đang ở nhóm · ${ag.title}`
+  : (exPartner ? `${ex.sender === b.id ? 'Đang gửi \u2192' : 'Đang nhận \u2190'} ${exPartner.name}` : (b.role || ''));
+ const awayPill = isAway
+  ? `<button type="button" class="away-pill" data-action="jump-group" data-group-id="${escapeHTML(ag.id)}" aria-label="${escapeHTML('Mở nhóm ' + ag.title)}">${escapeHTML(ag.title)} \u2197</button>`
+  : '';
+ const peerPill = (!isAway && exPartner)
+  ? `<span class="peer-pill" data-dir="${ex.sender === b.id ? 'out' : 'in'}">${ex.sender === b.id ? '\u2192' : '\u2190'} ${escapeHTML(exPartner.name)}</span>`
+  : '';
+ const retCls = returningBotIds.has(b.id) ? 'just-returned' : '';
+ return `<article class="bot-card team-cluster team-envelope" id="bot-${b.id}" data-bot-id="${b.id}" data-state="${effState}" data-open="${b.open}" data-selected="${b.id===activeId}" style="${paletteStyle(b)}"><header class="bot-header"><div class="card-stage-shell"><div class="card-stage-hit" data-stage-select="${b.id}" aria-hidden="true"><div class="card-stage" data-bot-theme="${themeFor(b)}" data-away="${isAway}">${avatar(b,effState,retCls,{variant:'stage',away:isAway,idle:b.idle})}</div></div>${awayPill}${peerPill}<div class="card-actions"><button class="icon-button favorite" data-action="favorite" aria-label="${b.system?`Bot h\u1ec7 th\u1ed1ng ${b.name} \u2014 lu\u00f4n \u0111\u01b0\u1ee3c ghim`:b.favorite?`B\u1ecf ghim ${b.name}`:`Ghim ${b.name} l\u00ean \u0111\u1ea7u`}" aria-pressed="${b.favorite}"${b.system?' disabled title="Bot h\u1ec7 th\u1ed1ng \u2014 kh\u00f4ng b\u1ecf ghim \u0111\u01b0\u1ee3c"':''}>${icon('star')}</button><button class="icon-button info-button" data-action="info" aria-label="Th\u00f4ng tin bot">${icon('info')}</button></div></div><button class="bot-select team-bot-item" data-action="select" data-bot-id="${b.id}" aria-label="${sidebarActionLabel(b)}"><span class="bot-heading"><span class="bot-name conversation-name">${escapeHTML(b.name)}</span><span class="bot-role">${escapeHTML(roleText)}</span><span class="header-status"><span class="status-dot"></span><span class="header-status-label">${states[effState][1]}</span></span></span></button></header><div class="compact-preview"${groups.total?'':' hidden'}><span class="status-dot"></span><span class="preview-text">${escapeHTML(previewLine(b))}</span>${more}</div><div class="pocket team-pocket-viewport" id="pocket-${b.id}" ${b.open?'':'inert'}><div class="pocket-inner"><section class="thinking-paper" aria-label="Vi\u1ec7c \u0111ang ch\u1ea1y c\u1ee7a ${b.name}"><div class="thinking-heading">${dots}<span class="thinking-title">${states[effState][1]}</span><span class="elapsed">${formatElapsed(b.elapsed)}</span></div><div class="thinking-scroll" tabindex="0" aria-label="Vi\u1ec7c \u0111ang ch\u1ea1y c\u1ee7a ${b.name}"><p class="thinking-summary"></p><ol class="progress-list"></ol></div><button class="reply-action" data-action="reply"${['waiting','confused'].includes(effState)?'':' hidden'}>${icon('arrow')}Tr\u1ea3 l\u1eddi</button></section></div></div><footer class="paper-footer card-status"><span class="status-dot"></span><span class="info-label">${states[effState][1]}</span></footer></article>`;
 }
 function syncTaskList(b,list){
  const rows=taskRows(b);
@@ -180,20 +219,20 @@ function railAvatarBtn(b){
 }
 function railGroupBtn(g){
  const cluster=groupClusterAvatarMarkup(g);
- return `<button type="button" class="rail-avatar rail-group chat-only" data-action="header-select" data-group-id="${escapeHTML(g.id)}" title="${escapeHTML(g.title)}" aria-label="${escapeHTML(g.title)}">${cluster}</button>`;
+ return `<button type="button" class="rail-avatar rail-group chat-only" data-action="header-select" data-group-id="${escapeHTML(g.id)}" data-selected="${activeGroup?.id===g.id}" title="${escapeHTML(g.title)}" aria-label="${escapeHTML(g.title)}">${cluster}</button>`;
 }
 function renderHeaderBots(){
  const list=$('#rail-avatar-list');if(!list)return;
  const activeId=activeSidebarBot();
  const entries=sidebarEntries();
  const key=entries.map(e=>e.type==='bot'
-  ? `b:${e.bot.id}:${e.bot.state}:${expressionFor(e.bot)}:${e.bot.id===activeId}:${e.bot.name}:${e.bot.color||''}:${e.bot.shape||''}:${e.bot.favorite?'fav':''}`
+  ? `b:${e.bot.id}:${e.bot.state}:${expressionFor(e.bot)}:${e.bot.id===activeId}:${e.bot.name}:${e.bot.color||''}:${e.bot.shape||''}:${e.bot.accessory||''}:${e.bot.theme||''}:${e.bot.favorite?'fav':''}`
   : `g:${e.group.id}:${groupDisplayBots(e.group).map(b=>b.id).join(',')}:${e.group.bots?.length||0}:${activeGroup?.id===e.group.id}:${e.group.favorite?'fav':''}`).join('|');
  if(list.dataset.renderKey===key&&list.innerHTML)return;
  list.dataset.renderKey=key;
  list.innerHTML=entries.map(e=>e.type==='bot'?railAvatarBtn(e.bot):railGroupBtn(e.group)).join('');
 }
-function renderTeam(){ const el = $('#team-bot-list'); if (el) { el.innerHTML = sidebarEntries().map(e=>e.type==='bot'?card(e.bot):groupRowHtml(e.group)).join(''); syncCardGridSpans(); } renderHeaderBots(); }
+function renderTeam(){ const el = $('#team-bot-list'); if (el) { el.innerHTML = sidebarEntries().map(e=>e.type==='bot'?card(e.bot):groupRowHtml(e.group)).join(''); syncCardGridSpans(); } renderHeaderBots(); if(typeof registerLiveRigs==='function')registerLiveRigs(); if(typeof wakeEyeLoop==='function')wakeEyeLoop(); }
 function orderSidebarNodes(){
  const list=$('#team-bot-list');if(!list)return false;
  const have=new Map();
@@ -201,8 +240,15 @@ function orderSidebarNodes(){
   const key=el.dataset&&el.dataset.botId?`bot:${el.dataset.botId}`:el.dataset&&el.dataset.group?`group:${el.dataset.group}`:null;
   if(key)have.set(key,el);
  });
- sidebarEntries().forEach(e=>{const el=have.get(e.type==='bot'?`bot:${e.bot.id}`:`group:${e.group.id}`);if(el&&el.parentNode===list)list.appendChild(el);});
+ let moved=false,cursor=list.firstElementChild;
+ sidebarEntries().forEach(e=>{
+  const el=have.get(e.type==='bot'?`bot:${e.bot.id}`:`group:${e.group.id}`);
+  if(!el||el.parentNode!==list)return;
+  if(el!==cursor){list.insertBefore(el,cursor);moved=true;}
+  else cursor=cursor.nextElementSibling;
+ });
  syncCardGridSpans();
+ if(moved&&typeof markCtmDirty==='function')markCtmDirty();
  return true;
 }
 function pinCardOrder(){
@@ -212,10 +258,45 @@ function pinCardOrder(){
 }
 function updateCard(b){
  const el=$('#bot-'+b.id);if(!el)return;
- const isActive=ACTIVE_HEADER_STATES.has(b.state);
- el.dataset.state=b.state;el.dataset.open=b.open;el.dataset.selected=b.id===activeSidebarBot();
+ const ag=awayGroupFor(b);
+ const isAway=Boolean(ag);
+ const ex=typeof window!=='undefined'?window.ThycaPeerExchange:null;
+ const exPartner=ex&&(b.id===ex.a||b.id===ex.b)?getBot(b.id===ex.a?ex.b:ex.a):null;
+ const effState=isAway?'group':b.state;
+ const isActive=ACTIVE_HEADER_STATES.has(effState);
+ el.dataset.state=effState;el.dataset.open=b.open;el.dataset.selected=b.id===activeSidebarBot();
  syncCardGridSpans();
- $('.header-status-label',el).textContent=states[expressionFor(b)][1];
+ const roleEl=$('.bot-role',el);
+ if(roleEl){
+  roleEl.textContent=isAway?`Đang ở nhóm · ${ag.title}`:(exPartner?`${ex.sender===b.id?'Đang gửi \u2192':'Đang nhận \u2190'} ${exPartner.name}`:(b.role||''));
+ }
+ const shellStage=$('.card-stage-shell',el);
+ if(shellStage){
+  const stageEl=$('.card-stage',shellStage);
+  if(stageEl){stageEl.dataset.botTheme=themeFor(b);stageEl.dataset.away=String(isAway);}
+  let awayBtn=$('.away-pill',shellStage);
+  if(isAway){
+   if(!awayBtn){
+    awayBtn=document.createElement('button');
+    awayBtn.type='button';awayBtn.className='away-pill';awayBtn.dataset.action='jump-group';
+    shellStage.insertBefore(awayBtn,$('.card-actions',shellStage));
+   }
+   awayBtn.dataset.groupId=ag.id;
+   awayBtn.setAttribute('aria-label',`Mở nhóm ${ag.title}`);
+   awayBtn.textContent=`${ag.title} \u2197`;
+  }else if(awayBtn){awayBtn.remove();}
+  let peerEl=$('.peer-pill',shellStage);
+  if(!isAway&&exPartner){
+   if(!peerEl){
+    peerEl=document.createElement('span');
+    peerEl.className='peer-pill';
+    shellStage.insertBefore(peerEl,$('.card-actions',shellStage));
+   }
+   peerEl.dataset.dir=ex.sender===b.id?'out':'in';
+   peerEl.textContent=`${ex.sender===b.id?'\u2192':'\u2190'} ${exPartner.name}`;
+  }else if(peerEl){peerEl.remove();}
+ }
+ $('.header-status-label',el).textContent=states[effState][1];
  $('.bot-select',el).setAttribute('aria-label',sidebarActionLabel(b));
  const status=$('.thinking-summary',el);
  const statusText=taskStatusText(b);
@@ -236,15 +317,15 @@ function updateCard(b){
   more.setAttribute('aria-label',`Xem to\u00e0n b\u1ed9 ${previewExtraCount(b)+livePreviewGroups(b,currentChatWindow()).shown.length} vi\u1ec7c \u0111ang ch\u1ea1y c\u1ee7a ${b.name}`);
   more.title='Xem to\u00e0n b\u1ed9';
  }else if(more){more.hidden=true;more.remove();}
- $('.reply-action',el).hidden=!['waiting','confused'].includes(b.state);
+ $('.reply-action',el).hidden=!['waiting','confused'].includes(effState);
  $('.compact-preview',el).dataset.idleComment='false';$('.preview-text',el).title=line;
  $('.elapsed',el).textContent=formatElapsed(b.elapsed);
- $('.thinking-title',el).textContent=states[b.state][1];
+ $('.thinking-title',el).textContent=states[effState][1];
  const infoLabel=$('.info-label',el);
  if(infoLabel){
   const bar=infoLabel.closest('footer');
   if(isActive){
-   const doing=line||states[b.state][1];
+   const doing=line||states[effState][1];
    const bits=[doing];
    if(statusText&&/^\d+ /.test(statusText))bits.push(statusText);
    const elap=formatElapsed(b.elapsed);
@@ -252,14 +333,18 @@ function updateCard(b){
    infoLabel.textContent=bits.join(' \u00b7 ');
    if(bar)bar.dataset.liveStatus='true';
   }else{
-   infoLabel.textContent=states[b.state][1];
+   infoLabel.textContent=states[effState][1];
    if(bar)delete bar.dataset.liveStatus;
   }
  }
  $('.pocket',el).inert=!b.open;
  syncTaskList(b,$('.progress-list',el));
- $$('.seal-avatar[data-bot-avatar="'+b.id+'"]:not(.expression-preview)').forEach(a=>syncAvatar(a,b));
- syncGroupAvatars();refreshLab(b);renderHeaderBots();orderSidebarNodes();
+ $$('.crew-avatar[data-bot-avatar="'+b.id+'"]:not(.expression-preview)').forEach(a=>{
+  const isCardStage=a.closest?.('.bot-card');
+  syncAvatar(a,{...b,state:effState},{away:Boolean(isCardStage&&isAway)});
+  if(isCardStage&&returningBotIds.has(b.id))a.classList.add('just-returned');
+ });
+ syncGroupAvatars();if(typeof refreshLab==='function')refreshLab(b);renderHeaderBots();orderSidebarNodes();
 }
 
 function groupBotRank(g,b){
@@ -272,6 +357,9 @@ function groupDisplayBots(g){
  const sorted=(g?.bots||[]).map(id=>getBot(id)).filter(Boolean).sort((a,b)=>groupBotRank(g,b)-groupBotRank(g,a));
  return sorted.length>3?sorted.slice(0,2):sorted.slice(0,3);
 }
+function groupStageMembers(g){
+ return (g?.bots||[]).map(id=>getBot(id)).filter(Boolean).sort((a,b)=>groupBotRank(g,b)-groupBotRank(g,a));
+}
 function groupClusterAvatarMarkup(g){
  const all=(g?.bots||[]).map(id=>getBot(id)).filter(Boolean);
  const shown=groupDisplayBots(g);
@@ -283,20 +371,33 @@ function groupClusterAvatarMarkup(g){
  return `<span class="group-cluster" data-order="${shown.map(b=>b.id).join(',')}" data-count="${total}" data-shown="${shown.length}" aria-label="${escapeHTML(label)}" title="${escapeHTML(g.title)}">${minis}${plus}</span>`;
 }
 function groupStatusLabel(g){
+ const active=Boolean((activeGroup&&activeGroup.id===g?.id)||g?.working);
+ if(active){
+  const spk=activeGroup&&activeGroup.id===g?.id?activeGroup.speaker:g?.activeSpeaker;
+  return spk&&getBot(spk)?`${getBot(spk).name} đang nói`:'Đang cùng làm việc';
+ }
  const members=(g?.bots||[]).map(id=>getBot(id)).filter(Boolean);
  const err=members.find(b=>b.state==='error');
  if(err) return states.error[1];
- const active=members.find(b=>['thinking','working','writing'].includes(b.state));
- if(active) return `${active.name} · ${states[active.state]?.[1] || ''}`;
+ const act=members.find(b=>['thinking','working','writing'].includes(b.state));
+ if(act) return `${act.name} · ${states[act.state]?.[1] || ''}`;
  const waiting=members.find(b=>['waiting','confused'].includes(b.state));
  if(waiting) return `${waiting.name} · ${states[waiting.state]?.[1] || ''}`;
  if(members.length&&members.every(b=>b.state==='offline')) return states.offline[1];
  return 'Sẵn sàng';
 }
+function groupStageKey(g,members,active,speakerId){
+ const dark=typeof isDarkMode==='function'?isDarkMode():false;
+ return `${g.id}|${dark?'d':'l'}|${active?1:0}|${speakerId||''}|${members.map(m=>`${m.id}:${typeof crewShapeFor==='function'?crewShapeFor(m).id:(m.shape||'')}:${typeof accessoryFor==='function'?accessoryFor(m):(m.accessory||'')}:${m.color||''}`).join(',')}`;
+}
 function groupRowHtml(g){
  const first=groupDisplayBots(g)[0];
  const selected=typeof currentChatWindow==='function'&&currentChatWindow()===groupKey(g.id);
- return `<article class="bot-card group-card chat-only" data-group="${g.id}" data-selected="${selected}" style="${first?paletteStyle(first):''}"><header class="bot-header"><button class="bot-select group-select" type="button" data-group-open="${escapeHTML(g.id)}" aria-label="${escapeHTML('Mở ' + g.title)}">${groupClusterAvatarMarkup(g)}<span class="bot-heading"><span class="bot-name conversation-name">${escapeHTML(g.title)}</span><span class="bot-role">${escapeHTML(g.subtitle)}</span></span></button><div class="card-actions"><button class="icon-button favorite" data-action="group-favorite" aria-label="${escapeHTML(g.favorite?`Bỏ ghim nhóm ${g.title}`:`Ghim nhóm ${g.title}`)}" aria-pressed="${!!g.favorite}">${icon('star')}</button><button class="icon-button info-button" data-action="group-info" aria-label="Thông tin nhóm">${icon('info')}</button></div></header><footer class="group-card-footer"><span class="status-dot"></span><span class="group-meta">${escapeHTML(groupStatusLabel(g))}</span></footer></article>`;
+ const active=Boolean((activeGroup&&activeGroup.id===g.id)||g.working);
+ const speakerId=activeGroup&&activeGroup.id===g.id?activeGroup.speaker:(g.activeSpeaker||null);
+ const members=groupStageMembers(g);
+ const stageKey=groupStageKey(g,members,active,speakerId);
+ return `<article class="bot-card group-card chat-only" data-group="${g.id}" data-selected="${selected}" data-coordinating="${active}" style="${first?paletteStyle(first):''}"><header class="bot-header"><div class="card-stage-shell"><div class="card-stage-hit" data-group-open="${escapeHTML(g.id)}" aria-hidden="true"><div class="card-stage" data-bot-theme="group-stage" data-stage-key="${escapeHTML(stageKey)}">${renderGroupStageAvatar(members,{groupId:g.id,speakerId,coordinating:active})}</div></div><div class="card-actions"><button class="icon-button favorite" data-action="group-favorite" aria-label="${escapeHTML(g.favorite?`Bỏ ghim nhóm ${g.title}`:`Ghim nhóm ${g.title}`)}" aria-pressed="${!!g.favorite}">${icon('star')}</button><button class="icon-button info-button" data-action="group-info" aria-label="Thông tin nhóm">${icon('info')}</button></div></div><button class="bot-select group-select" type="button" data-group-open="${escapeHTML(g.id)}" aria-label="${escapeHTML('Mở ' + g.title)}"><span class="bot-heading"><span class="bot-name conversation-name">${escapeHTML(g.title)}</span><span class="bot-role">${escapeHTML(g.subtitle)}</span></span></button></header><footer class="group-card-footer"><span class="status-dot"></span><span class="group-meta">${escapeHTML(groupStatusLabel(g))}</span></footer></article>`;
 }
 function openGroupInfo(id){
  const g=groups.find(x=>x.id===id);if(!g)return;
@@ -315,34 +416,70 @@ function renderGroups(){
  syncGroupAvatars();
 }
 function syncGroupAvatars(){
+ let rebuilt=false;
  $$('.group-card').forEach(row=>{
   const g=groups.find(x=>x.id===row.dataset.group);
-  const cluster=g?$$('.group-cluster',row)[0]:null;
-  if(!cluster)return;
-  const shown=groupDisplayBots(g),wantKey=shown.map(b=>b.id).join(',');
-  const total=g?.bots?.length||0;
-  if(cluster.dataset.order!==wantKey||cluster.dataset.count!==String(total)){
-   cluster.outerHTML=groupClusterAvatarMarkup(g);
+  if(!g)return;
+  const active=activeGroup?.id===g.id||Boolean(g.working);
+  const speakerId=activeGroup?.id===g.id?activeGroup.speaker:(g.activeSpeaker||null);
+  row.dataset.coordinating=String(active);
+  const stageEl=$('.card-stage',row);
+  if(stageEl){
+   const members=groupStageMembers(g);
+   const nextKey=groupStageKey(g,members,active,speakerId);
+   if(stageEl.dataset.stageKey!==nextKey||!stageEl.querySelector?.('.crew-svg')){
+    stageEl.innerHTML=renderGroupStageAvatar(members,{groupId:g.id,speakerId,coordinating:active});
+    stageEl.dataset.stageKey=nextKey;
+    rebuilt=true;
+   }
+  }
+  const cluster=$$('.group-cluster',row)[0];
+  if(cluster){
+   const shown=groupDisplayBots(g),wantKey=shown.map(b=>b.id).join(',');
+   const total=g?.bots?.length||0;
+   if(cluster.dataset.order!==wantKey||cluster.dataset.count!==String(total)){
+    cluster.outerHTML=groupClusterAvatarMarkup(g);
+    rebuilt=true;
+   }
+   $$('.group-mini-member',row).forEach(member=>member.dataset.speaking=String(active&&speakerId===member.dataset.groupMember));
+  }
+  const metaEl=$('.group-meta',row);
+  if(metaEl){
+   metaEl.textContent=active?(speakerId&&getBot(speakerId)?getBot(speakerId).name+' đang nói':'Đang cùng làm việc'):groupStatusLabel(g);
   }
  });
- $$('.seal-avatar:not(.expression-preview)').forEach(a=>{
+ $$('.crew-avatar:not(.expression-preview):not(.is-group-stage)').forEach(a=>{
   const b=getBot(a.dataset.botAvatar);if(!b)return;
   const active=activeGroup&&activeGroup.ids.includes(b.id)&&!['offline','error','waiting'].includes(b.state);
   if(active){
    if(a.dataset.groupClock!==String(activeGroup.start)){a.style.setProperty('--group-phase',-(Date.now()-activeGroup.start)/1000+'s');a.dataset.groupClock=String(activeGroup.start);}
-   a.dataset.groupActive='true';a.dataset.speaking=String(b.id===activeGroup.speaker);a.style.setProperty('--team-gaze',b.id===activeGroup.ids[0]?'1.2px':'-1.8px');
+   a.dataset.groupActive='true';a.dataset.speaking=String(b.id===activeGroup.speaker);
   }else{delete a.dataset.groupActive;delete a.dataset.speaking;delete a.dataset.groupClock;}
  });
- $$('.group-card').forEach(row=>{const g=groups.find(x=>x.id===row.dataset.group);const active=!!g&&activeGroup?.id===g.id;row.dataset.coordinating=String(active);$$('.group-mini-member',row).forEach(member=>member.dataset.speaking=String(active&&activeGroup.speaker===member.dataset.groupMember));$('.group-meta',row).textContent=active?(activeGroup.speaker&&getBot(activeGroup.speaker)?getBot(activeGroup.speaker).name+' đang nói':'Đang cùng làm việc'):groupStatusLabel(g);});
  $$('.group-preview-member').forEach(btn=>{const b=getBot(btn.dataset.speaker);if(!b)return;const speaking=activeGroup?.speaker===b.id;btn.setAttribute('aria-pressed',String(speaking));btn.disabled=['error','offline'].includes(b.state);$('small',btn).textContent=speaking?'Đang nói':b.state==='offline'?'Offline':'Đang lắng nghe';});
+ if(rebuilt&&typeof registerLiveRigs==='function')registerLiveRigs();
+ if(typeof wakeEyeLoop==='function')wakeEyeLoop();
 }
 function setGroupActivity(groupId,speakerId=null){
- if(groupId===null){activeGroup=null;syncGroupAvatars();orderSidebarNodes();return true;}
+ if(groupId===null){
+  const prevIds=activeGroup?.ids?[...activeGroup.ids]:[];
+  activeGroup=null;
+  if(typeof window!=='undefined')window.ThycaGroupSpeaker=null;
+  groups.forEach(g=>{g.working=false;g.activeSpeaker=null;});
+  prevIds.forEach(id=>returningBotIds.add(id));
+  prevIds.forEach(id=>{const b=getBot(id);if(b)updateCard(b);});
+  syncGroupAvatars();orderSidebarNodes();
+  if(prevIds.length)setTimeout(()=>{returningBotIds.clear();$$('.crew-avatar.just-returned').forEach(a=>a.classList.remove('just-returned'));},550);
+  return true;
+ }
  const g=groups.find(x=>x.id===groupId);
  const speaker=getBot(speakerId);
  if(!g||(speakerId!==null&&(!g.bots.includes(speakerId)||!speaker||['offline','error'].includes(speaker.state))))return false;
+ groups.forEach(item=>{if(item.id!==g.id){item.working=false;item.activeSpeaker=null;}});
+ g.working=true;g.activeSpeaker=speakerId;
+ if(typeof window!=='undefined')window.ThycaGroupSpeaker=speakerId;
  activeGroup={id:g.id,ids:g.bots,speaker:speakerId,start:activeGroup?.id===g.id?activeGroup.start:Date.now()};
- g.bots.forEach(id=>{const b=getBot(id);if(b&&clearIdle(b))updateCard(b);});
+ g.bots.forEach(id=>{const b=getBot(id);if(b){clearIdle(b);updateCard(b);}});
  syncGroupAvatars();orderSidebarNodes();return true;
 }
 function openBot(id,open=true){
@@ -385,11 +522,11 @@ async function fillDrawerContext(b){
 }
 
 $('#rail-avatar-list')?.addEventListener('click',e=>{if(typeof setupLocked==='function'&&setupLocked())return;const btn=e.target.closest('[data-action="header-select"]');if(!btn)return;if(btn.dataset.groupId){const g=groups.find(x=>x.id===btn.dataset.groupId);if(!g||!g.bots?.length)return;window.ThycaRouter?ThycaRouter.dispatch('loadConversation',groupKey(g.id),g.bots[0]):loadConversation(groupKey(g.id),g.bots[0]);return;}const b=getBot(btn.dataset.botId);if(!b)return;window.ThycaRouter?ThycaRouter.dispatch('selectBot',b.id):selectBot(b.id);});
-$('#team-bot-list').addEventListener('click',e=>{const btn=e.target.closest('button');if(!btn)return;const grow=e.target.closest('[data-group]');if(grow){const g=groups.find(x=>x.id===grow.dataset.group);if(!g)return;if(btn.dataset.action==='group-favorite'){g.favorite=!g.favorite;setGroupFavorite(g.id,g.favorite);btn.setAttribute('aria-pressed',g.favorite);btn.setAttribute('aria-label',g.favorite?`Bỏ ghim nhóm ${g.title}`:`Ghim nhóm ${g.title}`);toast(g.favorite?`Đã ghim nhóm ${g.title}.`:`Đã bỏ ghim nhóm ${g.title}.`);pinCardOrder();return;}if(btn.dataset.action==='group-info'){openGroupInfo(g.id);return;}if(g.bots?.length)window.ThycaRouter?ThycaRouter.dispatch('loadConversation',groupKey(g.id),g.bots[0]):loadConversation(groupKey(g.id),g.bots[0]);return;}const cardEl=btn.closest('.bot-card');if(!cardEl)return;const b=getBot(cardEl.dataset.botId);if(!b)return;switch(btn.dataset.action){case 'select':window.ThycaRouter?ThycaRouter.dispatch('selectBot',b.id):selectBot(b.id);break;case 'reply':window.ThycaRouter?ThycaRouter.dispatch('selectBot',b.id):selectBot(b.id);document.querySelector('#message')?.focus?.();break;case 'live-more':openLiveList(b.id);break;case 'favorite':if(b.system)break;b.favorite=!b.favorite;setBotFavorite(b.id,b.favorite);btn.setAttribute('aria-pressed',b.favorite);btn.setAttribute('aria-label',b.favorite?`Bỏ ghim ${b.name}`:`Ghim ${b.name} lên đầu`);toast(b.favorite?`Đã ghim ${b.name} lên đầu.`:`Đã bỏ ghim ${b.name}.`);pinCardOrder();break;case 'info':case 'capabilities':openInfo(b.id);break;}});
+$('#team-bot-list').addEventListener('click',e=>{const btn=e.target.closest('button');if(!btn){const stBot=e.target.closest('[data-stage-select]');if(stBot){window.ThycaRouter?ThycaRouter.dispatch('selectBot',stBot.dataset.stageSelect):selectBot(stBot.dataset.stageSelect);return;}const stGrp=e.target.closest('[data-group-open]');if(stGrp){const g=groups.find(x=>x.id===stGrp.dataset.groupOpen);if(g&&g.bots?.length)window.ThycaRouter?ThycaRouter.dispatch('loadConversation',groupKey(g.id),g.bots[0]):loadConversation(groupKey(g.id),g.bots[0]);}return;}if(btn.dataset.action==='jump-group'){const g=groups.find(x=>x.id===btn.dataset.groupId);if(g&&g.bots?.length)window.ThycaRouter?ThycaRouter.dispatch('loadConversation',groupKey(g.id),g.bots[0]):loadConversation(groupKey(g.id),g.bots[0]);return;}const grow=e.target.closest('[data-group]');if(grow){const g=groups.find(x=>x.id===grow.dataset.group);if(!g)return;if(btn.dataset.action==='group-favorite'){g.favorite=!g.favorite;setGroupFavorite(g.id,g.favorite);btn.setAttribute('aria-pressed',g.favorite);btn.setAttribute('aria-label',g.favorite?`Bỏ ghim nhóm ${g.title}`:`Ghim nhóm ${g.title}`);toast(g.favorite?`Đã ghim nhóm ${g.title}.`:`Đã bỏ ghim nhóm ${g.title}.`);pinCardOrder();return;}if(btn.dataset.action==='group-info'){openGroupInfo(g.id);return;}if(g.bots?.length)window.ThycaRouter?ThycaRouter.dispatch('loadConversation',groupKey(g.id),g.bots[0]):loadConversation(groupKey(g.id),g.bots[0]);return;}const cardEl=btn.closest('.bot-card');if(!cardEl)return;const b=getBot(cardEl.dataset.botId);if(!b)return;switch(btn.dataset.action){case 'select':window.ThycaRouter?ThycaRouter.dispatch('selectBot',b.id):selectBot(b.id);break;case 'reply':window.ThycaRouter?ThycaRouter.dispatch('selectBot',b.id):selectBot(b.id);document.querySelector('#message')?.focus?.();break;case 'live-more':openLiveList(b.id);break;case 'favorite':if(b.system)break;b.favorite=!b.favorite;setBotFavorite(b.id,b.favorite);btn.setAttribute('aria-pressed',b.favorite);btn.setAttribute('aria-label',b.favorite?`Bỏ ghim ${b.name}`:`Ghim ${b.name} lên đầu`);toast(b.favorite?`Đã ghim ${b.name} lên đầu.`:`Đã bỏ ghim ${b.name}.`);pinCardOrder();break;case 'info':case 'capabilities':openInfo(b.id);break;}});
 
 $('#bot-drawer-body').addEventListener('click',e=>{const btn=e.target.closest('[data-conversation]');if(!btn)return;const b=getBot(btn.dataset.bot);const s=b.conversations.find(x=>x[0]===btn.dataset.conversation);window.ThycaRouter?ThycaRouter.dispatch('loadConversation',s[0],b.id):loadConversation(s[0],b.id);$('#bot-drawer').close();});
 const teamSharedCreate=$('#team-shared-create');
-if(teamSharedCreate)teamSharedCreate.onclick=()=>{$('#group-options').innerHTML=bots.map(b=>`<label class="check-row"><input type="checkbox" name="bots" value="${b.id}" checked><span class="check-avatar" style="${paletteStyle(b)}">${avatar(b)}</span><span style="color:${b.palette.ink}">${b.name}</span><small style="color:#92846d">${b.role}</small></label>`).join('');$('#group-dialog').showModal();};
+if(teamSharedCreate)teamSharedCreate.onclick=()=>{$('#group-options').innerHTML=bots.map(b=>`<label class="check-row"><input type="checkbox" name="bots" value="${b.id}" checked><span class="check-avatar" style="${paletteStyle(b)}">${avatar(b)}</span><span style="color:${b.palette.ink}">${b.name}</span><small style="color:${b.palette.muted}">${b.role}</small></label>`).join('');$('#group-dialog').showModal();};
 $('#group-form').onsubmit=async e=>{e.preventDefault();const ids=$$('input[name=bots]:checked',e.currentTarget).map(x=>x.value);if(ids.length<2){toast('Chọn ít nhất hai bot cho hội thoại chung.');return;}
  try{const groupName=($('#group-name')?.value||'').trim();const payload={bots:ids};if(groupName)payload.title=groupName;const detail=await getJson('/api/groups',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
   $('#group-dialog').close();$('#group-form').reset();await refreshConversations();renderGroups();loadConversation(groupKey(detail.group_id),ids[0]);toast('Đã tạo hội thoại chung.');}

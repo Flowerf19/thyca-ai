@@ -149,7 +149,7 @@ function botFace(id) {
   const b = getBot(id);
   if (b) { try { return avatar(b); } catch {  } }
   const name = (b && b.name) || String(id || '?');
-  return `<span class="seal-avatar seal-fallback" aria-hidden="true">${escapeHTML(name.slice(0, 1).toUpperCase())}</span>`;
+  return `<span class="crew-avatar crew-fallback" aria-hidden="true">${escapeHTML(name.slice(0, 1).toUpperCase())}</span>`;
 }
 async function renderExchangeGroups(detail) {
   document.querySelectorAll('#message-list [data-exchange-partner]').forEach(n => n.remove());
@@ -195,8 +195,12 @@ async function renderExchangeGroups(detail) {
 async function openExchangeModal(ownerId, partnerId) {
   const owner = getBot(ownerId) || { id: ownerId, name: ownerId };
   const partner = getBot(partnerId) || { id: partnerId, name: partnerId };
+  const faceLeft = botFace(owner.id).replace('data-bot-avatar=', 'data-peer-face="left" data-bot-avatar=');
+  const faceRight = botFace(partner.id).replace('data-bot-avatar=', 'data-peer-face="right" data-bot-avatar=');
   $('#exchange-modal-title').innerHTML =
-    `${botFace(owner.id)}<span>${escapeHTML(owner.name)}</span><span class="exchange-vs" aria-hidden="true">\u21c4</span>${botFace(partner.id)}<span>${escapeHTML(partner.name)}</span>`;
+    `${faceLeft}<span>${escapeHTML(owner.name)}</span><span class="exchange-vs" aria-hidden="true">\u21c4</span>${faceRight}<span>${escapeHTML(partner.name)}</span>`;
+  if (typeof registerLiveRigs === 'function') registerLiveRigs();
+  if (typeof wakeEyeLoop === 'function') wakeEyeLoop();
   const body = $('#exchange-modal-body');
   const dialog = $('#exchange-modal');
   if (!body || !dialog) return;
@@ -480,26 +484,35 @@ function handleStreamEvent(token, ev) {
     case 'llm.retry': toast(`Đang thử lại (${ev.attempt}/${ev.max_attempts})…`); break;
   }
   const group = groups.find(g => groupKey(g.id) === token.conversationId);
-  if (group && ev.bot_id) setGroupActivity(group.id, ev.bot_id);
+  if (group) {
+    if (ev.type === 'llm.content' && ev.bot_id) setGroupActivity(group.id, ev.bot_id);
+    else if (['turn.started', 'llm.started', 'llm.thinking', 'tool.started', 'skill.started'].includes(ev.type)) setGroupActivity(group.id, null);
+  } else if (ev.bot_id && ev.bot_id !== token.botId && getBot(ev.bot_id) && typeof setPeerExchange === 'function') {
+    setPeerExchange({ a: token.botId, b: ev.bot_id, sender: ev.bot_id });
+    mentionBot(token.botId);
+  }
 }
 
 async function finishTurn(token, detail) {
-  clearInterval(token.interval); clearMusic(token.botId); setGroupActivity(null);
+  clearInterval(token.interval); clearMusic(token.botId); setGroupActivity(null); if (typeof setPeerExchange === 'function') setPeerExchange(null);
   runs.delete(token.conversationId); if (run === token) run = [...runs.values()].at(-1) || null; busy(runs.has(currentConversation));
+  let needsClarify = false;
   if (currentConversation === token.conversationId) {
     try {
       const fresh = detail && detail.messages ? detail : await getJson(convDetailUrl(token.conversationId));
       $('#message-list').innerHTML = renderTranscript(fresh);
       void renderExchangeGroups(fresh);
+      const tail = Array.isArray(fresh?.messages) ? fresh.messages.at(-1) : null;
+      needsClarify = Boolean(tail && tail.role !== 'user' && tail.meta?.card?.type === 'question');
     } catch {  }
   }
-  setState(token.botId, 'done', 'Đã hoàn tất.\nPhản hồi đã được gửi vào hội thoại.');
+  setState(token.botId, needsClarify ? 'confused' : 'done', needsClarify ? 'Cần bạn chọn hướng hoặc trả lời câu hỏi.' : 'Đã hoàn tất.\nPhản hồi đã được gửi vào hội thoại.');
   refreshConversations().then(() => bots.forEach(updateCard)).catch(() => {});
   announce(getBot(token.botId)?.name + ' đã hoàn tất.');
 }
 
 function cancelTurn(token, message, byline) {
-  clearInterval(token.interval); clearMusic(token.botId); setGroupActivity(null);
+  clearInterval(token.interval); clearMusic(token.botId); setGroupActivity(null); if (typeof setPeerExchange === 'function') setPeerExchange(null);
   runs.delete(token.conversationId); if (run === token) run = [...runs.values()].at(-1) || null; busy(runs.has(currentConversation));
   const t = $('.message-byline time', token.node); if (t) t.textContent = byline;
   $('.streaming-caret', token.node)?.remove();

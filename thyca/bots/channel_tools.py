@@ -64,6 +64,8 @@ def _wrap_memory_task(registry: ToolRegistry, deps) -> None:
         if ctx is None:
             return result
         payload = json.loads(result)
+        if payload.get("created") is not True:
+            return result
         task_id = payload.get("task_id")
         if not (isinstance(task_id, str) and WORK_REF_RE.fullmatch(task_id)):
             return result

@@ -36,7 +36,7 @@ def _header(current: str = "memories") -> dict:
        one shared scope for both. The document stub reports no data-page-nav
        element, so util.js's self-hydration no-ops. */
     const run = new Function('document', 'window', util + shell + `
-      return {{ header: thycaHeader({json.dumps(current)}), pages: SHELL_PAGES }};
+      return {{ header: thycaHeader({json.dumps(current)}), nav: thycaNavSidebar({json.dumps(current)}), side: thycaSidebarMarkup({json.dumps(current)}), pages: SHELL_PAGES }};
     `);
     console.log(JSON.stringify(run({{ querySelector: () => null, querySelectorAll: () => [] }}, {{}})));
     """
@@ -50,9 +50,10 @@ def _header(current: str = "memories") -> dict:
 
 def test_header_links_every_page_and_marks_current() -> None:
     out = _header("memories")
-    header = out["header"]
-    links = re.findall(
-        r'<a href="([^"]+)" data-page-link="([^"]+)"([^>]*)>([^<]+)</a>', header)
+    link_re = re.compile(
+        r'<a href="([^"]+)" data-page-link="([^"]+)"([^>]*)><svg[^>]*><use href="#i-[^"]+"/></svg><span class="nav-label">([^<]+)</span></a>'
+    )
+    links = link_re.findall(out["nav"])
     assert [page for _href, page, _rest, _label in links] == [
         "chat", "memories", "profile", "provider", "dashboard"]
     for href, page, _rest, _label in links:
@@ -64,6 +65,7 @@ def test_header_links_every_page_and_marks_current() -> None:
                if page != "memories")
     assert [label for *_x, label in links] == [
         "Trò chuyện", "Nhật ký", "Hồ sơ", "Provider", "Sử dụng"]
+    assert 'data-page-link=' not in out["side"] and 'mobile-page-nav' not in out["side"]
 
 
 def test_every_shell_page_emits_its_own_id() -> None:
@@ -96,7 +98,9 @@ def test_scope_navigation_flows_through_sidebar_and_url() -> None:
     html = (UI / "chat" / "index.html").read_text(encoding="utf-8")
     tpl = html.split('<template id="tpl-memories">', 1)[1].split("</template>", 1)[0]
     assert 'id="memory-bot"' not in js and 'id="memory-bot"' not in tpl
-    for marker in ('id="memory-kind"', 'id="memory-use"', 'id="memory-search"'):
+    assert 'id="memory-use"' not in js and 'id="memory-use"' not in tpl
+    assert 'id="memory-reload"' not in js and 'id="memory-reload"' not in tpl
+    for marker in ('id="memory-stats"', 'id="memory-kind"', 'id="memory-search"'):
         assert marker in tpl, marker
     assert "template#tpl-memories" in js
     assert "function selectBot(id)" in js

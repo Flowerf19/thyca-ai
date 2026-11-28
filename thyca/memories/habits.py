@@ -15,7 +15,6 @@ from pathlib import Path
 
 from thyca.configs import atomic_write_text
 from thyca.memories.archive_store import decode_bots, encode_bots
-from thyca.memories.chunk import Chunker
 from thyca.memories.heading import (
     HABIT_DEFAULT_IMPORTANCE,
     HeadingMeta,
@@ -28,6 +27,8 @@ from thyca.memories.heading import (
 )
 from thyca.memories.identity import current_bot_id
 from thyca.memories.ledger_common import (
+    is_strict_label_overlap,
+    label_key,
     locate_visible_block,
     resolve_owners,
     today_blocks,
@@ -182,7 +183,7 @@ def record_habit_entry(
     validate_entry_fields(topic, summary, content, effective_importance)
     validate_task_meta(None, None, "habit", None, habit, habit_explicit)
     clean_habit = " ".join(habit.split())
-    norm_habit = Chunker.normalize(clean_habit)
+    norm_habit = label_key(clean_habit)
     clean_chat = chat.strip() if isinstance(chat, str) and chat.strip() else None
     owners = resolve_owners(bots, current_bot_id())
     with facade.writer.mutation_lock():
@@ -193,7 +194,7 @@ def record_habit_entry(
                 continue
             if meta.kind != "habit" or not meta.habit or meta.bots != owners:
                 continue
-            if Chunker.normalize(" ".join(meta.habit.split())) != norm_habit:
+            if label_key(meta.habit) != norm_habit:
                 continue
             sid = memory_id(today_str, resolved)
             if not facade._may_mutate(sid, now):
@@ -216,7 +217,7 @@ def record_habit_entry(
                 row_habit = str(row["habit"] or "")
                 if not row_habit:
                     continue
-                if Chunker.normalize(" ".join(row_habit.split())) != norm_habit:
+                if label_key(row_habit) != norm_habit:
                     continue
                 sid = str(row["memory_id"])
                 if not facade._may_mutate(sid, now):
@@ -291,7 +292,7 @@ def sweep_bot_habits(facade, bot_id: str, bot_user_path, now=None) -> list[str]:
         if not collapsed or "<!--" in collapsed:
             continue
         obs = {**obs, "habit": collapsed}
-        groups.setdefault(Chunker.normalize(collapsed), []).append(obs)
+        groups.setdefault(label_key(collapsed), []).append(obs)
     wanted: dict[str, str] = {}
     for key, members in groups.items():
         days = {
@@ -342,7 +343,7 @@ def sweep_bot_habits(facade, bot_id: str, bot_user_path, now=None) -> list[str]:
 
 def _block_keys(text: str) -> set[str]:
     """Normalized labels already present in the auto block."""
-    return {Chunker.normalize(label) for label in parse_bot_habits(text)}
+    return {label_key(label) for label in parse_bot_habits(text)}
 
 
 def parse_bot_habits(text: str) -> list[str]:
@@ -390,19 +391,26 @@ def strip_auto_habits(text: str) -> str:
     return _strip_marker_block(out, PROFILE_AUTO_START, PROFILE_AUTO_END)
 
 
-def known_habit_labels(
+def visible_habit_catalog(
     facade,
     bot_id: str | None = None,
     bot_user_path=None,
     now=None,
-) -> list[str]:
-    """Distinct habit labels already recorded for ``bot_id`` across days."""
-    seen: dict[str, str] = {}
+) -> list[dict]:
+    """Distinct visible habit entries for ``bot_id`` (respects bound MemoryView)."""
+    seen: dict[str, dict] = {}
     for obs in habit_observations(facade, bot_id, now=now):
         collapsed = " ".join(str(obs.get("habit") or "").split())
         if not collapsed or "<!--" in collapsed:
             continue
-        seen.setdefault(Chunker.normalize(collapsed), collapsed)
+        key = label_key(collapsed)
+        if key not in seen:
+            seen[key] = {
+                "habit": collapsed,
+                "memory_id": obs.get("memory_id"),
+                "count": obs.get("count", 1),
+                "habit_explicit": bool(obs.get("habit_explicit")),
+            }
     view = current_memory_view()
     if bot_user_path is not None and not (view is not None and view.is_group):
         path = Path(bot_user_path)
@@ -412,6 +420,47 @@ def known_habit_labels(
             text = ""
         for label in parse_bot_habits(text):
             collapsed = " ".join(label.split())
-            if collapsed and "<!--" not in collapsed:
-                seen.setdefault(Chunker.normalize(collapsed), collapsed)
+            if not collapsed or "<!--" in collapsed:
+                continue
+            key = label_key(collapsed)
+            if key not in seen:
+                seen[key] = {
+                    "habit": collapsed,
+                    "memory_id": None,
+                    "count": 0,
+                    "habit_explicit": True,
+                }
     return list(seen.values())
+
+
+def match_known_habits(
+    habit: str, catalog: list[dict]
+) -> tuple[list[dict], list[dict]]:
+    """Return ``(exact_matches, similar_candidates)`` for ``habit``."""
+    target = label_key(habit)
+    if not target:
+        return [], []
+    exact: list[dict] = []
+    similar: list[dict] = []
+    for entry in catalog:
+        label = str(entry.get("habit") or "").strip()
+        if not label:
+            continue
+        if label_key(label) == target:
+            exact.append(entry)
+        elif is_strict_label_overlap(habit, label):
+            similar.append(entry)
+    return exact, similar
+
+
+def known_habit_labels(
+    facade,
+    bot_id: str | None = None,
+    bot_user_path=None,
+    now=None,
+) -> list[str]:
+    """Distinct habit labels already recorded for ``bot_id`` across days."""
+    return [
+        entry["habit"]
+        for entry in visible_habit_catalog(facade, bot_id, bot_user_path, now=now)
+    ]

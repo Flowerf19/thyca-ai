@@ -491,3 +491,58 @@ def test_active_prompt_renders_today_elsewhere_and_memory_tasks(tmp_path: Path) 
     assert "KST-774" not in snap.today_elsewhere
     assert "<memory_tasks>" in prompt and tid in prompt and sid_task in prompt
     assert "Never persist credentials or secrets." in prompt
+
+
+def test_agent_loop_self_recovers_from_duplicate_task_candidate_warning(tmp_path: Path) -> None:
+    facade, registry, gateway = _setup_gateway(tmp_path)
+    tid = facade.new_task_id()
+    facade.remember(
+        "Dựng pipeline backup Postgres lên S3",
+        "Đã tạo bucket S3",
+        task=tid,
+        kind="checkpoint",
+        status="open",
+    )
+
+    def recover_duplicate_task(messages: list[Message], _tools, call_no: int) -> ChatReply:
+        if call_no == 1:
+            return ChatReply(
+                content=None,
+                tool_calls=[
+                    ToolCall(
+                        id="dup1",
+                        name="memory_task",
+                        arguments={
+                            "topic": "Backup Postgres lên S3",
+                            "summary": "Đã xong script pg_dump tự động",
+                        },
+                    )
+                ],
+            )
+        if call_no == 2:
+            last_tool = messages[-1]
+            assert last_tool.role == "tool"
+            assert tid in (last_tool.content or "")
+            assert "force_new=true" in (last_tool.content or "")
+            return ChatReply(
+                content=None,
+                tool_calls=[
+                    ToolCall(
+                        id="dup2",
+                        name="memory_task",
+                        arguments={
+                            "task": tid,
+                            "summary": "Đã xong script pg_dump tự động",
+                        },
+                    )
+                ],
+            )
+        return ChatReply(content=f"Đã cập nhật task {tid}.")
+
+    loop = _make_loop(tmp_path, gateway, registry, ScriptedConnect(recover_duplicate_task))
+    reply = asyncio.run(loop.run("Cập nhật tiến độ backup Postgres S3: xong script pg_dump rồi"))
+    assert tid in reply
+    open_tasks = facade.tasks(status="open")["tasks"]
+    assert len(open_tasks) == 1
+    assert open_tasks[0]["task_id"] == tid
+    assert "pg_dump" in open_tasks[0]["summary"]

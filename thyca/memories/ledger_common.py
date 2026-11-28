@@ -19,9 +19,19 @@ from thyca.memories.heading import (
 from thyca.memories.identity import current_bot_id
 
 _WORD_SEP_RE = re.compile(r"[^\w]+", re.UNICODE)
+_DIGIT_TOKEN_RE = re.compile(r"\b\w*\d\w*\b", re.UNICODE)
 TASK_UPDATED_DAY_RE = re.compile(
     r"^\s*-\s*updated:\s*(\d{4}-\d{2}-\d{2})\s*$", re.MULTILINE
 )
+
+
+class DuplicateCandidateError(ValueError):
+    """Raised when creating a task or habit closely overlaps existing open/known entries."""
+
+    def __init__(self, message: str, *, kind: str, candidates: list[dict]) -> None:
+        super().__init__(message)
+        self.kind = kind
+        self.candidates = candidates
 
 
 def validate_entry_fields(
@@ -72,6 +82,51 @@ def first_summary_line(text: str) -> str:
 def norm_words(text: str) -> str:
     """Normalize accents, case, and punctuation into space-separated words."""
     return " ".join(_WORD_SEP_RE.sub(" ", Chunker.normalize(text)).split())
+
+
+def label_key(text: str) -> str:
+    """Canonical exact-match key for task titles and habit labels."""
+    cleaned = " ".join(str(text).strip().split())
+    return norm_words(cleaned) or Chunker.normalize(cleaned)
+
+
+def _significant_tokens(text_norm: str) -> list[str]:
+    return [tok for tok in text_norm.split() if len(tok) >= 2]
+
+
+def _has_conflicting_digits(left_norm: str, right_norm: str) -> bool:
+    left_digits = _DIGIT_TOKEN_RE.findall(left_norm)
+    right_digits = _DIGIT_TOKEN_RE.findall(right_norm)
+    return bool(left_digits and right_digits and left_digits != right_digits)
+
+
+def is_strict_label_overlap(
+    incoming: str,
+    candidate_title: str,
+    *,
+    candidate_extra: str = "",
+) -> bool:
+    """True when incoming and candidate share strict bidirectional word containment."""
+    inc_norm = norm_words(incoming)
+    title_norm = norm_words(candidate_title)
+    if not inc_norm or not title_norm or inc_norm == title_norm:
+        return False
+    if _has_conflicting_digits(inc_norm, title_norm):
+        return False
+    inc_tokens = _significant_tokens(inc_norm)
+    title_tokens = _significant_tokens(title_norm)
+    extra_norm = norm_words(candidate_extra) if candidate_extra else ""
+    hay_words = set(title_tokens) | set(_significant_tokens(extra_norm))
+    inc_words = set(inc_tokens)
+    forward = (
+        (len(inc_tokens) >= 2 or (len(inc_tokens) == 1 and len(inc_tokens[0]) >= 4))
+        and all(tok in hay_words for tok in inc_tokens)
+    )
+    reverse = (
+        (len(title_tokens) >= 2 or (len(title_tokens) == 1 and len(title_tokens[0]) >= 4))
+        and all(tok in inc_words for tok in title_tokens)
+    )
+    return forward or reverse
 
 
 def extract_task_updated_day(text: str | None) -> str | None:

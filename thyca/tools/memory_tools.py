@@ -8,13 +8,19 @@ from dataclasses import asdict
 from thyca.memories.archived import DATE_RE
 from thyca.memories.chunk import Chunker
 from thyca.memories.facade import MemoryFacade
-from thyca.memories.habits import sweep_bot_habits
+from thyca.memories.habits import (
+    match_known_habits,
+    sweep_bot_habits,
+    visible_habit_catalog,
+)
 from thyca.memories.heading import (
     TASK_ID_RE,
     TASK_STATUSES,
 )
 from thyca.memories.identity import current_bot_id
+from thyca.memories.ledger_common import DuplicateCandidateError
 from thyca.memories.search import list_day_entries
+from thyca.memories.task_ledger import match_open_tasks
 from thyca.tools.registry import ToolRegistry, ToolSpec
 
 _chat_conversation_id: ContextVar[str | None] = ContextVar("thyca_memory_chat", default=None)
@@ -289,7 +295,35 @@ def _note_spec(facade: MemoryFacade) -> ToolSpec:
             raise ValueError("summary is required when creating a new note")
         chat = _chat_conversation_id.get()
         body = content or ""
+        force_new = args.get("force_new") is True
         if clean_habit is not None:
+            bot_id = current_bot_id()
+            bot_user_path = (
+                facade.thyca_dir / "bots" / bot_id / "USER.md"
+                if bot_id and (facade.thyca_dir / "bots" / bot_id).is_dir()
+                else None
+            )
+            habit_catalog = visible_habit_catalog(facade, bot_id, bot_user_path)
+            exact_habits, similar_habits = match_known_habits(clean_habit, habit_catalog)
+            if not force_new and not exact_habits and similar_habits:
+                top = similar_habits[:3]
+                lines = [
+                    f"- habit={c['habit']!r}"
+                    + (
+                        f" (memory_id={c['memory_id']})"
+                        if c.get("memory_id")
+                        else " (in USER.md)"
+                    )
+                    for c in top
+                ]
+                raise DuplicateCandidateError(
+                    "Possible duplicate of existing habit(s):\n"
+                    + "\n".join(lines)
+                    + "\nReuse the exact existing habit label to reinforce it, "
+                    "or retry with force_new=true if this is a distinct habit.",
+                    kind="habit",
+                    candidates=top,
+                )
             sid = facade.record_habit_entry(
                 topic.strip(),
                 summary.strip(),
@@ -300,6 +334,11 @@ def _note_spec(facade: MemoryFacade) -> ToolSpec:
             )
             if explicit:
                 _sweep_explicit_habit(facade)
+            payload: dict[str, object] = {"memory_id": sid}
+            if exact_habits:
+                payload["matched_existing"] = True
+                payload["habit"] = exact_habits[0]["habit"]
+            return json.dumps(payload, ensure_ascii=False)
         else:
             sid = facade.append_other_journal(
                 topic.strip(),
@@ -349,6 +388,10 @@ def _note_spec(facade: MemoryFacade) -> ToolSpec:
                     "type": "string",
                     "description": "Existing memory_id to edit in-place; omit to create.",
                 },
+                "force_new": {
+                    "type": "boolean",
+                    "description": "Set true only after a duplicate-habit warning to confirm creating a distinct habit label.",
+                },
             },
             "additionalProperties": False,
         },
@@ -377,15 +420,71 @@ def _task_spec(facade: MemoryFacade) -> ToolSpec:
         if target_id is not None and (not isinstance(target_id, str) or not target_id.strip()):
             raise ValueError("memory_id must be a non-empty string")
         chat = _chat_conversation_id.get()
+        force_new = args.get("force_new") is True
 
         if task is None:
             if not isinstance(topic, str) or not topic.strip():
                 raise ValueError("topic is required when opening a new task")
             if target_id is not None:
                 raise ValueError("memory_id requires task; omit memory_id when opening a new task")
+            clean_topic = topic.strip()
+            if not force_new:
+                open_tasks = facade.tasks(
+                    status="open",
+                    limit=50,
+                    allow_own_cross_window=False,
+                ).get("tasks", [])
+                exact, similar = match_open_tasks(clean_topic, open_tasks)
+                if len(exact) == 1:
+                    matched = exact[0]
+                    matched_tid = str(matched["task_id"])
+                    sid = facade.upsert_task_card(
+                        clean_topic,
+                        summary.strip(),
+                        content=content,
+                        task=matched_tid,
+                        status=status,
+                        chat=chat,
+                        target_memory_id=matched.get("latest_memory_id"),
+                    )
+                    return json.dumps(
+                        {
+                            "memory_id": sid,
+                            "task_id": matched_tid,
+                            "created": False,
+                            "matched_existing": True,
+                            "note": (
+                                f"Matched existing open task {matched_tid} "
+                                f"({matched.get('title', clean_topic)!r}) and updated it. "
+                                f"Pass task={matched_tid!r} next time."
+                            ),
+                        },
+                        ensure_ascii=False,
+                    )
+                candidates = exact if len(exact) > 1 else similar
+                if candidates:
+                    top = candidates[:3]
+                    lines = [
+                        f"- {c['task_id']}: {c.get('title', '')} "
+                        f"(last_day={c.get('last_day', '?')})"
+                        + (
+                            f" — {str(c.get('summary') or '')[:120]}"
+                            if c.get("summary")
+                            else ""
+                        )
+                        for c in top
+                    ]
+                    raise DuplicateCandidateError(
+                        "Possible duplicate of open task(s):\n"
+                        + "\n".join(lines)
+                        + "\nPass task='<task_id>' to update an existing task, "
+                        "or retry with force_new=true if this is a distinct new task.",
+                        kind="task",
+                        candidates=top,
+                    )
             new_tid = facade.new_task_id()
             sid = facade.remember(
-                topic.strip(),
+                clean_topic,
                 summary.strip(),
                 content=content,
                 chat=chat,
@@ -452,6 +551,10 @@ def _task_spec(facade: MemoryFacade) -> ToolSpec:
                 "memory_id": {
                     "type": "string",
                     "description": "Optional target card memory_id when updating a specific card of task.",
+                },
+                "force_new": {
+                    "type": "boolean",
+                    "description": "Set true only after a duplicate-task warning to confirm opening a distinct new task.",
                 },
             },
             "required": ["summary"],

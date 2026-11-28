@@ -405,9 +405,11 @@ class ArchiveStore:
     def visible_chunk_maps(self, now: str) -> list[dict[str, object]]:
         rows = self._db.execute(
             f"""SELECT chunk_id, memory_id, heading_raw, text_raw, source_kind,
-                      timeline_day, expires_at, bots, kind, task, status, habit
+                      timeline_day, expires_at, bots, kind, task, status, habit,
+                      leaf_ord
                FROM chunks
-               WHERE {VISIBLE_SQL}""",
+               WHERE {VISIBLE_SQL}
+               ORDER BY memory_id ASC, leaf_ord ASC, chunk_id ASC""",
             (now,),
         )
         return [dict(row) for row in rows]

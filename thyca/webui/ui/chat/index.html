@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="vi">
+<html lang="vi" data-theme="light">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><base href="/ui/chat/">
 <meta name="theme-color" content="#f1e9d8"><title>Thyca — Sổ trò chuyện</title><link rel="icon" href="data:,">
@@ -34,37 +34,41 @@
 <body>
 <svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
 
-<symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></symbol><symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol><symbol id="i-chevron" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol><symbol id="i-star" viewBox="0 0 24 24"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9Z"/></symbol><symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7v.2"/></symbol><symbol id="i-list" viewBox="0 0 24 24"><path d="M7 6h13M7 12h13M7 18h13M3 6h.1M3 12h.1M3 18h.1"/></symbol><symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4.5 4.5L19 7"/></symbol><symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14m-5-5 5 5-5 5"/></symbol><symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M6 18 18 6"/></symbol><symbol id="i-clip" viewBox="0 0 24 24"><path d="m8 12 6.5-6.5a3 3 0 0 1 4.2 4.2l-9 9a5 5 0 0 1-7.1-7.1l9-9a2 2 0 0 1 2.8 2.8L6 14a1 1 0 0 0 1.4 1.4l8-8"/></symbol><symbol id="i-retry" viewBox="0 0 24 24"><path d="M4 9a8 8 0 1 1 0 6M4 4v5h5"/></symbol><symbol id="i-play" viewBox="0 0 24 24"><path d="m8 5 11 7-11 7Z"/></symbol><symbol id="i-pause" viewBox="0 0 24 24"><path d="M8 5v14M16 5v14"/></symbol><symbol id="i-face" viewBox="0 0 24 24"><path d="M12 2 15 4l4 .5.5 4 2 3.5-2 3-.5 4-4 .5-3 2-3-2-4-.5-.5-4-2-3 2-3.5.5-4L9 4Z"/><circle cx="12" cy="12" r="5"/></symbol><symbol id="i-leaf" viewBox="0 0 24 24"><path d="M5 19C1 8 9 3 20 4c1 12-6 17-15 15Zm0 0L16 8"/></symbol><symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></symbol><symbol id="i-send" viewBox="0 0 24 24"><path d="m4 12 16-8-5 16-4-6-7-2Zm7 2 9-10"/></symbol><symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="13" rx="2"/><path d="M16 8V3H3v13h5"/></symbol>
+<symbol id="i-sidebar-left" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M9 4v16"/></symbol><symbol id="i-sidebar-right" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M15 4v16"/></symbol><symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h12"/></symbol><symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2.5M12 19.5V22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M2 12h2.5M19.5 12H22M4.9 19.1l1.8-1.8M17.3 6.7l1.8-1.8"/></symbol><symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a6.8 6.8 0 0 0 10.5 10.5Z"/></symbol><symbol id="i-nav-chat" viewBox="0 0 24 24"><path d="M5 18.5 4 21l3.2-.8A8.8 8.8 0 1 0 5 18.5Z"/></symbol><symbol id="i-nav-memories" viewBox="0 0 24 24"><path d="M5 4.5h11a3 3 0 0 1 3 3V20H7.5A2.5 2.5 0 0 1 5 17.5V4.5Z"/><path d="M9 9h6M9 13h4"/></symbol><symbol id="i-nav-profile" viewBox="0 0 24 24"><circle cx="12" cy="8.5" r="3.5"/><path d="M5 19.5a7 7 0 0 1 14 0"/></symbol><symbol id="i-nav-provider" viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></symbol><symbol id="i-nav-dashboard" viewBox="0 0 24 24"><path d="M5 19V11M12 19V6M19 19v-8M3 19h18"/></symbol><symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol><symbol id="i-chevron" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol><symbol id="i-star" viewBox="0 0 24 24"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9Z"/></symbol><symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7v.2"/></symbol><symbol id="i-list" viewBox="0 0 24 24"><path d="M7 6h13M7 12h13M7 18h13M3 6h.1M3 12h.1M3 18h.1"/></symbol><symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4.5 4.5L19 7"/></symbol><symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14m-5-5 5 5-5 5"/></symbol><symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M6 18 18 6"/></symbol><symbol id="i-clip" viewBox="0 0 24 24"><path d="m8 12 6.5-6.5a3 3 0 0 1 4.2 4.2l-9 9a5 5 0 0 1-7.1-7.1l9-9a2 2 0 0 1 2.8 2.8L6 14a1 1 0 0 0 1.4 1.4l8-8"/></symbol><symbol id="i-retry" viewBox="0 0 24 24"><path d="M4 9a8 8 0 1 1 0 6M4 4v5h5"/></symbol><symbol id="i-play" viewBox="0 0 24 24"><path d="m8 5 11 7-11 7Z"/></symbol><symbol id="i-pause" viewBox="0 0 24 24"><path d="M8 5v14M16 5v14"/></symbol><symbol id="i-face" viewBox="0 0 24 24"><path d="M12 2 15 4l4 .5.5 4 2 3.5-2 3-.5 4-4 .5-3 2-3-2-4-.5-.5-4-2-3 2-3.5.5-4L9 4Z"/><circle cx="12" cy="12" r="5"/></symbol><symbol id="i-leaf" viewBox="0 0 24 24"><path d="M5 19C1 8 9 3 20 4c1 12-6 17-15 15Zm0 0L16 8"/></symbol><symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></symbol><symbol id="i-send" viewBox="0 0 24 24"><path d="m4 12 16-8-5 16-4-6-7-2Zm7 2 9-10"/></symbol><symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="13" rx="2"/><path d="M16 8V3H3v13h5"/></symbol>
 </defs></svg>
 <main class="notebook-shell chat-shell" aria-label="Thyca — sổ trò chuyện">
-<header class="site-header"><div class="header-left"><button class="icon-button menu-button" type="button" aria-label="Mở mục lục" aria-controls="chat-sidebar" aria-expanded="false"><svg class="icon"><use href="#i-menu"/></svg></button><span class="wordmark" aria-hidden="true">thyca</span><span class="header-rule"></span></div><div class="header-right"><button type="button" class="page-menu-toggle" id="page-menu-toggle" aria-expanded="false" aria-controls="page-links-nav" aria-haspopup="true"><span class="page-menu-label">Trò chuyện</span></button><nav class="page-links" id="page-links-nav" data-page-nav="chat" aria-label="Điều hướng"></nav></div></header>
+<header class="site-header"><div class="header-left"><button class="icon-button nav-toggle" id="nav-toggle" type="button" aria-label="Thu gọn điều hướng" aria-controls="nav-sidebar" aria-expanded="false" title="Thu gọn/Mở rộng điều hướng"><svg class="icon icon-desktop"><use href="#i-sidebar-left"/></svg><svg class="icon icon-mobile"><use href="#i-menu"/></svg></button><span class="wordmark" aria-hidden="true">thyca</span></div><div class="header-right"><div class="header-rail-wrap" id="header-rail-wrap"><nav class="rail-avatar-list" id="rail-avatar-list" aria-label="Bot trong đội"></nav><span class="header-rule"></span></div><button class="icon-button menu-button" id="sidebar-toggle" type="button" aria-label="Thu gọn thanh bot" aria-controls="chat-sidebar" aria-expanded="false" title="Thu gọn/Mở rộng thanh bot"><svg class="icon"><use href="#i-sidebar-right"/></svg></button></div></header>
 <div class="main-grid">
-<aside class="sidebar" id="chat-sidebar" aria-label="Đội bot và hội thoại">
- <div class="sessions-heading"><h2 id="team-nav-title">Đội</h2><span class="bot-count">3 người bạn</span></div>
- <div class="side-scroll"><nav class="session-list" id="team-bot-list" aria-label="Bot trong đội"></nav></div>
- <div class="rail-scroll"><nav class="rail-avatar-list" id="rail-avatar-list" aria-label="Bot trong đội"></nav></div>
+<aside class="nav-sidebar" id="nav-sidebar" aria-label="Điều hướng trang">
+ <nav class="page-links" id="page-links-nav" data-page-nav="chat" aria-label="Điều hướng"></nav>
 </aside>
-<button type="button" class="splitter" aria-label="Thu gọn thanh bot" aria-controls="chat-sidebar" aria-expanded="true" title="Thu gọn/Mở rộng thanh bot">‹</button>
 <div id="thyca-page-host"><section class="workspace chat-workspace" id="chat-workspace" data-page-workspace="chat" aria-label="Nội dung trò chuyện" hidden>
  <header class="chat-title-head"><div class="screen-title"><div class="eyebrow" id="conversation-eyebrow">Sổ trò chuyện · 01</div><h1 id="chat-title">Kế hoạch tuần</h1></div></header>
  <section class="chat-canvas" aria-label="Tin nhắn"><div class="conversation-scroll" id="conversation-scroll"><div class="conversation-content"><div class="day-divider">Hôm nay, một khởi đầu mới</div><div class="message-list" id="message-list" aria-live="polite"></div></div></div><button class="to-bottom" id="to-bottom" aria-label="Xuống cuối cuộc trò chuyện" hidden><svg class="icon"><use href="#i-chevron"/></svg></button></section>
  <footer class="site-footer"><div class="composer-hint"><span>Đang kết nối máy chủ Thyca</span><span>Enter gửi · Shift + Enter xuống dòng</span></div><form class="composer" id="composer"><label class="letter-label" for="message" id="composer-label-text">Gửi thyca,</label><div class="file-chip" id="file-chip" hidden><span></span><button type="button" id="remove-file" aria-label="Bỏ tệp">×</button></div><textarea id="message" name="message" rows="2" maxlength="4000" placeholder="Viết vài dòng cho thyca…"></textarea><div class="composer-toolbar"><div class="composer-tools"><button class="attach-button" type="button" id="attach-file" title="Chọn tệp để thử giao diện"><svg class="icon"><use href="#i-clip"/></svg><span>Tệp</span></button><span class="composer-team-hint">Gõ <kbd>@</kbd> để gọi một bot</span></div><div class="head-actions"><button class="quiet-button" id="run-demo"><svg class="icon"><use href="#i-play"/></svg><span>Chạy mẫu</span></button></div><div class="composer-send"><button class="send-button" id="send-message" type="submit">Gửi<svg class="icon"><use href="#i-send"/></svg></button><button class="stop-button" id="stop-button" type="button" hidden><svg class="icon"><use href="#i-stop"/></svg>Dừng</button></div></div><div class="mention-popup" id="mention-popup" role="listbox" aria-label="Chọn bot" hidden></div><input type="file" id="file-input" hidden></form></footer>
 </section></div>
+<aside class="sidebar" id="chat-sidebar" aria-label="Đội bot và hội thoại">
+ <div class="sessions-heading"><h2 id="team-nav-title">Đội</h2><span class="bot-count">3 người bạn</span></div>
+ <div class="side-scroll"><nav class="session-list" id="team-bot-list" aria-label="Bot trong đội"></nav></div>
+ <footer class="sidebar-footer"><button type="button" class="theme-toggle-btn" id="theme-toggle" aria-pressed="false" title="Chuyển chế độ Sáng / Tối"><svg class="icon theme-icon-sun"><use href="#i-sun"/></svg><svg class="icon theme-icon-moon"><use href="#i-moon"/></svg><span class="theme-toggle-label">Chế độ tối</span></button></footer>
+</aside>
 </div>
 </main>
 <div class="mobile-overlay" id="mobile-overlay" hidden></div>
 <dialog class="screen-dialog" id="expressions-dialog" aria-label="Xưởng biểu cảm">
 <button class="icon-button dialog-close expressions-close" aria-label="Đóng"><svg class="icon"><use href="#i-close"/></svg></button>
-<div class="dialog-body"><div class="dialog-controls"><label for="expression-bot">Người bạn</label><select id="expression-bot"><option value="thyca">thyca</option><option value="coder">Coder</option><option value="researcher">Researcher</option></select><label for="bot-color">Màu bot</label><input type="color" id="bot-color" value="#315e4c" aria-label="Màu của bot" style="width:28px;height:28px;border:0;background:none;padding:0;cursor:pointer"><div class="palette-preview" id="palette-preview"></div></div>
+<div class="dialog-body"><div class="dialog-controls"><label for="expression-bot">Người bạn</label><select id="expression-bot"><option value="thyca">thyca</option><option value="coder">Coder</option><option value="researcher">Researcher</option></select><label for="bot-color">Màu bot</label><input type="color" id="bot-color" value="#9179ec" aria-label="Màu của bot" class="color-pick"><div class="swatch-group" id="swatches-vibrant" role="group" aria-label="Bảng màu tươi"></div><div class="swatch-group" id="swatches-paper" role="group" aria-label="Bảng màu giấy"></div><div class="palette-preview" id="palette-preview"></div></div>
 <div class="shape-row"><span class="shape-label" id="shape-label">Hình dạng</span><div class="shape-picker" id="shape-picker" role="group" aria-labelledby="shape-label"></div></div>
+<div class="acc-row"><span class="shape-label" id="acc-label">Phụ kiện</span><div class="acc-picker" id="accessory-picker" role="group" aria-labelledby="acc-label"></div></div>
+<div class="theme-row"><span class="shape-label" id="theme-label">Chủ đề góc nhỏ</span><div class="theme-picker" id="theme-picker" role="group" aria-labelledby="theme-label"></div></div>
 <div class="studio-tabs" role="tablist" aria-label="Nhóm biểu cảm"><button type="button" class="studio-tab" id="work-tab" role="tab" aria-selected="true" aria-controls="lifecycle-panel">Khi làm việc <small>11</small></button><button type="button" class="studio-tab" id="idle-tab" role="tab" aria-selected="false" aria-controls="idle-panel" tabindex="-1">Lúc rảnh <small>8</small></button></div>
 <section class="expression-stage" id="expression-stage" aria-label="Biểu cảm đang xem"><div class="stage-portrait" id="lab-portrait"></div><div class="stage-copy"><div class="stage-kicker"><span class="status-dot"></span><span id="lab-bot-name">thyca</span><span>·</span><span>Cận cảnh</span></div><h3 id="lab-state"></h3><p id="lab-description"></p><p class="lab-speech" id="lab-speech"></p></div></section>
 <div class="lab-actions"><button type="button" class="lab-primary" id="lab-play"><svg class="icon"><use href="#i-play"/></svg>Chạy trọn một lượt</button><button type="button" id="lab-replay"><svg class="icon"><use href="#i-retry"/></svg>Phát lại biểu cảm</button><button type="button" id="lab-done"><svg class="icon"><use href="#i-star"/></svg>Thử hoàn tất</button><button type="button" id="lab-stop" hidden>Dừng</button><span id="lab-playback-note">Chọn biểu cảm để xem chuyển động.</span></div>
 <div id="lifecycle-panel" role="tabpanel" aria-labelledby="work-tab"><h3 class="expression-section-title">Tám nhịp làm việc <small>Gắn với trạng thái của bot</small></h3><div class="expression-grid" id="expression-grid"></div>
 <h3 class="expression-section-title">Những phản xạ nhỏ <small>Khi được gọi, cần hỏi và cùng làm</small></h3><div class="expression-grid" id="expression-extras"></div>
-<section class="group-preview" id="group-preview" hidden><p class="group-preview-title">Cùng một nhịp. Chọn người đang nói.</p><div class="group-preview-members" id="group-preview-members"></div></section>
+<section class="group-preview" id="group-preview" hidden><p class="group-preview-title">Cùng một nhịp. Chọn cả đội hoặc từng người đang nói.</p><div class="group-preview-members" id="group-preview-members"></div></section>
 </div><section id="idle-panel" role="tabpanel" aria-labelledby="idle-tab" hidden><h3 class="idle-panel-heading">Rảnh một chút, vui một chút.</h3><p class="idle-panel-copy">Mắt thỉnh thoảng nhìn quanh. Một cử chỉ nhỏ, một câu nói vu vơ — rồi lại yên lặng. Mỗi người bạn có một nhịp riêng.</p><div class="idle-controls"><label><input type="checkbox" id="idle-auto-toggle" checked>Ngẫu nhiên khi rảnh</label><label><input type="checkbox" id="idle-comments-toggle" checked>Thỉnh thoảng nói nhỏ</label><button type="button" class="idle-random-button" id="idle-random"><svg class="icon"><use href="#i-retry"/></svg>Ngẫu nhiên ngay</button></div><div id="idle-expression-grid"></div><p class="idle-preview-hint">Lời nhắn xuất hiện trên thẻ bot. Khi bạn gọi hoặc giao việc, bot trở lại tập trung ngay.</p></section>
-<p class="dialog-note">Mỗi bot giữ màu, hình dạng và nhịp chớp mắt riêng. Biểu cảm theo trạng thái công việc; lúc rảnh có thêm cử chỉ và lời nhắn ngẫu nhiên, có thể tắt riêng.</p></div></dialog>
+<p class="dialog-note">Mỗi bot giữ màu, hình dạng, phụ kiện, chủ đề và nhịp chớp mắt riêng. Biểu cảm theo trạng thái công việc; lúc rảnh có thêm cử chỉ và lời nhắn ngẫu nhiên, có thể tắt riêng.</p></div></dialog>
 <dialog class="screen-dialog" id="bot-drawer" aria-labelledby="bot-drawer-name"><div class="dialog-heading"><div><h2 id="bot-drawer-name">Thông tin bot</h2><p id="bot-drawer-subtitle">Một người bạn trong đội.</p></div><button class="icon-button dialog-close" aria-label="Đóng"><svg class="icon"><use href="#i-close"/></svg></button></div><div class="dialog-body" id="bot-drawer-body"></div></dialog>
 <dialog class="screen-dialog" id="exchange-modal" aria-labelledby="exchange-modal-title"><div class="dialog-heading"><h2 id="exchange-modal-title">Trao đổi giữa các bot</h2><button class="icon-button dialog-close" aria-label="Đóng"><svg class="icon"><use href="#i-close"/></svg></button></div><div class="dialog-body" id="exchange-modal-body"></div></dialog>
 <dialog class="screen-dialog" id="group-dialog" aria-labelledby="group-dialog-title"><div class="dialog-heading"><div><h2 id="group-dialog-title">Một cuộc trò chuyện chung.</h2><p>Chọn những người bạn sẽ cùng tham gia.</p></div><button class="icon-button dialog-close" aria-label="Đóng"><svg class="icon"><use href="#i-close"/></svg></button></div><form class="dialog-body group-form" id="group-form"><label class="group-name-label" for="group-name">Tên nhóm (không bắt buộc, nên 3–5 từ)</label><input type="text" id="group-name" name="group-name" maxlength="80" placeholder="Ví dụ: Đội hỗ trợ Discord" autocomplete="off"><small class="group-name-hint">Tên ngắn 3–5 từ; để trống nhóm sẽ hiện “Hội thoại chung”.</small><div id="group-options"></div><div class="dialog-actions"><button class="primary-action" type="submit">Tạo hội thoại</button></div></form></dialog>
@@ -85,27 +89,26 @@
         <div class="current-default" id="current-default" aria-live="polite"></div>
       </div>
       <form class="editor-form" id="connection-form" aria-label="Cấu hình kết nối và model" novalidate>
-        <div class="connection-fields">
+        <div class="connection-fields" data-mode="existing">
           <label class="field" id="pv-id-field"><span>Tên kết nối</span><input id="pv-id" maxlength="64" autocomplete="off" spellcheck="false" placeholder="Không dấu, không khoảng trắng" required></label>
           <label class="field"><span>URL API</span><input id="pv-base-url" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://api.example.com/v1" required></label>
-          <label class="field"><span>API key <em id="pv-key-note"></em></span><input id="pv-key" type="password" autocomplete="new-password" maxlength="200" placeholder="Nhập API key" title="Key được lưu trên máy này và gửi tới URL API khi kết nối."></label>
+          <label class="field"><span>API key <em id="pv-key-note"></em></span><div class="secret-input-wrap"><input id="pv-key" type="password" autocomplete="new-password" maxlength="200" placeholder="Nhập API key" title="Key được lưu trên máy này và gửi tới URL API khi kết nối."><button type="button" class="pill-action secret-toggle" id="pv-key-toggle" aria-pressed="false" aria-label="Hiện API key đang nhập">Hiện</button></div></label>
           <label class="field"><span>Kiểu API</span><select id="pv-api"><optgroup label="Chính hãng"><option value="openai">OpenAI</option><option value="google_gemini">Google</option><option value="anthropic_messages">Anthropic</option></optgroup><optgroup label="Custom API"><option value="openai_chat">Custom API — Chat completions</option><option value="openai_responses">Custom API — Responses</option></optgroup></select></label>
         </div>
         <div class="model-editor">
           <div class="model-pick-row">
             <label class="field model-picker-field"><span>Model để dùng <em class="model-mode-tag" id="model-editor-mode" hidden></em></span><select id="m-picker" aria-label="Chọn model"><option value="__choose__">Chọn model…</option></select></label>
             <button class="quiet-button" id="v-submit" type="button" title="Chỉ tải danh sách, không gọi model hay lưu cấu hình."><svg class="icon" aria-hidden="true"><use href="#i-list"/></svg> Tải model</button>
-            <button class="quiet-button is-danger" type="button" id="delete-model" hidden>Xóa model</button>
           </div>
           <p class="discovery-status" id="discovery-status" role="status" aria-live="polite" hidden></p>
           <p class="ownership-warning" id="ownership-warning" role="status" hidden></p>
           <p class="legacy-url-warning" id="legacy-url-warning" role="status" hidden></p>
           <details class="model-advanced" id="model-advanced">
-            <summary class="model-advanced-toggle"><span class="model-advanced-label">Tùy chỉnh nâng cao</span><span class="model-advanced-summary" id="model-advanced-summary"></span></summary>
+            <summary class="model-advanced-toggle"><span class="model-advanced-label">Tùy chỉnh nâng cao</span></summary>
             <div class="model-advanced-body">
               <div class="advanced-row">
                 <div class="advanced-group">
-                  <div class="price-heading" title="Giá chỉ dùng để ước tính chi phí; API không trả giá này. Điền đủ ba mức hoặc để trống cả ba."><strong>Giá (USD / 1M token)</strong><span>Nhập đủ 3 giá hoặc để trống.</span></div>
+                  <div class="price-heading" title="Giá chỉ dùng để ước tính chi phí; API không trả giá này. Điền đủ ba mức hoặc để trống cả ba."><strong>Giá (USD / 1M token)</strong></div>
                   <div class="price-fields">
                     <label class="field"><span>Input</span><input id="m-in" type="number" min="0" step="any" inputmode="decimal" placeholder="0.00"></label>
                     <label class="field"><span>Cache</span><input id="m-cache" type="number" min="0" step="any" inputmode="decimal" placeholder="0.00"></label>
@@ -113,10 +116,10 @@
                   </div>
                 </div>
                 <div class="advanced-group">
-                  <div class="limits-heading"><strong>Giới hạn (token)</strong><span>Để trống để dùng mặc định.</span></div>
+                  <div class="limits-heading"><strong>Giới hạn (token)</strong></div>
                   <div class="model-limits-grid">
-                    <label class="field"><span>Ngữ cảnh (token)</span><input id="m-context" type="number" min="32000" max="1000000" step="16000" inputmode="numeric" placeholder="Kế thừa"></label>
-                    <label class="field"><span>Output tối đa (token)</span><input id="m-max" type="number" min="1" max="2000000" step="16000" inputmode="numeric" placeholder="16384"></label>
+                    <label class="field"><span>Ngữ cảnh</span><input id="m-context" type="number" min="32000" max="1000000" step="16000" inputmode="numeric" placeholder="Kế thừa"></label>
+                    <label class="field"><span>Output tối đa</span><input id="m-max" type="number" min="1" max="2000000" step="16000" inputmode="numeric" placeholder="16384"></label>
                   </div>
                 </div>
               </div>
@@ -124,7 +127,7 @@
             </div>
           </details>
           <p class="form-status" id="editor-status" role="status" aria-live="polite" hidden></p>
-          <div class="editor-footer"><button class="primary-action" id="save-use" type="submit" form="connection-form">Lưu</button><button class="quiet-button" type="button" id="cancel-editor">Hủy thay đổi</button><span class="save-status" id="save-status" role="status" aria-live="polite"></span><button class="quiet-button is-danger" type="button" id="delete-provider" hidden>Xóa kết nối</button></div>
+          <div class="editor-footer"><button class="primary-action" id="save-use" type="submit" form="connection-form" disabled>Lưu</button><button class="quiet-button" type="button" id="cancel-editor" hidden>Hủy thay đổi</button><span class="save-status" id="save-status" role="status" aria-live="polite"></span><button class="quiet-button is-danger" type="button" id="delete-provider" hidden>Xóa kết nối</button></div>
         </div>
         <section class="saved-models" id="saved-models" aria-label="Model đã lưu">
           <div class="saved-models-head"><h2>Model đã lưu</h2><p class="card-copy" id="saved-models-note" aria-live="polite"></p></div>
@@ -140,17 +143,13 @@
   <div class="page-title">
     <div class="eyebrow">Hồ sơ</div>
     <h1 id="profile-title">Bạn và đội</h1>
-    <p class="page-sub">Mỗi người bạn giữ một trang riêng — sửa là ghi đè toàn bộ file.</p>
+    <p class="page-sub">Hồ sơ người dùng, giọng nói và cài đặt từng bot.</p>
   </div>
 </header>
 <div class="page-scroll">
   <div class="page-inner section-stack">
     <p class="page-status" id="profile-status" role="status" aria-live="polite" hidden></p>
     <div id="profile-root"></div>
-    <div class="page-actions profile-footer-actions">
-      <button class="quiet-button" id="profile-shared" type="button" hidden>Hồ sơ chung</button>
-      <button class="quiet-button" id="profile-reload" type="button"><svg class="icon" aria-hidden="true"><use href="#i-retry"/></svg><span>Tải lại</span></button>
-    </div>
   </div>
 </div>
 </template>
@@ -166,31 +165,22 @@
   <div class="page-inner section-stack">
     <p class="page-status" id="memory-status" hidden></p>
     <article class="paper-card" id="memory-scope-card" hidden></article>
-    <div class="mem-filter-row page-actions" id="memory-filter-row">
-      <select class="inline-field mem-kind-field" id="memory-kind" aria-label="Lọc loại kí ức">
-        <option value="">Lọc loại</option>
-        <option value="none">Ghi nhớ</option>
-        <option value="habit">Thói quen</option>
-        <option value="checkpoint">Task</option>
-      </select>
-      <select class="inline-field mem-use-field" id="memory-use" aria-label="Lọc mức dùng">
-        <option value="">Lọc mức dùng</option>
-        <option value="used">Dùng nhiều</option>
-        <option value="untouched">Không dùng bao giờ</option>
-        <option value="expiring">Sắp hết hạn</option>
-        <option value="suggest">Gợi ý xóa</option>
-      </select>
-      <input class="inline-field" id="memory-search" type="search" autocomplete="off"
-        placeholder="Tìm trong nhật ký…" aria-label="Tìm trong nhật ký">
-      <button class="quiet-button" id="memory-reload" type="button"><svg class="icon" aria-hidden="true"><use href="#i-retry"/></svg><span>Tải lại</span></button>
+    <div class="mem-filter-row" id="memory-filter-row">
+      <div class="mem-use-tabs" id="memory-stats" role="group" aria-label="Lọc trạng thái"></div>
+      <div class="mem-filter-tools">
+        <select class="inline-field mem-kind-field" id="memory-kind" aria-label="Lọc loại kí ức">
+          <option value="">Tất cả loại</option>
+          <option value="none">Ghi nhớ</option>
+          <option value="habit">Thói quen</option>
+          <option value="checkpoint">Task</option>
+        </select>
+        <input class="inline-field" id="memory-search" type="search" autocomplete="off"
+          placeholder="Tìm trong nhật ký…" aria-label="Tìm trong nhật ký">
+      </div>
     </div>
-    <article class="paper-card" aria-label="Thống kê bộ nhớ">
-      <div class="eyebrow">Tổng quan</div>
-      <div class="mem-stats" id="memory-stats"></div>
-    </article>
-    <article class="paper-card" aria-label="Các lá nhớ">
+    <article class="paper-card mem-journal-card" aria-label="Các lá nhớ">
       <div class="mem-list-top">
-        <div class="mem-list-heading"><span class="eyebrow">Lá nhớ</span><span class="mem-count" id="memory-count"></span></div>
+        <span class="mem-count" id="memory-count"></span>
         <span class="status-line" id="memory-loading">Đang đọc bộ nhớ…</span>
       </div>
       <div id="memory-leaves" aria-live="polite"></div>
@@ -218,7 +208,7 @@
 </template>
 <template id="tpl-dashboard">
 <header class="page-nav">
-  <div class="page-title"><p class="eyebrow" id="usage-scope-eyebrow">Tổng quan</p><h1 id="usage-view-title">Sử dụng token</h1><p class="page-sub" id="usage-scope-note"></p></div>
+  <div class="page-title"><p class="eyebrow" id="usage-scope-eyebrow">Tổng quan</p><h1 id="usage-view-title">Sử dụng</h1></div>
 </header>
 <div class="page-scroll" id="usage-scroll"><div class="page-inner section-stack">
   <div id="usage-overview">
@@ -232,62 +222,65 @@
       <div class="usage-header-controls" id="usage-header-controls">
         <p class="range-note" id="range-note"></p>
         <div class="page-actions">
-        <span class="range-presets" role="group" aria-label="Chọn nhanh kỳ">
-          <button class="chip" type="button" data-preset="1">1 ngày</button>
-          <button class="chip" type="button" data-preset="7" aria-pressed="true">7 ngày</button>
-          <button class="chip" type="button" data-preset="30">30 ngày</button>
-          <button class="chip" type="button" data-preset="all">Tất cả</button>
-        </span>
-        <button class="chip range-custom-toggle" id="range-custom-toggle" type="button" aria-expanded="false" aria-pressed="false" aria-controls="range-custom-bar" title="Chọn khoảng ngày tùy chỉnh">Tùy chọn</button>
-        </div>
-        <div class="range-custom" id="range-custom-bar" hidden>
-          <label class="range-field"><span>Từ</span><input type="date" id="range-from"></label>
-          <span class="range-sep" aria-hidden="true">–</span>
-          <label class="range-field"><span>Đến</span><input type="date" id="range-to"></label>
-          <button class="quiet-button" id="range-apply" type="button">Áp dụng</button>
+          <span class="range-presets" role="group" aria-label="Chọn nhanh kỳ">
+            <button class="chip" type="button" data-preset="1">1 ngày</button>
+            <button class="chip" type="button" data-preset="7" aria-pressed="true">7 ngày</button>
+            <button class="chip" type="button" data-preset="30">30 ngày</button>
+          </span>
         </div>
       </div>
     </div>
     <div class="page-status" id="page-status" role="status" hidden><span id="stats-status-text"></span><button class="quiet-button" id="stats-retry" type="button" hidden>Thử lại số liệu</button></div>
-    <div class="stat-grid" id="stat-grid" aria-live="polite"></div>
     <section class="usage-view-panel" id="usage-panel-usage" aria-label="Sử dụng token">
       <article class="paper-card">
-        <div class="card-head"><div><h2 class="card-title">Nhịp token từng ngày</h2></div>
-          <div class="seg-toggle" role="group" aria-label="Chỉ số cột">
-            <button class="chip" type="button" data-day-metric="tokens" aria-pressed="true">Token</button>
-            <button class="chip" type="button" data-day-metric="requests" aria-pressed="false">Gọi model</button>
+        <div class="card-head">
+          <div><h2 class="card-title"><span id="usage-chart-title">Token theo ngày</span><strong class="card-head-total" id="usage-chart-total">—</strong></h2><p class="card-copy" id="usage-chart-sub" hidden></p></div>
+          <div class="chart-controls">
+            <select class="chart-mode-select" id="usage-chart-mode" aria-label="Chế độ biểu đồ sử dụng">
+              <option value="tokens:parts">Token · Input / Cache / Output</option>
+              <option value="tokens:model">Token · Theo model</option>
+              <option value="tokens:bot">Token · Theo bot</option>
+              <option value="requests:model">Lần gọi · Theo model</option>
+              <option value="requests:bot">Lần gọi · Theo bot</option>
+            </select>
           </div>
         </div>
-        <div class="token-legend" aria-label="Chú giải biểu đồ"><span title="Không bao gồm Cache read."><i class="legend-input"></i>Input <strong id="usage-input-total">—</strong></span><span title="Tính riêng, không nằm trong Input."><i class="legend-cache"></i>Cache <strong id="usage-cache-total">—</strong></span><span title="Token hoàn tất từ model."><i class="legend-output"></i>Output <strong id="usage-output-total">—</strong></span></div>
-        <div id="chart-day"></div><p class="card-note" id="chart-day-note"></p>
-      </article>
-      <details class="paper-card analysis-panel" id="analysis-details">
-        <summary>Phân tích</summary>
-        <div class="analysis-panels">
-          <section id="card-bot"><h2 class="card-title">Theo bot</h2><ul class="bot-rows" id="rows-bot"></ul></section>
-          <section><h2 class="card-title">Theo model</h2><ul class="model-rows" id="rows-model"></ul></section>
-          <section><h2 class="card-title">Theo giờ UTC</h2><div id="chart-hour"></div><p class="card-note">Giờ theo mốc <code>started_at</code> của phiên.</p></section>
+        <div id="chart-day"></div>
+        <div class="chart-footer" id="usage-chart-footer">
+          <div class="chart-legend" id="usage-chart-legend" aria-label="Chú giải biểu đồ"></div>
+          <p class="chart-summary" id="usage-chart-summary" hidden></p>
         </div>
-      </details>
+      </article>
     </section>
     <section class="usage-view-panel" id="usage-panel-cost" aria-label="Chi phí" hidden>
       <article class="paper-card">
-        <div class="card-head"><div><h2 class="card-title">Chi phí đã ghi nhận theo ngày</h2><p class="card-copy" id="cost-coverage"></p></div></div>
-        <div id="chart-cost"></div><p class="card-note" id="chart-cost-note"></p>
+        <div class="card-head">
+          <div><h2 class="card-title"><span id="cost-chart-title">Chi phí theo ngày</span><strong class="card-head-total" id="cost-chart-total">—</strong></h2><p class="card-copy" id="cost-coverage" hidden></p></div>
+          <div class="chart-controls">
+            <select class="chart-mode-select" id="cost-chart-mode" aria-label="Chế độ biểu đồ chi phí">
+              <option value="model">Chi phí · Theo model</option>
+              <option value="bot">Chi phí · Theo bot</option>
+            </select>
+          </div>
+        </div>
+        <div id="chart-cost"></div>
+        <div class="chart-footer" id="cost-chart-footer">
+          <div class="chart-legend" id="cost-chart-legend" aria-label="Chú giải chi phí"></div>
+          <p class="chart-summary" id="cost-chart-summary" hidden></p>
+        </div>
       </article>
-      <div class="analysis-panels cost-analysis">
-        <section class="paper-card" id="card-bot-cost"><h2 class="card-title">Theo bot</h2><ul class="bot-rows" id="rows-bot-cost"></ul></section>
-        <section class="paper-card"><h2 class="card-title">Theo model</h2><ul class="model-rows" id="rows-model-cost"></ul></section>
-      </div>
     </section>
     <section class="usage-view-panel" id="usage-panel-trace" aria-label="Trace" hidden>
       <article class="paper-card usage-turn-list">
-        <div class="list-head"><h2 class="card-title">Lịch sử lượt</h2>
-          <div class="list-filters">
-            <label class="mini-field"><span>Tìm lượt</span><input id="filter-q" type="search" autocomplete="off" placeholder="Tên hoặc mã phiên"></label>
-            <label class="mini-field"><span>Model</span><select id="filter-model"><option value="">Tất cả model</option></select></label>
-            <label class="mini-field"><span>Trạng thái</span><select id="filter-status"></select></label>
+        <div class="list-head">
+          <div class="list-title-row">
+            <h2 class="card-title">Lịch sử lượt<span class="trace-head-summary" id="trace-head-summary"></span></h2>
             <button class="icon-button" id="trace-refresh" type="button" title="Tải lại lượt" aria-label="Tải lại lượt"><svg class="icon" aria-hidden="true"><use href="#i-retry"/></svg></button>
+          </div>
+          <div class="list-filters">
+            <input id="filter-q" type="search" autocomplete="off" placeholder="Tìm tên hoặc mã phiên" aria-label="Tìm lượt">
+            <select id="filter-model" aria-label="Lọc theo model"><option value="">Tất cả model</option></select>
+            <select id="filter-status" aria-label="Lọc theo trạng thái"></select>
           </div>
         </div>
         <p class="page-status s-error" id="trace-status" hidden><span id="trace-status-text"></span><button class="quiet-button" id="trace-retry" type="button">Thử lại danh sách</button></p>

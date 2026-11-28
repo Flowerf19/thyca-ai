@@ -1523,8 +1523,9 @@ def test_chat_mobile_pick_pattern() -> None:
     """On mobile the bot/conversation list is an off-canvas overlay, not a separate
     pick screen: `.mobile-open` slides it in over the content, the backdrop
     or Esc closes it, and loading a conversation closes it too — the same shared
-    wiring every page gets from share/shell-app.js. The header's
-    .menu-button is the mobile-only trigger (hidden on desktop)."""
+    wiring every page gets from share/shell-app.js. The unified header
+    #sidebar-toggle (.menu-button) opens the drawer on mobile and toggles
+    the desktop rail on wider screens."""
     html = (WEBUI / "ui" / "chat" / "index.html").read_text(encoding="utf-8")
     chat = (WEBUI / "ui" / "chat" / "js" / "chat.js").read_text(encoding="utf-8")
     shell_app = (WEBUI / "ui" / "share" / "shell-app.js").read_text(encoding="utf-8")
@@ -1532,14 +1533,24 @@ def test_chat_mobile_pick_pattern() -> None:
     base_css = (WEBUI / "ui" / "share" / "base.css").read_text(encoding="utf-8")
 
     assert 'class="sidebar" id="chat-sidebar"' in html
+    assert 'class="nav-sidebar" id="nav-sidebar"' in html
     assert 'id="mobile-overlay"' in html
-    assert 'class="icon-button menu-button"' in html
+    assert 'class="icon-button nav-toggle" id="nav-toggle"' in html
+    assert 'aria-controls="nav-sidebar"' in html
+    assert 'class="icon-button menu-button" id="sidebar-toggle"' in html
     assert 'aria-controls="chat-sidebar"' in html
-    assert ".menu-button{display:none}" in base_css
-    assert ".menu-button{display:inline-flex}" in base_css
+    assert 'mobile-page-nav' not in html
+    assert 'class="sidebar-footer"' in html
+    assert 'class="splitter"' not in html
+    assert 'id="page-menu-toggle"' not in html
+    assert ".menu-button{display:none}" not in base_css
+    assert ".menu-button{display:inline-flex" in base_css
+    assert ".nav-sidebar.mobile-open" in base_css
     assert "screen-shell" not in html
     assert "max-width:850px" in sidebar_css
     assert ".sidebar.mobile-open" in sidebar_css
+    assert "function openNavMobile" in shell_app
+    assert "function closeNavMobile" in shell_app
     assert "function openMobile" in shell_app
     assert "function closeMobile" in shell_app
     assert "mobile-open" in shell_app

@@ -206,7 +206,15 @@ class FakeNode {
   }
   get parentElement() { return this.parentNode; }
   get childElementCount() { return this.children.length; }
-  get options() { return this.children.filter((c) => c.tagName === 'OPTION'); }
+  get options() {
+    return this.children.flatMap((c) => (
+      c.tagName === 'OPTION'
+        ? [c]
+        : c.tagName === 'OPTGROUP'
+          ? c.children.filter((k) => k.tagName === 'OPTION')
+          : []
+    ));
+  }
   get innerText() { return this.textContent; }
   get textContent() {
     return this._text + this.children.map((c) =>
@@ -766,29 +774,29 @@ def test_avatar_markup_contract(node: str) -> None:
         return { html };
     """)
     html = out["html"]
-    assert 'class="seal-avatar mk mk-drop' in html
+    assert 'class="crew-avatar variant-circle' in html
     assert 'data-bot-avatar="coder"' in html
-    assert 'data-drop-shape="coder"' in html
+    assert 'data-crew-shape="puff"' in html
+    assert 'data-theme-family="bauhaus"' in html
+    assert 'data-accessory="none"' in html
     assert 'data-state="idle"' in html
     assert 'data-expression="idle"' in html
     assert 'data-selected="true"' in html
     assert "--bot-color:" in html and "--bot-ink:" in html
-    assert 'class="seal-motion"' in html
-    assert 'class="well-bg"' in html and "drop-well" not in html
-    assert 'class="char-rig"' in html and 'class="char-parallax"' in html
-    assert 'class="drop-body"' in html
-    assert 'class="eyes-rig"' in html and 'class="seal-pupils"' in html
-    assert "seal-face" not in html
+    assert 'class="crew-svg base"' in html
+    assert 'circle-well-bg' in html and "drop-well" not in html
+    assert 'class="char-box"' in html and 'class="char-root"' in html
+    assert 'class="char-body-shape crew-body"' in html
+    assert 'class="char-face"' in html and 'class="eye-pupil-group"' in html
+    assert "seal-face" not in html and "seal-avatar" not in html
     assert 'class="frame-ring"' in html and "drop-edge" not in html
     assert 'class="orbit-arc"' in html and "drop-orbit" not in html
     assert 'aria-hidden="true"' in html
 
 
 def test_avatar_ink_drop_material_face_and_hands(node: str) -> None:
-    """Peeking Character Medallion layers: cream paper well backdrop,
-    clipped character rig with parallax layers (body, eyes, prop),
-    state orbit arc and outer medallion frame rings, with unique
-    namespaced ids per avatar instance."""
+    """Crew avatar layers: themed well backdrop, Risograph scene, character
+    body + eye lids/lashes + expression mouths, state orbit arc and unique ids."""
     out = _run(node, r"""
         bots.length = 0;
         bots.push(...roster([{ id: 'coder', name: 'Coder' }]));
@@ -797,33 +805,32 @@ def test_avatar_ink_drop_material_face_and_hands(node: str) -> None:
         return { html, html2 };
     """)
     html = out["html"]
-    for cls in ("well-bg", "char-clip", "char-rig", "char-parallax",
-                "drop-body", "eyes-rig", "seal-pupils", "eyes-open",
-                "eyes-happy", "eyes-error", "eyes-rest", "prop-parallax",
-                "done-spark", "frame-ring", "frame-ring-hi", "orbit-arc"):
+    for cls in ("well-bg", "circle-well-bg", "theme-scene-art", "char-box", "char-root",
+                "char-body-shape", "crew-body", "char-face-shake", "char-face",
+                "eye-unit", "eye-sclera", "eye-pupil-group", "eye-lid", "eye-lash",
+                "eye-error", "eye-happy", "mouth-normal", "mouth-think",
+                "mouth-surprised", "mouth-sad", "mouth-confused",
+                "state-spark", "state-question", "state-think-dots", "frame-ring", "orbit-arc"):
         assert cls in html, cls
-    for dead in ("drop-well", "seal-face", "drop-edge", "drop-orbit",
+    for dead in ("drop-well", "seal-face", "drop-edge", "drop-orbit", "seal-avatar",
                  "seal-done-star", "seal-eye-open", "seal-eye-happy",
                  "seal-eye-error", "seal-eye-rest"):
         assert dead not in html, dead
-    ids = re.findall(r'id="(drop\d+-[a-z-]+)"', html)
-    assert len(ids) == len(set(ids)) and len(ids) >= 2, ids
-    ids2 = re.findall(r'id="(drop\d+-[a-z-]+)"', out["html2"])
+    ids = re.findall(r'id="(cr\d+-clip)"', html)
+    assert len(ids) == len(set(ids)) and len(ids) == 1, ids
+    ids2 = re.findall(r'id="(cr\d+-clip)"', out["html2"])
     assert not set(ids) & set(ids2)
-    assert 'class="seal-pupils"' in html
-    assert 'class="eyes-open"' in html and 'class="eyes-happy"' in html
-    assert 'class="eyes-error"' in html and 'class="eyes-rest"' in html
     css = AVATARS_CSS.read_text()
-    for sel in (".drop-body{", ".well-bg{", ".frame-ring{", ".frame-ring-hi{",
-                ".orbit-arc{", ".char-rig{", ".char-parallax{", ".prop-parallax{",
-                ".eyes-rig{", "[data-state=done]", "[data-state=working]"):
-        assert sel in css, sel
+    for sel in (".crew-avatar .char-body-shape,.crew-body{", ".well-bg,.circle-well-bg{",
+                ".frame-ring{", ".crew-avatar .orbit-arc{", ".crew-avatar .char-root{",
+                ".crew-avatar[data-state=done]", ".crew-avatar[data-state=working]"):
+        assert sel in css or sel.rstrip("{") in css, sel
 
 
 def test_avatar_body_is_id_stable_and_expression_follows_mention(node: str) -> None:
-    """The character archetype is picked deterministically from the immutable
-    id; coder and researcher keep their own archetypes; a mentioned
-    bot renders data-expression=mention without changing state."""
+    """The crew shape is picked deterministically from the immutable id;
+    coder and researcher keep distinct crew shapes; a mentioned bot renders
+    data-expression=mention without changing state."""
     out = _run(node, r"""
         bots.length = 0;
         bots.push(...roster([{ id: 'coder' }, { id: 'researcher' }]));
@@ -833,10 +840,10 @@ def test_avatar_body_is_id_stable_and_expression_follows_mention(node: str) -> N
         const listening = avatar(bots[0], 'listening');
         bots[0].mentioned = true;
         const mentioned = avatar(bots[0]);
-        const clipOf = (h) => (h.match(/clip-path="url\(#(drop\d+-clip)\)"/) || [])[1];
+        const clipOf = (h) => (h.match(/clip-path="url\(#(cr\d+-clip)\)"/) || [])[1];
         return {
-            stable: a1.includes('data-drop-shape="coder"') && a2.includes('data-drop-shape="coder"'),
-            distinct: a1.includes('data-drop-shape="coder"') && other.includes('data-drop-shape="researcher"'),
+            stable: a1.includes('data-crew-shape="puff"') && a2.includes('data-crew-shape="puff"'),
+            distinct: a1.includes('data-crew-shape="puff"') && other.includes('data-crew-shape="orb"'),
             unique: new Set([clipOf(a1), clipOf(a2), clipOf(other)]).size === 3,
             listening,
             mentioned,
@@ -917,7 +924,7 @@ def test_mention_overlay_and_notify_text_drive_seal_attrs(node: str) -> None:
         bots.push(...roster([{ id: 'a', name: 'A' }]));
         const b = bots[0];
         const seal = document.createElement('span');
-        seal.className = 'seal-avatar'; seal.dataset.botAvatar = 'a';
+        seal.className = 'crew-avatar'; seal.dataset.botAvatar = 'a';
         document.body.appendChild(seal);
         mentionBot('a');
         const during = { mentioned: b.mentioned, expr: expressionFor(b) };
@@ -947,7 +954,7 @@ def test_notify_text_damper_beats_and_rests(node: str) -> None:
         bots.length = 0;
         bots.push(...roster([{ id: 'a', name: 'A' }]));
         const seal = document.createElement('span');
-        seal.className = 'seal-avatar'; seal.dataset.botAvatar = 'a';
+        seal.className = 'crew-avatar'; seal.dataset.botAvatar = 'a';
         document.body.appendChild(seal);
         setState('a', 'writing');
         const vars = () => ({
@@ -975,44 +982,38 @@ def test_notify_text_damper_beats_and_rests(node: str) -> None:
 
 
 def test_seal_parallax_vars_follow_pointer_and_reset(node: str) -> None:
-    """applyParallax shifts the face toward the pointer, the well less, the
-    highlight opposite; resetParallax clears; previews/paused/zero-rect skip."""
+    """stateGazeOverride computes shy, peer-facing, thinking, waiting, and
+    hover-yielding eye gaze targets cleanly without polling."""
     out = _run(node, r"""
         bots.length = 0;
         bots.push(...roster([{ id: 'a', name: 'A' }]));
-        const host = document.createElement('div');
-        host.className = 'bot-card';
-        const seal = document.createElement('span');
-        seal.className = 'seal-avatar'; seal.dataset.botAvatar = 'a';
-        host.appendChild(seal);
-        document.body.appendChild(host);
-        const vars = () => ['--par-x', '--par-y', '--well-x', '--well-y', '--hi-x', '--hi-y']
-            .map((p) => seal.style.getPropertyValue(p));
-        const zero = sealFromPoint(host, 60, 15);
-        seal.getBoundingClientRect = () => ({ left: 0, top: 0, width: 60, height: 60, right: 60, bottom: 60 });
-        const hit = sealFromPoint(host, 60, 15);
-        applyParallax(seal, hit.nx, hit.ny);
-        const moved = { par: seal.dataset.par, vars: vars() };
-        applyParallax(seal, 9, -9);
-        const clamped = vars();
-        resetParallax(seal);
-        const cleared = { par: seal.dataset.par, vars: vars() };
-        seal.className = 'seal-avatar expression-preview';
-        const previewSkipped = sealFromPoint(host, 60, 15);
-        seal.className = 'seal-avatar';
-        host.className = 'bot-card motion-paused';
-        const pausedSkipped = sealFromPoint(host, 60, 15);
-        return { zero, nx: hit.nx, ny: hit.ny, moved, clamped, cleared, previewSkipped, pausedSkipped };
+        const host = document.createElement('span');
+        host.className = 'crew-avatar';
+        host.dataset.botAvatar = 'a';
+        host.dataset.state = 'idle';
+        const rig = { host, memberId: 'a', box: { dataset: {} } };
+        const idleDefault = stateGazeOverride(rig, 0);
+        host.dataset.state = 'thinking';
+        const thinking = stateGazeOverride(rig, 0);
+        host.dataset.state = 'waiting';
+        const waiting = stateGazeOverride(rig, 0);
+        host.dataset.state = 'idle';
+        host.dataset.peerFace = 'left';
+        const peerLeft = stateGazeOverride(rig, 0);
+        host.dataset.peerFace = 'right';
+        const peerRight = stateGazeOverride(rig, 0);
+        delete host.dataset.peerFace;
+        setAvatarShy(true);
+        const shy = stateGazeOverride(rig, 0);
+        setAvatarShy(false);
+        return { idleDefault, thinking, waiting, peerLeft, peerRight, shy };
     """)
-    assert out["zero"] is None
-    assert out["nx"] == 1 and out["ny"] == -0.5
-    assert out["moved"]["par"] == "1"
-    par_x, par_y, well_x, well_y, hi_x, hi_y = out["moved"]["vars"]
-    assert (par_x, par_y, well_x, hi_x) == ("4.00px", "-2.00px", "1.75px", "-1.50px")
-    assert float(well_y[:-2]) < 0 < float(hi_y[:-2])
-    assert out["clamped"] == ["4.00px", "-4.00px", "1.75px", "-1.75px", "-1.50px", "1.50px"]
-    assert out["cleared"].get("par") is None and out["cleared"]["vars"] == [""] * 6
-    assert out["previewSkipped"] is None and out["pausedSkipped"] is None
+    assert out["idleDefault"] is None
+    assert out["thinking"] == {"face": [-2.4, -3.2], "eye": [-3.2, -3.6]}
+    assert out["waiting"] == {"face": [0, 3.0], "eye": [0, 3.6]}
+    assert out["peerLeft"] == {"face": [3.8, 0.2], "eye": [4.6, 0.2]}
+    assert out["peerRight"] == {"face": [-3.8, 0.2], "eye": [-4.6, 0.2]}
+    assert out["shy"] == {"face": [-7.2, 0], "eye": [-4.6, 0]}
 
 
 def test_idle_layer_gestures_never_change_work_state(node: str) -> None:
@@ -1061,13 +1062,12 @@ def test_card_markup_anatomy(node: str) -> None:
     assert 'class="bot-select team-bot-item"' in html
     assert 'data-action="select"' in html
     assert 'aria-label="Trò chuyện với Coder · Đang suy nghĩ"' in html
-    assert 'class="seal-avatar' in html
+    assert 'class="crew-avatar variant-stage' in html
+    assert 'class="card-stage-shell"' in html and 'data-bot-theme="bauhaus"' in html
     assert 'class="bot-name conversation-name"' in html and ">Coder<" in html
     assert 'class="bot-role"' in html and ">Dev<" in html
     assert 'class="header-status"' in html and "Đang suy nghĩ" in html
-    status_idx = html.index('class="header-status"')
     actions_idx = html.index('class="card-actions"')
-    assert status_idx < actions_idx
     actions = html[actions_idx:html.index("</div>", actions_idx)]
     assert sorted(re.findall(r'data-action="(\w+)"', actions)) == ["favorite", "info"]
     assert 'class="reply-action"' in html and 'data-action="reply" hidden' in html
@@ -1084,8 +1084,8 @@ def test_card_markup_anatomy(node: str) -> None:
 
 def test_render_team_and_group_rows_markup(node: str) -> None:
     """renderTeam fills #team-bot-list in roster order; renderGroups emits a
-    .group-row with a 64px cluster (3 mini avatars, or 2+plus when >3)
-    alongside title and subtitle."""
+    .group-card with a 2-tier 188x78 stage banner alongside title/subtitle
+    and builds the rail .group-cluster with mini avatars."""
     out = _run(node, r"""
         bots.length = 0;
         bots.push(...roster([{ id: 'thyca', name: 'Thyca' }, { id: 'coder', name: 'Coder' }]));
@@ -1094,16 +1094,20 @@ def test_render_team_and_group_rows_markup(node: str) -> None:
         groups.push({ id: 'g1', title: 'Nhóm A', bots: ['thyca', 'coder'], subtitle: '2 người bạn · 4 lượt' });
         renderGroups();
         const group = $('#team-bot-list').innerHTML;
-        return { team, group, thycaIdx: team.indexOf('id="bot-thyca"'), coderIdx: team.indexOf('id="bot-coder"') };
+        const rail = $('#rail-avatar-list').innerHTML;
+        return { team, group, rail, thycaIdx: team.indexOf('id="bot-thyca"'), coderIdx: team.indexOf('id="bot-coder"') };
     """)
-    team, group = out["team"], out["group"]
+    team, group, rail = out["team"], out["group"], out["rail"]
     assert 0 <= out["thycaIdx"] < out["coderIdx"]
     assert team.count('class="bot-card') == 2
     assert 'class="bot-card group-card chat-only"' in group and 'data-group="g1"' in group
-    assert 'class="group-cluster"' in group
+    assert 'data-bot-theme="group-stage"' in group
+    assert 'data-group-stage="g1"' in group
+    assert 'data-member-id="thyca"' in group and 'data-member-id="coder"' in group
+    assert 'class="group-cluster"' in rail
     assert 'bot-name' in group and "Nhóm A" in group
-    assert 'data-count="2"' in group and 'data-shown="2"' in group
-    assert 'class="group-mini-member" data-group-member="thyca"' in group and 'class="group-mini-member" data-group-member="coder"' in group
+    assert 'data-count="2"' in rail and 'data-shown="2"' in rail
+    assert 'class="group-mini-member" data-group-member="thyca"' in rail and 'class="group-mini-member" data-group-member="coder"' in rail
     assert 'bot-role' in group and "2 người bạn · 4 lượt" in group
     assert 'group-meta' in group and "Sẵn sàng" in group
 
@@ -1732,7 +1736,7 @@ def test_set_group_activity_syncs_member_seals_and_meta(node: str) -> None:
         bots.length = 0;
         bots.push(...roster([{ id: 'thyca', name: 'Thyca' }, { id: 'coder', name: 'Coder' }]));
         groups.push({ id: 'g1', title: 'Nhóm', bots: ['thyca', 'coder'], subtitle: '2 người bạn' });
-        const seal = (id) => { const s = document.createElement('span'); s.className = 'seal-avatar'; s.dataset.botAvatar = id; document.body.appendChild(s); return s; };
+        const seal = (id) => { const s = document.createElement('span'); s.className = 'crew-avatar'; s.dataset.botAvatar = id; document.body.appendChild(s); return s; };
         const sa = seal('thyca'), sb = seal('coder');
         const row = document.createElement('div'); row.className = 'bot-card group-card'; row.dataset.group = 'g1';
         const meta = document.createElement('span'); meta.className = 'group-meta'; row.appendChild(meta);
@@ -1791,40 +1795,41 @@ def test_team_list_click_delegates_card_actions(node: str) -> None:
 
 
 def test_bot_shape_preference_normalizes_and_overrides(node: str) -> None:
-    """localStorage `thyca.shape.<id>` carries a valid DROP_NAMES value
-    onto normalizeBot; invalid or legacy values fall back to null
-    so dropShapeFor keeps its deterministic silhouette."""
+    """localStorage `thyca.shape.<id>` carries a valid CREW_IDS value onto
+    normalizeBot; invalid or legacy values fall back to null so crewShapeFor
+    keeps its deterministic silhouette."""
     out = _run(node, """
         localStorage.clear();
-        localStorage.setItem('thyca.shape.coder', 'researcher');
-        localStorage.setItem('thyca.shape.thyca', 'operator');
+        localStorage.setItem('thyca.shape.coder', 'orb');
+        localStorage.setItem('thyca.shape.thyca', 'cone');
         localStorage.setItem('thyca.shape.legacy', 'squat');
         localStorage.setItem('thyca.shape.bogus', 'blob');
         bots.length = 0;
         bots.push(...roster([{ id: 'thyca' }, { id: 'coder' }, { id: 'legacy' }, { id: 'bogus' }]));
         const [t, c, l, x] = bots;
         return { thyca: t.shape, coder: c.shape, legacy: l.shape, bogus: x.shape,
-                 thycaShape: dropShapeFor(t).name,
-                 coderShape: dropShapeFor(c).name,
-                 legacyShape: dropShapeFor(l).name,
-                 bogusShape: dropShapeFor(x).name,
-                 coderD: avatar(c).includes('data-drop-shape="researcher"') };
+                 thycaShape: crewShapeFor(t).id,
+                 coderShape: crewShapeFor(c).id,
+                 legacyShape: crewShapeFor(l).id,
+                 bogusShape: crewShapeFor(x).id,
+                 coderD: avatar(c).includes('data-crew-shape="orb"') };
     """)
-    assert out["thyca"] == "operator"
-    assert out["coder"] == "researcher"
+    assert out["thyca"] == "cone"
+    assert out["coder"] == "orb"
     assert out["legacy"] is None
     assert out["bogus"] is None
-    assert out["thycaShape"] == "operator"
-    assert out["coderShape"] == "researcher"
-    assert out["legacyShape"] in ("thyca", "researcher", "coder", "march7th", "chronicler", "scribe", "keeper", "scout", "designer", "analyst", "operator", "courier")
-    assert out["bogusShape"] in ("thyca", "researcher", "coder", "march7th", "chronicler", "scribe", "keeper", "scout", "designer", "analyst", "operator", "courier")
+    assert out["thycaShape"] == "cone"
+    assert out["coderShape"] == "orb"
+    crew_ids = ("pillar", "dome", "cloud", "puff", "orb", "arch", "drop", "squircle", "pup", "cone", "star", "capsule")
+    assert out["legacyShape"] in crew_ids
+    assert out["bogusShape"] in crew_ids
     assert out["coderD"] is True
 
 
 def test_set_bot_shape_patches_avatars_in_place(node: str) -> None:
-    """setBotShape validates, persists locally and patches every
-    existing avatar instance (data-drop-shape + character rig markup) without
-    touching classes/states; bad input is rejected with no side effects."""
+    """setBotShape validates, persists locally and patches every existing
+    avatar instance (data-crew-shape + crew SVG markup) without clobbering
+    classes or state; bad input is rejected with no side effects."""
     out = _run(node, r"""
         localStorage.clear();
         bots.length = 0;
@@ -1833,25 +1838,22 @@ def test_set_bot_shape_patches_avatars_in_place(node: str) -> None:
         document.body.innerHTML = '';
         const mkAv = () => {
             const root = document.createElement('span');
-            root.className = 'seal-avatar mk mk-drop';
-            root.dataset.botAvatar = 'coder'; root.dataset.dropShape = 'march7th';
+            root.className = 'crew-avatar variant-circle';
+            root.dataset.botAvatar = 'coder'; root.dataset.crewShape = 'puff';
             root.dataset.state = 'idle';
-            const motion = document.createElement('span'); motion.className = 'seal-motion';
-            motion.innerHTML = '<svg class="base"><defs></defs></svg>';
-            root.appendChild(motion);
             document.body.appendChild(root); return root;
         };
         const av1 = mkAv(), av2 = mkAv();
         const badShape = window.ThycaShell.setBotShape('coder', 'blob');
-        const badBot = window.ThycaShell.setBotShape('ghost', 'operator');
+        const badBot = window.ThycaShell.setBotShape('ghost', 'cone');
         const badType = window.ThycaShell.setBotShape('coder', '');
         const storedBefore = localStorage.getItem('thyca.shape.coder');
-        const ok = window.ThycaShell.setBotShape('coder', 'operator');
+        const ok = window.ThycaShell.setBotShape('coder', 'cone');
         const after = [av1, av2].map(el => ({
-            shape: el.getAttribute('data-drop-shape'),
+            shape: el.getAttribute('data-crew-shape'),
             cls: el.className,
             state: el.getAttribute('data-state'),
-            hasDropBody: el.innerHTML.includes('drop-body'),
+            hasCrewBody: el.innerHTML.includes('crew-body'),
         }));
         return { badShape, badBot, badType, storedBefore, ok,
                  stored: localStorage.getItem('thyca.shape.coder'),
@@ -1860,16 +1862,16 @@ def test_set_bot_shape_patches_avatars_in_place(node: str) -> None:
     assert out["badShape"] is False and out["badBot"] is False and out["badType"] is False
     assert out["storedBefore"] is None
     assert out["ok"] is True
-    assert out["stored"] == "operator" and out["botShape"] == "operator"
+    assert out["stored"] == "cone" and out["botShape"] == "cone"
     assert len(out["after"]) == 2
     for entry in out["after"]:
-        assert entry["shape"] == "operator"
-        assert "mk-drop" in entry["cls"] and entry["state"] == "idle"
-        assert entry["hasDropBody"] is True
+        assert entry["shape"] == "cone"
+        assert "crew-avatar" in entry["cls"] and entry["state"] == "idle"
+        assert entry["hasCrewBody"] is True
 
 
 def test_expression_studio_shape_picker(node: str) -> None:
-    """The Studio dialog-controls gain a shape picker with character archetype
+    """The Studio dialog-controls gain a 12-shape crew picker with live
     previews; clicking one persists the shape and flips only its aria-pressed."""
     out = _run(node, r"""
         localStorage.clear();
@@ -1882,37 +1884,40 @@ def test_expression_studio_shape_picker(node: str) -> None:
         const html = $('#shape-picker').innerHTML;
         const shapes = [...html.matchAll(/data-shape="(\w+)"/g)].map(m => m[1]);
         const pressed = (h) => [...h.matchAll(/data-shape="(\w+)"[^>]*aria-pressed="(\w+)"/g)].map(m => [m[1], m[2]]);
-        const previews = [...html.matchAll(/data-drop-shape="(\w+)"/g)].map(m => m[1]);
-        const operatorBtn = document.createElement('button'); operatorBtn.dataset.shape = 'operator';
-        $('#shape-picker')._handlers.click.forEach(h => h({ target: operatorBtn, preventDefault() {} }));
+        const previews = [...html.matchAll(/data-crew-shape="(\w+)"/g)].map(m => m[1]);
+        const coneBtn = document.createElement('button'); coneBtn.dataset.shape = 'cone';
+        $('#shape-picker')._handlers.click.forEach(h => h({ target: coneBtn, preventDefault() {} }));
         const htmlAfter = $('#shape-picker').innerHTML;
         return { count: shapes.length, shapes, previews, before: pressed(html),
                  after: pressed(htmlAfter), stored: localStorage.getItem('thyca.shape.coder'),
                  botShape: getBot('coder').shape,
-                 hasOperator: html.includes('Operator'),
-                 hasThyca: html.includes('Thyca') };
+                 hasCone: html.includes('Cone'),
+                 hasPillar: html.includes('Pillar') };
     """, via="shell")
     assert out["count"] == 12
-    assert "operator" in out["shapes"] and "thyca" in out["shapes"] and "coder" in out["shapes"]
+    assert "cone" in out["shapes"] and "pillar" in out["shapes"] and "puff" in out["shapes"]
     assert len(set(out["previews"])) == 12
-    assert out["stored"] == "operator" and out["botShape"] == "operator"
-    assert out["hasOperator"] is True and out["hasThyca"] is True
+    assert out["stored"] == "cone" and out["botShape"] == "cone"
+    assert out["hasCone"] is True and out["hasPillar"] is True
 
 
 def test_expression_dialog_shape_markup_consistent(node: str) -> None:
-    """TASK C: Both dialog markups (chat index.html + shared shell.js)
-    ship the same shape picker hook/labels and color+shape copy."""
+    """Both dialog markups (chat index.html + shared shell.js) ship the
+    shape, accessory, theme, and vibrant/paper swatch pickers consistently."""
     html = INDEX_HTML.read_text(encoding="utf-8")
     shell = SHELL_JS.read_text(encoding="utf-8")
     for text in (html, shell):
         assert 'id="shape-picker"' in text
+        assert 'id="accessory-picker"' in text
+        assert 'id="theme-picker"' in text
+        assert 'id="swatches-vibrant"' in text and 'id="swatches-paper"' in text
         assert "Hình dạng" in text
     assert html.count('id="shape-picker"') == 1
     assert shell.count('id="shape-picker"') == 1
     assert "màu, hình dạng" in html and "màu, hình dạng" in shell
     studio = STUDIO_CSS.read_text(encoding="utf-8")
-    row = "".join(studio.split(".shape-row{", 1)[1].split("}", 1)[0].split())
-    assert "margin-bottom:18px" in row or "margin:12px018px" in row
+    assert ".shape-row,.acc-row,.theme-row{" in studio
+    assert "margin:12px 0 18px" in studio
 
 
 def test_system_bot_star_is_permanent(node: str) -> None:
@@ -2160,24 +2165,30 @@ def test_shell_markup_header_sidebar_and_dialogs(node: str) -> None:
     shared sidebar as chat-only so SPA chat↔other-page navigation can toggle
     it via CSS instead of swapping sidebar elements."""
     out = _run(node, """
-        return { header: thycaHeader('memories'), side: thycaSidebarMarkup(), dlg: thycaDialogs(),
+        return { header: thycaHeader('memories'), nav: thycaNavSidebar('memories'), side: thycaSidebarMarkup('memories'), dlg: thycaDialogs(),
                  pages: SHELL_PAGES.map(p => p[0]) };
     """, via="shell")
-    header, side, dlg = out["header"], out["side"], out["dlg"]
+    header, nav, side, dlg = out["header"], out["nav"], out["side"], out["dlg"]
     assert 'class="site-header"' in header and 'class="wordmark"' in header
-    assert 'class="page-links"' in header
-    assert 'data-page-link="memories" class="is-current" aria-current="page"' in header
-    assert 'data-page-link="chat"' in header and 'data-page-link="settings"' not in header
-    assert 'prototype-badge' not in header
-    assert 'class="icon-button menu-button"' in header
-    assert 'aria-controls="chat-sidebar"' in header
+    assert 'id="nav-toggle"' in header and 'href="#i-sidebar-left"' in header and 'href="#i-menu"' in header
+    assert 'class="icon-button menu-button" id="sidebar-toggle"' in header
+    assert 'href="#i-sidebar-right"' in header
+    assert 'id="header-rail-wrap"' in header and 'id="rail-avatar-list"' in header
+    assert 'aria-controls="nav-sidebar"' in header and 'aria-controls="chat-sidebar"' in header
+    assert 'prototype-badge' not in header and 'id="page-menu-toggle"' not in header
+    assert 'class="nav-sidebar" id="nav-sidebar"' in nav and 'class="page-links"' in nav
+    assert 'data-page-link="memories" title="Nhật ký" class="is-current" aria-current="page"' in nav
+    assert 'data-page-link="chat"' in nav and 'data-page-link="settings"' not in nav
+    assert 'mobile-page-nav' not in side
     assert 'class="sessions-heading"' in side and '>Đội<' in side
     assert 'class="bot-count"' in side
     assert 'class="session-list" id="team-bot-list"' in side
+    assert 'class="sidebar-footer"' in side and 'id="theme-toggle"' in side
     assert 'id="open-settings"' not in side
     assert 'id="settings-dialog"' not in dlg
     assert 'id="open-customize"' not in side and 'id="motion-toggle"' not in side
-    assert 'class="splitter"' in side
+    assert 'class="splitter"' not in side
+    assert 'class="rail-scroll"' not in side
     assert 'id="team-shared-create"' not in side
     assert 'class="section-label chat-only"' not in side
     assert 'id="group-list"' not in side
@@ -2948,10 +2959,10 @@ def test_memory_leaf_rendering_and_day_groups(node: str) -> None:
     """, via="memories", emit="memories")
     html = out["html"]
     assert 'class="mem-day"' in html and "Hôm nay" in html
-    assert 'class="mem-leaf"' in html and 'data-chunk="c1"' in html
+    assert '<details class="mem-leaf is-alert" data-chunk="c1">' in html
     assert "Ghi chú A" in html and "08:30" in html
     assert "Sắp hết hạn" in html
-    assert "đã dùng 2" in html and "tìm thấy 1" in html
+    assert "Đã dùng 2" in html and "Tìm thấy 1" in html
     assert "chung" in html
     assert "ghost-id" in html
     assert 'data-act="reinforce"' in html and 'data-act="edit"' in html and 'data-act="forget"' in html
@@ -2961,46 +2972,45 @@ def test_memory_leaf_rendering_and_day_groups(node: str) -> None:
 
 
 def test_dashboard_cost_rows_and_bot_fallbacks(node: str) -> None:
-    """fmtCost tiers + honest '—'; by_bot rows sort by tokens, paint the
-    share bar in the bot color (neutral #a08f68 when unknown) and label
-    unknown ids truthfully."""
+    """fmtCost tiers + honest '—'; bot legends sort by metric desc, paint the
+    swatch in the bot color (neutral #a08f68 when unknown) and keep unrostered
+    bots informational."""
     out = _run(node, r"""
         bots.length = 0;
         bots.push(...roster([{ id: 'coder', name: 'Coder', tint: 'botanical' }]));
         statsData = {
-            totals: { requests: 11, total_tokens: 810 },
+            totals: { requests: 11, total_tokens: 810, cost_usd: 0.50042 },
             by_bot: [
                 { bot_id: 'coder', requests: 7, tool_calls: 2, total_tokens: 700, cost_usd: 0.5, last_started_at: new Date().toISOString() },
                 { bot_id: 'unknown', requests: 3, tool_calls: 0, total_tokens: 100, cost_usd: null },
                 { bot_id: 'ghost', requests: 1, total_tokens: 10, cost_usd: 0.00042 },
             ],
         };
-        renderBotRows();
-        const rowsHtml = $('#rows-bot').innerHTML;
+        setUsageGroup('bot');
+        setCostGroup('bot');
+        const usageLegend = $('#usage-chart-legend').innerHTML;
+        const costLegend = $('#cost-chart-legend').innerHTML;
         return {
-            rows: rowsHtml,
-            order: [rowsHtml.indexOf('Coder'), rowsHtml.indexOf('Chưa gắn bot'), rowsHtml.indexOf('ghost')],
-            unknownRow: rowsHtml.slice(rowsHtml.lastIndexOf('<li>', rowsHtml.indexOf('Chưa gắn bot')), rowsHtml.indexOf('</li>', rowsHtml.indexOf('Chưa gắn bot'))),
+            usageLegend,
+            costLegend,
+            order: [usageLegend.indexOf('Coder'), usageLegend.indexOf('Chưa gắn bot'), usageLegend.indexOf('ghost')],
             fmt: [fmtCost(null), fmtCost(0.00042), fmtCost(0.5), fmtCost(3.14159), fmtInt('x'), fmtDur(1500)],
             share: [share(7, 10), share(1, 300), share(700, 810), share(100, 810), share(10, 810)],
             names: [botDisplayName('unknown'), botDisplayName('ghost'), botDisplayName('coder')],
-            emptyCell: avatarCell('').includes('id-chip'),
         };
     """, via="dashboard", emit="dashboard")
-    rows = out["rows"]
-    assert 0 <= out["order"][0] < out["order"][1]
-    assert 'class="row-avatar"' in rows and 'id-chip' in rows
-    assert "background:#6f7f57" in rows
-    assert "background:#a08f68" in rows
-    assert "86%" in rows and "12%" in rows and "1,2%" in rows
-    assert "$0.5000" in rows
-    assert 'class="bot-row bot-row-scope" data-action="select-bot" data-bot-id="coder"' in rows
-    assert '<div class="bot-row">' in out["unknownRow"] and "<button" not in out["unknownRow"]
+    usage = out["usageLegend"]
+    cost = out["costLegend"]
+    assert 0 <= out["order"][0] < out["order"][1] < out["order"][2]
+    assert "background:#6f7f57" in usage and "background:#a08f68" in usage
+    assert "86%" in usage and "12%" in usage and "1,2%" in usage
+    assert "$0.5000" in cost and "$0.000420" in cost and "<strong>—</strong>" in cost
+    assert 'class="legend-item legend-bot-btn" data-action="select-bot" data-bot-id="coder"' in usage
+    assert 'data-bot-id="unknown"' not in usage
     assert out["fmt"] == ["—", "$0.000420", "$0.5000", "$3.14", "—", "1,5 giây"]
     assert out["share"][0] == "70%" and out["share"][1].startswith("0")
     assert out["share"][2:] == ["86%", "12%", "1,2%"]
     assert out["names"] == ["Chưa gắn bot", "ghost", "Coder"]
-    assert out["emptyCell"] is True
 
 
 def test_usage_turn_renderer_preserves_trace_labels_and_turn_intent(node: str) -> None:
@@ -3035,7 +3045,7 @@ def test_base_css_tokens_hidden_rule_and_shell_grid() -> None:
         assert token in css
     assert "[hidden]{display:none!important}" in css
     assert ".notebook-shell{" in css and ".main-grid{" in css
-    assert "grid-template-columns:var(--sidebar-width)" in css
+    assert "grid-template-columns:var(--nav-width) minmax(0,1fr) var(--sidebar-width)" in css
     assert ".motion-paused *" in css
     assert css.count("prefers-reduced-motion") == 1
     assert "animation:none!important" in css
@@ -3095,16 +3105,16 @@ def test_chat_css_transcript_composer_and_title_head() -> None:
     head = css.split(".chat-title-head{", 1)[1].split("}", 1)[0]
     assert "z-index:1" in head and "border-bottom" in head
     assert "position:sticky" not in head and "position: sticky" not in head
-    assert "#fffaf240" in head
+    assert "var(--surface-title-veil)" in head
     assert ".chat-title-head:after" not in css and ".chat-title-head::after" not in css
     assert "color:var(--bot-ink,var(--forest))" in css
     assert ".exchange-group{" in css
     pill = css.split(".exchange-group{", 1)[1].split("}", 1)[0]
-    assert "dashed" in pill and "var(--bot-border,#c9b891)" in pill
-    assert "var(--bot-paper,#fffdf7)" in pill and "var(--bot-ink,#5c5142)" in pill
+    assert "dashed" in pill and "var(--bot-border,var(--border-strong))" in pill
+    assert "var(--bot-paper,var(--surface-raised))" in pill and "var(--bot-ink,var(--ink-soft))" in pill
     hover = css.split(".exchange-group:hover", 1)[1].split("}", 1)[0]
-    assert "var(--bot-mid,#5c8a52)" in hover and "var(--bot-pale,#eaf3e2)" in hover
-    assert "var(--bot-muted,#a2937a)" in css
+    assert "var(--bot-color,var(--forest))" in hover and "var(--bot-pale,var(--ok-bg))" in hover
+    assert "var(--bot-muted,var(--ink-faint))" in css
     assert "@keyframes cursor" in css
     user_pill = css.split(".message-user p{", 1)[1].split("}", 1)[0]
     assert "overflow-wrap:anywhere" in user_pill
@@ -3126,7 +3136,7 @@ def test_avatars_css_states_and_bot_vars() -> None:
     """avatars.css resolves bot colors through --bot-* vars and implements the
     state selectors the JS writes (data-state/expression/group/idle/streaming)."""
     css = AVATARS_CSS.read_text()
-    assert ".drop-body{stroke:var(--bot-dark)" in css
+    assert ".char-body-shape,.crew-body{" in css
     for sel in ("[data-state=idle]", "[data-state=waiting]", "[data-state=thinking]",
                 "[data-state=writing]", "[data-state=working]", "[data-state=done]",
                 "[data-state=error]", "[data-state=offline]", "[data-state=confused]",
@@ -3134,12 +3144,12 @@ def test_avatars_css_states_and_bot_vars() -> None:
                 "[data-streaming=true]", "[data-idle=look]", "[data-idle=wink]",
                 "[data-idle=sleepy]", ".stream-interruption{"):
         assert sel in css, sel
-    assert "seal-avatar" in css and "seal-motion" in css
-    assert "seal-face" not in css
+    assert "crew-avatar" in css and "char-root" in css
+    assert "seal-avatar" not in css and "seal-face" not in css
     assert css.count("prefers-reduced-motion") == 1
-    assert "var(--team-gaze" in css
+    assert "is-group-stage" in css and "is-shy" in css
     assert "var(--note-a-y" not in css
-    assert ".expression-preview" in css
+    assert ".crew-avatar.is-shy" in css
 
 
 def test_index_html_scripts_defs_and_static_markup() -> None:
@@ -3149,6 +3159,8 @@ def test_index_html_scripts_defs_and_static_markup() -> None:
     for did in ("i-send", "i-stop", "i-copy"):
         assert html.count(f'id="{did}"') == 1, did
     assert 'id="dropHl"' not in html and 'id="dropShade"' not in html
+    assert 'class="splitter"' not in html and 'id="i-sidebar"' not in html
+    assert 'id="page-menu-toggle"' not in html
     assert 'id="wax' not in html
     assert 'id="g-' not in html
     assert 'id="composer-model"' not in html and 'id="thinking-effort"' not in html
@@ -3157,7 +3169,10 @@ def test_index_html_scripts_defs_and_static_markup() -> None:
     for sel in ('class="notebook-shell chat-shell"', 'class="site-header"',
                 'id="team-nav-title"', 'id="team-bot-list"', 'id="rail-avatar-list"',
                 'id="mobile-overlay"',
-                'class="splitter"', 'id="chat-title"', 'id="conversation-eyebrow"',
+                'id="nav-toggle"', 'id="nav-sidebar"', 'id="sidebar-toggle"',
+                'href="#i-sidebar-left"', 'href="#i-sidebar-right"', 'href="#i-menu"',
+                'class="sidebar-footer"',
+                'id="chat-title"', 'id="conversation-eyebrow"',
                 'id="conversation-scroll"', 'id="message-list"', 'id="to-bottom"',
                 'id="composer"', 'id="message"', 'id="composer-label-text"',
                 'id="send-message"',
@@ -3605,14 +3620,14 @@ def test_header_bot_strip_active_first_and_selection(node: str) -> None:
 def test_wordmark_is_static_and_team_title_clears(node: str) -> None:
     """Wordmark is static (no arrow, not clickable): desktop sidebar collapsed
     only via resize band (medium 851..1150 default collapsed, wide default open)
-    or via splitter drag; narrow still uses mobile drawer via .menu-button.
+    or via header .menu-button toggle; narrow uses mobile drawer via .menu-button.
     Clicking #team-nav-title clears selection on dashboard/memories/profile.
     Setup lock still respects rail inert."""
     out = _run(node, r"""
         let width = 1280;
         globalThis.innerWidth = 1280;
         globalThis.matchMedia = (q) => ({
-            matches: (q.includes('850px') && width <= 850) || (q.includes('1150px') && width <= 1150),
+            matches: (q.includes('850px') && width <= 850) || (q.includes('1024px') && width <= 1024) || (q.includes('1240px') && width <= 1240),
             media: q, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {},
         });
         const shell = $('.notebook-shell');
@@ -3643,6 +3658,8 @@ def test_wordmark_is_static_and_team_title_clears(node: str) -> None:
         if (menuBtn) menuBtn.click();
         const narrowClosed = snap();
 
+        width = 1000; globalThis.innerWidth = 1000;
+        dispatchEvent({ type: 'resize' });
         let setup = 'required';
         ThycaRouter.setupState = () => setup;
         syncSidebarChrome();
@@ -3657,6 +3674,11 @@ def test_wordmark_is_static_and_team_title_clears(node: str) -> None:
             railListInert: railList ? railList.inert : null,
             railListExists: !!railList,
         };
+        width = 1280; globalThis.innerWidth = 1280;
+        dispatchEvent({ type: 'resize' });
+        const expandedRailInert = railList ? railList.inert : null;
+        width = 700; globalThis.innerWidth = 700;
+        dispatchEvent({ type: 'resize' });
 
         const focusLog = [];
         const createBtn = $('#team-shared-create');
@@ -3677,18 +3699,19 @@ def test_wordmark_is_static_and_team_title_clears(node: str) -> None:
         title.click();
         title.dispatch('keydown', { key: 'Enter' });
         const dashDispatches = [...globalThis.__spaDispatches];
-        return { wideInit, afterWordmarkClick, wordmarkTag, wordmarkHasAriaExpanded, medInit, narrowInit, narrowOpened, narrowClosed, lockState, unlockedState, nonChatMenuFocus, chatDispatches, dashDispatches };
+        return { wideInit, afterWordmarkClick, wordmarkTag, wordmarkHasAriaExpanded, medInit, narrowInit, narrowOpened, narrowClosed, lockState, unlockedState, expandedRailInert, nonChatMenuFocus, chatDispatches, dashDispatches };
     """, via="shell")
     assert out["wordmarkTag"] == "SPAN"
     assert out["wordmarkHasAriaExpanded"] is False
     assert out["wideInit"] == {"collapsed": "false", "inert": False, "mobileOpen": False}
     assert out["afterWordmarkClick"] == out["wideInit"]
-    assert out["medInit"] == {"collapsed": "true", "inert": False, "mobileOpen": False}
+    assert out["medInit"] == {"collapsed": "true", "inert": True, "mobileOpen": False}
     assert out["narrowInit"]["mobileOpen"] is False and out["narrowInit"]["inert"] is True
     assert out["narrowOpened"]["mobileOpen"] is True and out["narrowOpened"]["inert"] is False
     assert out["narrowClosed"]["mobileOpen"] is False and out["narrowClosed"]["inert"] is True
     assert out["lockState"] == {"railListInert": True, "railListExists": True}
     assert out["unlockedState"] == {"railListInert": False, "railListExists": True}
+    assert out["expandedRailInert"] is True
     assert out["nonChatMenuFocus"] == ["menu"]
     assert out["chatDispatches"] == []
     assert [call[:2] for call in out["dashDispatches"]] == [["selectBot", ""], ["selectBot", ""]]
@@ -3879,12 +3902,10 @@ def test_bottom_action_placements_and_sr_only_top_bars() -> None:
     assert "clip-path:inset(50%)" in chat_css.split(".chat-title-head{", 1)[1].split("}", 1)[0]
 
     profile_tpl = html.split('<template id="tpl-profile">', 1)[1].split("</template>", 1)[0]
-    profile_nav = profile_tpl.split('<header class="page-nav">', 1)[1].split("</header>", 1)[0]
-    assert 'id="profile-shared"' not in profile_nav and 'id="profile-reload"' not in profile_nav
+    assert '<header class="page-nav">' in profile_tpl
+    assert 'id="profile-shared"' not in profile_tpl and 'id="profile-reload"' not in profile_tpl
+    assert 'profile-footer-actions' not in profile_tpl
     assert '<div id="profile-root"></div>' in profile_tpl
-    after_root = profile_tpl.split('<div id="profile-root"></div>', 1)[1].split("</div>\n</div>", 1)[0]
-    assert 'class="page-actions profile-footer-actions"' in after_root
-    assert 'id="profile-shared"' in after_root and 'id="profile-reload"' in after_root
     profile_css = (UI / "profile" / "profilecss" / "profile.css").read_text(encoding="utf-8")
     assert "clip-path:inset(50%)" in profile_css.split(".profile-shell .page-nav{", 1)[1].split("}", 1)[0]
 
@@ -3903,71 +3924,107 @@ def test_bottom_action_placements_and_sr_only_top_bars() -> None:
 
 
 def test_sidebar_collapse_toggle_fixed_modes(node: str) -> None:
-    """Collapse button toggles two desktop modes: full var(--sidebar-full)
-    and rail var(--rail-width). No drag resizing; setupLocked blocks the toggle."""
+    """Header sidebar toggle switches between full var(--sidebar-full) and
+    0px collapsed workspace with fade-in header avatar strip; setupLocked
+    blocks and disables the toggle."""
     out = _run(node, r"""
         let width = 1280;
         globalThis.innerWidth = 1280;
         globalThis.matchMedia = (q) => ({
-            matches: (q.includes('850px') && width <= 850) || (q.includes('1150px') && width <= 1150),
+            matches: (q.includes('850px') && width <= 850) || (q.includes('1024px') && width <= 1024) || (q.includes('1240px') && width <= 1240),
             media: q, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {},
         });
-        const sep = $('.splitter');
+        const toggle = $('.menu-button');
         const shell = $('.notebook-shell');
-        const snap = () => ({ w: document.documentElement.style.getPropertyValue('--sidebar-width'), collapsed: shell.dataset.sidebarCollapsed, expanded: sep.getAttribute('aria-expanded'), text: sep.textContent });
+        const rail = $('#rail-avatar-list');
+        const sidebar = $('#chat-sidebar');
+        const snap = () => ({
+            w: document.documentElement.style.getPropertyValue('--sidebar-width'),
+            collapsed: shell.dataset.sidebarCollapsed,
+            expanded: toggle.getAttribute('aria-expanded'),
+            label: toggle.getAttribute('aria-label'),
+            railInert: rail.inert,
+            sidebarInert: sidebar.inert,
+        });
         const init = snap();
-        sep.click();
-        const rail = snap();
-        sep.click();
+        toggle.click();
+        const collapsedSnap = snap();
+        toggle.click();
         const full = snap();
         let locked = true;
         ThycaRouter.setupState = () => (locked ? 'required' : 'ready');
-        sep.click();
+        syncSidebarChrome();
+        toggle.click();
         const lockedSnap = snap();
-        return { init, rail, full, lockedSnap, hasDrag: typeof sep.onpointerdown, hasDragMove: typeof sep.onpointermove };
+        return {
+            init,
+            collapsedSnap,
+            full,
+            lockedSnap,
+            lockedDisabled: toggle.disabled,
+            splitterCount: document.querySelectorAll('.splitter').length,
+            hasDrag: typeof toggle.onpointerdown,
+            hasDragMove: typeof toggle.onpointermove,
+        };
     """, via="shell")
-    assert out["init"] == {"w": "var(--sidebar-full)", "collapsed": "false", "expanded": "true", "text": "‹"}
-    assert out["rail"] == {"w": "var(--rail-width)", "collapsed": "true", "expanded": "false", "text": "›"}
-    assert out["full"] == {"w": "var(--sidebar-full)", "collapsed": "false", "expanded": "true", "text": "‹"}
-    assert out["lockedSnap"] == out["full"]
+    assert out["init"] == {"w": "var(--sidebar-full)", "collapsed": "false", "expanded": "true", "label": "Thu gọn thanh bot", "railInert": True, "sidebarInert": False}
+    assert out["collapsedSnap"] == {"w": "0px", "collapsed": "true", "expanded": "false", "label": "Mở rộng thanh bot", "railInert": False, "sidebarInert": True}
+    assert out["full"] == {"w": "var(--sidebar-full)", "collapsed": "false", "expanded": "true", "label": "Thu gọn thanh bot", "railInert": True, "sidebarInert": False}
+    assert out["lockedSnap"] == {"w": "var(--sidebar-full)", "collapsed": "false", "expanded": "false", "label": "Thu gọn thanh bot", "railInert": True, "sidebarInert": True}
+    assert out["lockedDisabled"] is True
+    assert out["splitterCount"] == 0
     assert out["hasDrag"] == "undefined" and out["hasDragMove"] == "undefined"
     html = INDEX_HTML.read_text(encoding="utf-8")
     shell_js = SHELL_JS.read_text(encoding="utf-8")
     for text in (html, shell_js):
-        assert 'class="splitter"' in text
-        assert 'aria-expanded="true"' in text
+        assert 'id="nav-toggle"' in text
+        assert 'id="sidebar-toggle"' in text
+        assert 'href="#i-sidebar-left"' in text and 'href="#i-sidebar-right"' in text
+        assert 'id="header-rail-wrap"' in text and 'id="rail-avatar-list"' in text
+        assert 'class="sidebar-footer"' in text
+        assert 'class="splitter"' not in text
+        assert 'class="rail-scroll"' not in text
 
 
-def test_small_screen_splitter_is_inert_and_menu_opens_full_drawer(node: str) -> None:
-    """At <=850px .splitter is inert/hidden and clicking it does not open
-    the drawer or collapse into rail mode; resizing down from medium resets
-    collapsed to 'false' and clears --sidebar-width so .menu-button opens
-    the full card drawer."""
+def test_small_screen_menu_opens_full_drawer(node: str) -> None:
+    """At <=850px #nav-toggle opens the left page-navigation drawer and
+    .menu-button opens the right Bot Team drawer; the two drawers are mutually
+    exclusive, header mini-bots stay active while both drawers are closed and
+    become inert while either drawer is open."""
     out = _run(node, r"""
         let width = 700;
         globalThis.innerWidth = 700;
         globalThis.matchMedia = (q) => ({
-            matches: (q.includes('850px') && width <= 850) || (q.includes('950px') && width <= 950) || (q.includes('1150px') && width <= 1150),
+            matches: (q.includes('850px') && width <= 850) || (q.includes('1024px') && width <= 1024) || (q.includes('1240px') && width <= 1240),
             media: q, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {},
         });
         dispatchEvent({ type: 'resize' });
-        const sep = $('.splitter');
         const sidebar = $('#chat-sidebar');
+        const navSide = $('#nav-sidebar');
         const shell = $('.notebook-shell');
         const menuBtn = $('.menu-button');
-        sep.click();
-        const afterSplitterClick = {
+        const navBtn = $('#nav-toggle');
+        const rail = $('#rail-avatar-list');
+        const initNarrow = {
             open: sidebar.classList.contains('mobile-open'),
+            navOpen: navSide.classList.contains('mobile-open'),
             w: document.documentElement.style.getPropertyValue('--sidebar-width'),
             collapsed: shell.dataset.sidebarCollapsed,
-            sepInert: sep.inert,
-            sepHidden: sep.getAttribute('aria-hidden'),
+            expanded: menuBtn.getAttribute('aria-expanded'),
+            label: menuBtn.getAttribute('aria-label'),
+            navLabel: navBtn.getAttribute('aria-label'),
+            navDisabled: navBtn.disabled,
+            railInert: rail.inert,
+            splitterCount: document.querySelectorAll('.splitter').length,
         };
         width = 1000; globalThis.innerWidth = 1000;
         dispatchEvent({ type: 'resize' });
         const med = {
             collapsed: shell.dataset.sidebarCollapsed,
+            navCollapsed: shell.dataset.navCollapsed,
             w: document.documentElement.style.getPropertyValue('--sidebar-width'),
+            label: menuBtn.getAttribute('aria-label'),
+            railInert: rail.inert,
         };
         width = 700; globalThis.innerWidth = 700;
         dispatchEvent({ type: 'resize' });
@@ -3975,107 +4032,155 @@ def test_small_screen_splitter_is_inert_and_menu_opens_full_drawer(node: str) ->
             collapsed: shell.dataset.sidebarCollapsed,
             w: document.documentElement.style.getPropertyValue('--sidebar-width'),
             inert: sidebar.inert,
+            navInert: navSide.inert,
+            railInert: rail.inert,
+        };
+        navBtn.click();
+        const openedLeftNav = {
+            navOpen: navSide.classList.contains('mobile-open'),
+            sideOpen: sidebar.classList.contains('mobile-open'),
+            navInert: navSide.inert,
+            sideInert: sidebar.inert,
+            navExpanded: navBtn.getAttribute('aria-expanded'),
+            navLabel: navBtn.getAttribute('aria-label'),
+            railInert: rail.inert,
+            overlayHidden: $('#mobile-overlay').hidden,
         };
         menuBtn.click();
         const openedByMenu = {
             open: sidebar.classList.contains('mobile-open'),
+            navOpen: navSide.classList.contains('mobile-open'),
             collapsed: shell.dataset.sidebarCollapsed,
             inert: sidebar.inert,
+            navInert: navSide.inert,
+            expanded: menuBtn.getAttribute('aria-expanded'),
+            label: menuBtn.getAttribute('aria-label'),
+            railInert: rail.inert,
         };
-        return { afterSplitterClick, med, backToNarrow, openedByMenu };
+        menuBtn.click();
+        const closedByMenu = {
+            open: sidebar.classList.contains('mobile-open'),
+            navOpen: navSide.classList.contains('mobile-open'),
+            collapsed: shell.dataset.sidebarCollapsed,
+            inert: sidebar.inert,
+            navInert: navSide.inert,
+            expanded: menuBtn.getAttribute('aria-expanded'),
+            label: menuBtn.getAttribute('aria-label'),
+            railInert: rail.inert,
+            overlayHidden: $('#mobile-overlay').hidden,
+        };
+        return { initNarrow, med, backToNarrow, openedLeftNav, openedByMenu, closedByMenu };
     """, via="shell")
-    assert out["afterSplitterClick"] == {
+    assert out["initNarrow"] == {
         "open": False,
+        "navOpen": False,
         "w": "",
         "collapsed": "false",
-        "sepInert": True,
-        "sepHidden": "true",
+        "expanded": "false",
+        "label": "Mở thanh bot",
+        "navLabel": "Mở điều hướng",
+        "navDisabled": False,
+        "railInert": False,
+        "splitterCount": 0,
     }
-    assert out["med"] == {"collapsed": "true", "w": "var(--rail-width)"}
-    assert out["backToNarrow"] == {"collapsed": "false", "w": "", "inert": True}
-    assert out["openedByMenu"] == {"open": True, "collapsed": "false", "inert": False}
+    assert out["med"] == {"collapsed": "true", "navCollapsed": "true", "w": "0px", "label": "Mở rộng thanh bot", "railInert": False}
+    assert out["backToNarrow"] == {"collapsed": "false", "w": "", "inert": True, "navInert": True, "railInert": False}
+    assert out["openedLeftNav"] == {
+        "navOpen": True,
+        "sideOpen": False,
+        "navInert": False,
+        "sideInert": True,
+        "navExpanded": "true",
+        "navLabel": "Đóng điều hướng",
+        "railInert": True,
+        "overlayHidden": False,
+    }
+    assert out["openedByMenu"] == {
+        "open": True,
+        "navOpen": False,
+        "collapsed": "false",
+        "inert": False,
+        "navInert": True,
+        "expanded": "true",
+        "label": "Đóng thanh bot",
+        "railInert": True,
+    }
+    assert out["closedByMenu"] == {
+        "open": False,
+        "navOpen": False,
+        "collapsed": "false",
+        "inert": True,
+        "navInert": True,
+        "expanded": "false",
+        "label": "Mở thanh bot",
+        "railInert": False,
+        "overlayHidden": True,
+    }
 
 
-def test_responsive_page_menu_dropdown(node: str) -> None:
-    """#page-menu-toggle opens/closes .header-right.page-menu-open, closes on
-    Escape / outside click / page-link click / resize >950px, respects
-    setupLocked(), and updates .page-menu-label in shell.js and router.js."""
+def test_left_nav_sidebar_icon_rail_and_bands(node: str) -> None:
+    """#nav-toggle switches #nav-sidebar between var(--nav-full) and 52px
+    icon rail var(--nav-rail), responds to compact/medium/narrow bands,
+    respects setupLocked, and confirms old #page-menu-toggle is gone."""
     out = _run(node, r"""
-        let width = 700;
-        globalThis.innerWidth = 700;
+        let width = 1280;
+        globalThis.innerWidth = 1280;
         globalThis.matchMedia = (q) => ({
-            matches: (q.includes('850px') && width <= 850) || (q.includes('950px') && width <= 950) || (q.includes('1150px') && width <= 1150),
+            matches: (q.includes('850px') && width <= 850) || (q.includes('1024px') && width <= 1024) || (q.includes('1240px') && width <= 1240),
             media: q, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {},
         });
-        const wrap = $('.header-right');
-        const toggle = $('#page-menu-toggle');
-        const nav = $('.page-links');
-        const link = document.createElement('a');
-        link.dataset.pageLink = 'memories';
-        nav.appendChild(link);
-        wrap.appendChild(toggle);
-        wrap.appendChild(nav);
-        const outside = document.createElement('div');
-        document.body.appendChild(outside);
+        const shell = $('.notebook-shell');
+        const navBtn = $('#nav-toggle');
+        const navSide = $('#nav-sidebar');
+        const snap = () => ({
+            navW: document.documentElement.style.getPropertyValue('--nav-width'),
+            navCollapsed: shell.dataset.navCollapsed,
+            sidebarCollapsed: shell.dataset.sidebarCollapsed,
+            expanded: navBtn.getAttribute('aria-expanded'),
+            disabled: navBtn.disabled,
+            navInert: navSide.inert,
+            label: navBtn.getAttribute('aria-label'),
+        });
+        const wideInit = snap();
+        navBtn.click();
+        const iconRail = snap();
+        navBtn.click();
+        const wideFull = snap();
 
-        const isOpen = () => ({ open: wrap.classList.contains('page-menu-open'), expanded: toggle.getAttribute('aria-expanded') });
-        toggle.click();
-        const opened = isOpen();
-        toggle.click();
-        const closedSecondClick = isOpen();
-
-        toggle.click();
-        (document._handlers.keydown || []).forEach(fn => fn({ key: 'Escape' }));
-        const closedEscape = isOpen();
-
-        toggle.click();
-        (document._handlers.click || []).forEach(fn => fn({ target: outside }));
-        const closedOutside = isOpen();
-
-        toggle.click();
-        (document._handlers.click || []).forEach(fn => fn({ target: link }));
-        const closedLink = isOpen();
-
-        toggle.click();
-        width = 1200; globalThis.innerWidth = 1200;
+        width = 1150; globalThis.innerWidth = 1150;
         dispatchEvent({ type: 'resize' });
-        const closedWideResize = isOpen();
+        const compactBand = snap();
+
+        width = 1000; globalThis.innerWidth = 1000;
+        dispatchEvent({ type: 'resize' });
+        const mediumBand = snap();
 
         width = 700; globalThis.innerWidth = 700;
-        toggle.click();
+        dispatchEvent({ type: 'resize' });
+        const narrowBand = snap();
+
+        width = 1280; globalThis.innerWidth = 1280;
+        dispatchEvent({ type: 'resize' });
         let locked = true;
         ThycaRouter.setupState = () => (locked ? 'required' : 'ready');
         syncSidebarChrome();
-        const lockedState = { ...isOpen(), disabled: toggle.disabled };
-        toggle.click();
-        const lockedClickAttempt = isOpen();
+        navBtn.click();
+        const lockedBand = snap();
 
-        return {
-            opened, closedSecondClick, closedEscape, closedOutside, closedLink,
-            closedWideResize, lockedState, lockedClickAttempt,
-            headerMem: thycaHeader('memories'),
-            headerDash: thycaHeader('dashboard'),
-        };
+        return { wideInit, iconRail, wideFull, compactBand, mediumBand, narrowBand, lockedBand };
     """, via="shell")
-    assert out["opened"] == {"open": True, "expanded": "true"}
-    assert out["closedSecondClick"] == {"open": False, "expanded": "false"}
-    assert out["closedEscape"] == {"open": False, "expanded": "false"}
-    assert out["closedOutside"] == {"open": False, "expanded": "false"}
-    assert out["closedLink"] == {"open": False, "expanded": "false"}
-    assert out["closedWideResize"] == {"open": False, "expanded": "false"}
-    assert out["lockedState"] == {"open": False, "expanded": "false", "disabled": True}
-    assert out["lockedClickAttempt"] == {"open": False, "expanded": "false"}
-    assert 'id="page-menu-toggle"' in out["headerMem"] and '<span class="page-menu-label">Nhật ký</span>' in out["headerMem"]
-    assert '<span class="page-menu-label">Sử dụng</span>' in out["headerDash"]
+    assert out["wideInit"] == {"navW": "var(--nav-full)", "navCollapsed": "false", "sidebarCollapsed": "false", "expanded": "true", "disabled": False, "navInert": False, "label": "Thu gọn điều hướng"}
+    assert out["iconRail"] == {"navW": "var(--nav-rail)", "navCollapsed": "true", "sidebarCollapsed": "false", "expanded": "false", "disabled": False, "navInert": False, "label": "Mở rộng điều hướng"}
+    assert out["wideFull"] == out["wideInit"]
+    assert out["compactBand"]["navCollapsed"] == "true" and out["compactBand"]["sidebarCollapsed"] == "false"
+    assert out["mediumBand"]["navCollapsed"] == "true" and out["mediumBand"]["sidebarCollapsed"] == "true"
+    assert out["narrowBand"]["navW"] == "" and out["narrowBand"]["disabled"] is False and out["narrowBand"]["navInert"] is True and out["narrowBand"]["label"] == "Mở điều hướng"
+    assert out["lockedBand"]["disabled"] is True and out["lockedBand"]["navInert"] is True and out["lockedBand"]["navCollapsed"] == "false"
 
-    html = INDEX_HTML.read_text(encoding="utf-8")
-    assert 'id="page-menu-toggle"' in html and 'id="page-links-nav"' in html
-    base_css = BASE_CSS.read_text(encoding="utf-8")
-    assert "@media(max-width:950px)" in base_css and ".header-right.page-menu-open .page-links{display:flex}" in base_css
-    assert ".page-menu-toggle:disabled" in (SHARE / "router.css").read_text(encoding="utf-8")
-    router_js = (SHARE / "router.js").read_text(encoding="utf-8")
-    assert "pageMenuLabel.textContent = entry.title" in router_js
-    assert "pageMenuBtn.disabled = locked" in router_js
+    for path in (INDEX_HTML, SHELL_JS, BASE_CSS, SHARE / "router.css", SHARE / "router.js", SHARE / "shell-app.js"):
+        text = path.read_text(encoding="utf-8")
+        assert "page-menu-toggle" not in text and "page-menu-open" not in text, path.name
+    assert ".nav-toggle:disabled" in (SHARE / "router.css").read_text(encoding="utf-8")
 
 
 def test_sidebar_renders_provided_group_title(node: str) -> None:
@@ -4113,3 +4218,340 @@ def test_group_dialog_has_optional_name_input() -> None:
     assert "payload.title=groupName" in sidebar and "if(groupName)payload.title" in sidebar
     html = INDEX_HTML.read_text(encoding="utf-8")
     assert 'id="group-name"' in html and "3–5 từ" in html
+
+
+def test_crew_shapes_accessories_themes_and_stage_rendering(node: str) -> None:
+    """12 crew shapes x 6 accessories x 7 theme families render clean SVGs in
+    both stage (188x78) and circle modes, and setBotTheme/setBotAccessory
+    validate + persist locally."""
+    out = _run(node, r"""
+        localStorage.clear();
+        bots.length = 0;
+        bots.push(...roster([{ id: 'thyca', name: 'Thyca' }, { id: 'coder', name: 'Coder' }]));
+        const b = bots[0];
+        let stageCount = 0;
+        let circleCount = 0;
+        let badSvg = 0;
+        for (const c of CREW) {
+            for (const a of ACCESSORIES) {
+                for (const t of THEME_FAMILIES) {
+                    const st = avatar(b, 'idle', '', { variant: 'stage', crew: c.id, accessory: a.id, theme: t.id });
+                    const ci = avatar(b, 'idle', '', { variant: 'circle', crew: c.id, accessory: a.id, theme: t.id });
+                    stageCount++; circleCount++;
+                    if (!st.includes('viewBox="0 0 188 78"') || st.includes('NaN') || st.includes('undefined')) badSvg++;
+                    if (!ci.includes('viewBox="0 0 120 120"') || ci.includes('NaN') || ci.includes('undefined')) badSvg++;
+                }
+            }
+        }
+        const awayHtml = avatar(b, 'group', '', { variant: 'stage', away: true });
+        const badTheme = window.ThycaShell.setBotTheme('thyca', 'space');
+        const okTheme = window.ThycaShell.setBotTheme('thyca', 'atelier');
+        const badAcc = window.ThycaShell.setBotAccessory('thyca', 'cape');
+        const okAcc = window.ThycaShell.setBotAccessory('thyca', 'shades');
+        const sevenGroup = renderGroupStageAvatar([b, bots[1], b, bots[1], b, bots[1], b], { groupId: 'g7', coordinating: true });
+        return {
+            crewCount: CREW.length, accCount: ACCESSORIES.length, themeCount: THEME_FAMILIES.length,
+            crewIds: CREW.map(c => c.id), accIds: ACCESSORIES.map(a => a.id), themeIds: THEME_FAMILIES.map(f => f.id),
+            stageCount, circleCount, badSvg,
+            awaySilhouette: awayHtml.includes('away-silhouette-shape') && awayHtml.includes('data-away="group"'),
+            twoTierOverflow: sevenGroup.includes('group-tier-back') && sevenGroup.includes('group-tier-front') && sevenGroup.includes('>+1<'),
+            badTheme, okTheme, badAcc, okAcc,
+            storedTheme: localStorage.getItem('thyca.theme.thyca'),
+            storedAcc: localStorage.getItem('thyca.acc.thyca'),
+        };
+    """, via="shell")
+    assert (out["crewCount"], out["accCount"], out["themeCount"]) == (12, 6, 7)
+    assert out["crewIds"] == ["pillar", "dome", "cloud", "puff", "orb", "arch", "drop", "squircle", "pup", "cone", "star", "capsule"]
+    assert out["accIds"] == ["none", "glasses", "shades", "flower", "blush", "bandaid"]
+    assert out["themeIds"] == ["starlight", "sunrise", "atelier", "bauhaus", "horizon", "recital", "classic"]
+    assert out["stageCount"] == 504 and out["circleCount"] == 504 and out["badSvg"] == 0
+    assert out["awaySilhouette"] is True and out["twoTierOverflow"] is True
+    assert out["badTheme"] is False and out["okTheme"] is True
+    assert out["badAcc"] is False and out["okAcc"] is True
+    assert out["storedTheme"] == "atelier" and out["storedAcc"] == "shades"
+
+
+def test_dark_mode_wcag_palette_and_theme_toggle(node: str) -> None:
+    """All 12 swatches pass WCAG AAA/AA floors (ink>=7.0, muted>=4.7) in both
+    light and dark modes, and setTheme toggles dataset.theme + palettes."""
+    out = _run(node, r"""
+        localStorage.clear();
+        bots.length = 0;
+        bots.push(...roster([{ id: 'thyca', name: 'Thyca' }]));
+        const lightMin = { ink: 99, muted: 99 };
+        const darkMin = { ink: 99, muted: 99 };
+        for (const hex of SWATCHES) {
+            const lp = derivePalette(hex, false);
+            const dp = derivePalette(hex, true);
+            lightMin.ink = Math.min(lightMin.ink, lp.inkContrast);
+            lightMin.muted = Math.min(lightMin.muted, lp.mutedContrast);
+            darkMin.ink = Math.min(darkMin.ink, dp.inkContrast);
+            darkMin.muted = Math.min(darkMin.muted, dp.mutedContrast);
+        }
+        window.ThycaShell.setTheme('dark');
+        const afterDark = window.ThycaShell.getTheme();
+        const darkPref = JSON.parse(localStorage.getItem('thyca.ui.preferences')).theme;
+        window.ThycaShell.setTheme('light');
+        const afterLight = window.ThycaShell.getTheme();
+        return { lightMin, darkMin, afterDark, darkPref, afterLight };
+    """, via="shell")
+    assert out["lightMin"]["ink"] >= 7.0 and out["lightMin"]["muted"] >= 4.7
+    assert out["darkMin"]["ink"] >= 7.0 and out["darkMin"]["muted"] >= 4.7
+    assert out["afterDark"] == "dark" and out["darkPref"] == "dark" and out["afterLight"] == "light"
+
+
+def test_normalize_bot_action_object_and_waiting_confused(node: str) -> None:
+    """Object current_action extracts .name cleanly and waiting on user/private
+    maps to confused rather than generic waiting."""
+    out = _run(node, r"""
+        localStorage.clear();
+        const b1 = normalizeBot({
+            id: 'coder',
+            agent_status: { state: 'running', current_action: { name: 'bash', detail: 'pytest' }, room_id: 'group-1' },
+        }, 0);
+        const b2 = normalizeBot({
+            id: 'thyca',
+            agent_status: { state: 'waiting', waiting_on: { kind: 'user' } },
+        }, 1);
+        return { s1: b1.state, sum1: b1.summary, room1: b1.roomId, s2: b2.state, wo2: b2.waitingOn };
+    """)
+    assert out["s1"] == "group" and out["sum1"] == "bash" and out["room1"] == "group-1"
+    assert out["s2"] == "confused" and out["wo2"] == {"kind": "user"}
+
+
+def test_away_in_group_pill_two_phase_and_return_animation(node: str) -> None:
+    """Two-phase group orchestration shows parallel huddle (speakerId=null)
+    before spotlighting an active speaker, marks DM cards as away with a jump
+    pill, and triggers just-returned when the group ends."""
+    out = _run(node, r"""
+        bots.length = 0;
+        bots.push(...roster([{ id: 'thyca', name: 'Thyca' }, { id: 'coder', name: 'Coder' }]));
+        groups.length = 0;
+        groups.push({ id: 'g1', title: 'Đội Sáng Tạo', bots: ['thyca', 'coder'], subtitle: '2 người bạn' });
+        setGroupActivity('g1', null);
+        const huddleGroup = groupRowHtml(groups[0]);
+        const thycaAway = card(getBot('thyca'));
+        setGroupActivity('g1', 'coder');
+        const speakerGroup = groupRowHtml(groups[0]);
+        setGroupActivity(null);
+        const returnedCard = card(getBot('thyca'));
+        return {
+            huddleWorking: huddleGroup.includes('Đang cùng làm việc') && huddleGroup.includes('data-working-together="true"'),
+            huddleMuted: huddleGroup.includes('data-speaking="false"'),
+            hasAwayPill: thycaAway.includes('class="away-pill"') && thycaAway.includes('Đội Sáng Tạo ↗'),
+            hasSilhouette: thycaAway.includes('away-silhouette-shape'),
+            speakerMuted: speakerGroup.includes('data-speaking="false"') && speakerGroup.includes('data-speaking="true"'),
+            speakerMeta: speakerGroup.includes('Coder đang nói'),
+            returned: returnedCard.includes('just-returned') && !returnedCard.includes('class="away-pill"'),
+        };
+    """)
+    assert out["huddleWorking"] is True and out["huddleMuted"] is False
+    assert out["hasAwayPill"] is True and out["hasSilhouette"] is True
+    assert out["speakerMuted"] is True and out["speakerMeta"] is True
+    assert out["returned"] is True
+
+
+def test_peer_exchange_cards_and_modal_facing(node: str) -> None:
+    """2-bot peer exchange updates both participant cards with directional
+    role/pill metadata, clears cleanly, and openExchangeModal renders
+    inward-facing avatars inside #exchange-modal-title."""
+    out = _run(node, r"""
+        bots.length = 0;
+        bots.push(...roster([{ id: 'thyca', name: 'Thyca' }, { id: 'coder', name: 'Coder' }]));
+        installFetch(() => ({ messages: [] }));
+        window.ThycaShell.setPeerExchange({ a: 'thyca', b: 'coder', sender: 'thyca' });
+        const duringThyca = card(getBot('thyca'));
+        const duringCoder = card(getBot('coder'));
+        window.ThycaShell.setPeerExchange(null);
+        const afterClear = card(getBot('thyca'));
+        await openExchangeModal('thyca', 'coder');
+        const modalTitle = $('#exchange-modal-title').innerHTML;
+        return { duringThyca, duringCoder, cleared: !afterClear.includes('peer-pill'), modalTitle };
+    """, via="chat")
+    assert 'class="peer-pill" data-dir="out"' in out["duringThyca"]
+    assert "Đang gửi → Coder" in out["duringThyca"]
+    assert 'class="peer-pill" data-dir="in"' in out["duringCoder"]
+    assert "Đang nhận ← Thyca" in out["duringCoder"]
+    assert out["cleared"] is True
+    assert 'data-peer-face="left"' in out["modalTitle"] and 'data-peer-face="right"' in out["modalTitle"]
+
+
+def test_provider_pv_key_shy_and_reveal_lifecycle(node: str) -> None:
+    """Real provider.js mounts #pv-key focus/blur (ThycaIsShy / .is-shy),
+    toggles visibility + .is-reveal on #pv-key-toggle click, and resets via
+    controller.onLeave()."""
+    out = _run(node, r"""
+        const av = document.createElement('span');
+        av.className = 'crew-avatar variant-circle';
+        av.dataset.botAvatar = 'thyca';
+        av.dataset.state = 'idle';
+        document.body.appendChild(av);
+        installFetch((url) => url === '/api/config' ? { values: { providers: {}, models: {}, limits: {} }, meta: { providers: {} }, schema: { sections: [] } } : {});
+        await __controller.ready;
+        const keyIn = $('#pv-key');
+        keyIn.type = 'password';
+        const toggle = $('#pv-key-toggle');
+        keyIn.dispatch('focus', {});
+        const duringFocus = {
+            shyFlag: !!window.ThycaIsShy,
+            cls: av.className,
+        };
+        toggle.dispatch('click', {});
+        const afterReveal = {
+            type: keyIn.type,
+            pressed: toggle.getAttribute('aria-pressed'),
+            cls: av.className,
+        };
+        __controller.onLeave();
+        return {
+            duringFocus,
+            afterReveal,
+            afterLeave: {
+                shyFlag: !!window.ThycaIsShy,
+                type: keyIn.type,
+                pressed: toggle.getAttribute('aria-pressed'),
+                cls: av.className,
+            },
+        };
+    """, via="provider")
+    assert out["duringFocus"]["shyFlag"] is True and "is-shy" in out["duringFocus"]["cls"]
+    assert out["afterReveal"]["type"] == "text" and out["afterReveal"]["pressed"] == "true"
+    assert "is-shy" in out["afterReveal"]["cls"] and "is-reveal" in out["afterReveal"]["cls"]
+    assert out["afterLeave"]["shyFlag"] is False and out["afterLeave"]["type"] == "password"
+    assert out["afterLeave"]["pressed"] == "false" and "is-shy" not in out["afterLeave"]["cls"]
+
+
+def test_idle_update_card_preserves_eye_rigs_dom_order_and_group_stage(node: str) -> None:
+    """Updating a bot's idle expression must not reset liveRigs face/pupil
+    coordinates to (0, 0), detach/re-insert already ordered sidebar cards,
+    or rebuild an unchanged group stage SVG."""
+    out = _run(node, r"""
+        bots.length = 0;
+        bots.push(...roster([{ id: 'thyca', system: true }, { id: 'coder' }, { id: 'researcher' }]));
+        groups.length = 0;
+        const grp = { id: 'group-11111111111111111111111111111111', title: 'Nhóm chung', subtitle: '2 người bạn', bots: ['thyca', 'coder'], updatedAtMs: 100 };
+        groups.push(grp);
+
+        const mkAvatarRig = (botId, extraCls = '') => {
+            const host = document.createElement('span');
+            host.className = ('crew-avatar variant-stage is-stage ' + extraCls).trim();
+            if (botId) {
+                const b = getBot(botId);
+                host.dataset.botAvatar = botId;
+                host.dataset.crewShape = crewShapeFor(b).id;
+                host.dataset.themeFamily = themeFor(b);
+                host.dataset.accessory = accessoryFor(b);
+                host.dataset.away = 'false';
+                host.dataset.state = b.state;
+            }
+            const svg = document.createElement('svg');
+            svg.className = 'crew-svg';
+            host._html = '<svg class="crew-svg"></svg>';
+            const box = document.createElement('g');
+            box.className = 'char-box';
+            if (botId) box.dataset.memberId = botId;
+            const face = document.createElement('g');
+            face.className = 'char-face';
+            face.dataset.faceCx = '60';
+            face.dataset.faceCy = '60';
+            const eye = document.createElement('g');
+            eye.className = 'eye-unit';
+            eye.dataset.eyeCx = '52';
+            eye.dataset.eyeCy = '60';
+            eye.dataset.eyeR = '10';
+            const pupil = document.createElement('g');
+            pupil.className = 'eye-pupil-group';
+            eye.appendChild(pupil);
+            face.appendChild(eye);
+            box.appendChild(face);
+            svg.appendChild(box);
+            host.appendChild(svg);
+            return host;
+        };
+
+        const list = $('#team-bot-list');
+        list.replaceChildren();
+        for (const e of sidebarEntries()) {
+            if (e.type === 'bot') {
+                const cardEl = document.createElement('article');
+                cardEl.className = 'bot-card';
+                cardEl.id = 'bot-' + e.bot.id;
+                cardEl.dataset.botId = e.bot.id;
+                cardEl.appendChild(mkAvatarRig(e.bot.id));
+                for (const cls of ['bot-role', 'header-status-label', 'bot-select', 'thinking-summary', 'compact-preview', 'preview-text', 'reply-action', 'elapsed', 'thinking-title', 'info-label', 'pocket', 'progress-list']) {
+                    const n = document.createElement('span');
+                    n.className = cls;
+                    cardEl.appendChild(n);
+                }
+                list.appendChild(cardEl);
+            } else {
+                const row = document.createElement('article');
+                row.className = 'bot-card group-card';
+                row.dataset.group = e.group.id;
+                const stage = document.createElement('div');
+                stage.className = 'card-stage';
+                stage.dataset.stageKey = groupStageKey(e.group, groupStageMembers(e.group), false, null);
+                stage.appendChild(mkAvatarRig('thyca', 'is-group-stage'));
+                row.appendChild(stage);
+                const meta = document.createElement('span');
+                meta.className = 'group-meta';
+                row.appendChild(meta);
+                list.appendChild(row);
+            }
+        }
+
+        registerLiveRigs();
+        for (const rig of liveRigs) {
+            rig.fx = -3.5;
+            rig.fy = 1.25;
+            rig.eyes.forEach(e => { e.x = -2.8; e.y = 0.9; });
+        }
+
+        let moves = 0;
+        const origInsertBefore = list.insertBefore.bind(list);
+        list.insertBefore = (n, ref) => { moves++; return origInsertBefore(n, ref); };
+        const groupStage = $('.group-card .card-stage');
+        const initialGroupAvatar = groupStage.firstElementChild;
+
+        bots[0].idle.active = 'wink';
+        updateCard(bots[0]);
+        const afterIdleUpdate = liveRigs.map(r => ({
+            id: r.memberId,
+            fx: r.fx,
+            fy: r.fy,
+            ex: r.eyes[0]?.x ?? null,
+            ey: r.eyes[0]?.y ?? null,
+        }));
+        const sameGroupNode = groupStage.firstElementChild === initialGroupAvatar;
+
+        registerLiveRigs();
+        const afterExplicitReRegister = liveRigs.map(r => ({
+            id: r.memberId,
+            fx: r.fx,
+            fy: r.fy,
+            ex: r.eyes[0]?.x ?? null,
+            ey: r.eyes[0]?.y ?? null,
+        }));
+
+        const movesDuringIdle = moves;
+        bots[2].favorite = true;
+        orderSidebarNodes();
+        const orderAfterPin = [...list.children].map(el => el.dataset.botId || el.dataset.group);
+
+        return {
+            rigCount: liveRigs.length,
+            movesDuringIdle,
+            movesAfterPin: moves,
+            sameGroupNode,
+            afterIdleUpdate,
+            afterExplicitReRegister,
+            orderAfterPin,
+        };
+    """, via="shell")
+    assert out["rigCount"] == 4
+    assert out["movesDuringIdle"] == 0
+    assert out["movesAfterPin"] > 0
+    assert out["sameGroupNode"] is True
+    assert all(r["fx"] == -3.5 and r["fy"] == 1.25 and r["ex"] == -2.8 and r["ey"] == 0.9 for r in out["afterIdleUpdate"]), out["afterIdleUpdate"]
+    assert out["afterExplicitReRegister"] == out["afterIdleUpdate"]
+    assert out["orderAfterPin"][:2] == ["thyca", "researcher"]

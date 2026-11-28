@@ -147,6 +147,7 @@ function syncDirtyStatus() {
   if (!state.values || state.loading || state.saving || state.reloading) return;
   const dirty = editorIsDirty();
   setSaveStatus(dirty ? 'Chưa lưu thay đổi' : state.cleanStatus, dirty ? 'warn' : '');
+  refreshBusyState();
 }
 function providerFingerprint(values, meta) { return JSON.stringify({ providers: values?.providers || {}, defaultProvider: values?.defaultProvider || '', storedKeys: meta?.providers || {} }); }
 function safeMeta(values, oldMeta, keyPresence = {}) {
@@ -214,14 +215,29 @@ async function syncExternalConfig() {
   }
 }
 
-function fillOptions(select, options, current) {
+function makeOption([value, text, attrs = {}]) {
+  const option = Object.assign(document.createElement('option'), { value, textContent: text });
+  for (const [key, attrValue] of Object.entries(attrs)) option.setAttribute(key, attrValue);
+  return option;
+}
+function fillOptions(select, entries, current) {
   if (!select) return;
-  select.replaceChildren(...options.map(([value, text, attrs = {}]) => {
-    const option = Object.assign(document.createElement('option'), { value, textContent: text });
-    for (const [key, value] of Object.entries(attrs)) option.setAttribute(key, value);
-    return option;
-  }));
-  if (options.some(([value]) => value === current)) select.value = current;
+  const validValues = new Set();
+  const nodes = entries.map(entry => {
+    if (Array.isArray(entry)) {
+      validValues.add(entry[0]);
+      return makeOption(entry);
+    }
+    const group = document.createElement('optgroup');
+    group.label = entry.label;
+    for (const opt of entry.options) {
+      validValues.add(opt[0]);
+      group.appendChild(makeOption(opt));
+    }
+    return group;
+  });
+  select.replaceChildren(...nodes);
+  if (validValues.has(current)) select.value = current;
 }
 function defaultOwnerId() {
   const id = state.values?.defaultModel || '';
@@ -289,22 +305,31 @@ function renderModelPicker() {
   const select = $('#m-picker'); if (!select || !state.values) return;
   const current = select.value || CHOOSE_MODEL;
   const pid = ($('#pv-id').value || state.editingProvider).trim();
-  const options = [[CHOOSE_MODEL, 'Chọn model…']];
-  const byId = new Map();
-  for (const id of modelsOf(pid)) byId.set(id, { label: id, disabled: false });
+  const savedIds = modelsOf(pid);
+  const savedSet = new Set(savedIds);
+  const discovered = new Map();
   for (const id of state.discovery?.models || []) {
     const owner = modelIsSaved(id) ? modelProviderId(state.values, id) : '';
-    if (owner && owner !== pid) byId.set(id, { label: `${id} — đã thuộc ${owner}`, disabled: true });
-    else byId.set(id, { label: id, disabled: false });
+    if (owner && owner !== pid) discovered.set(id, { label: `${id} — đã thuộc ${owner}`, disabled: true, owner });
+    else if (!savedSet.has(id)) discovered.set(id, { label: id, disabled: false, owner: '' });
   }
-  for (const [id, data] of [...byId.entries()].sort(([a], [b]) => a.localeCompare(b))) {
-    options.push([`model:${id}`, data.label, data.disabled ? { disabled: 'disabled', 'data-owner': modelProviderId(state.values, id), 'data-model': id } : { 'data-model': id }]);
+  const toOpt = (id, data) => [`model:${id}`, data.label, data.disabled ? { disabled: 'disabled', 'data-owner': data.owner, 'data-model': id } : { 'data-model': id }];
+  const savedOpts = [...savedIds].sort((a, b) => a.localeCompare(b)).map(id => toOpt(id, { label: id, disabled: false, owner: '' }));
+  const apiOpts = [...discovered.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([id, data]) => toOpt(id, data));
+  const entries = [[CHOOSE_MODEL, 'Chọn model…']];
+  if (apiOpts.length) {
+    if (savedOpts.length) entries.push({ label: 'Đã lưu', options: savedOpts });
+    entries.push({ label: 'Từ API', options: apiOpts });
+  } else {
+    entries.push(...savedOpts);
   }
-  if (state.selectedModel && !byId.has(state.selectedModel) && state.selectedModelFromDiscovery) {
-    options.push([`model:${state.selectedModel}`, `${state.selectedModel} — danh sách cũ, tải lại`, { disabled: 'disabled', 'data-stale': 'true', 'data-model': state.selectedModel }]);
+  const known = new Set([...savedIds, ...discovered.keys()]);
+  if (state.selectedModel && !known.has(state.selectedModel) && state.selectedModelFromDiscovery) {
+    entries.push([`model:${state.selectedModel}`, `${state.selectedModel} — danh sách cũ, tải lại`, { disabled: 'disabled', 'data-stale': 'true', 'data-model': state.selectedModel }]);
   }
   const encodedCurrent = current.startsWith('model:') ? current : (state.selectedModel ? `model:${state.selectedModel}` : current);
-  fillOptions(select, options, options.some(([value]) => value === encodedCurrent) ? encodedCurrent : CHOOSE_MODEL);
+  const allValues = new Set(entries.flatMap(e => (Array.isArray(e) ? [e[0]] : e.options.map(o => o[0]))));
+  fillOptions(select, entries, allValues.has(encodedCurrent) ? encodedCurrent : CHOOSE_MODEL);
 }
 function renderCurrentDefault() {
   const id = state.values?.defaultModel || '';
@@ -318,12 +343,13 @@ function renderEditorActions() {
   const modelId = selectedModelId();
   const saved = modelIsSaved(modelId);
   $('#delete-provider').hidden = !pid;
-  $('#delete-model').hidden = !saved;
+  const connFields = $('.connection-fields');
+  if (connFields) connFields.dataset.mode = pid ? 'existing' : 'new';
   const mode = $('#model-editor-mode');
   if (mode) {
-    mode.hidden = !modelId;
-    mode.textContent = modelId ? (saved ? 'Đang sửa' : 'Model mới') : '';
-    mode.dataset.mode = saved ? 'edit' : 'new';
+    mode.hidden = !modelId || saved;
+    mode.textContent = modelId && !saved ? 'Model mới' : '';
+    mode.dataset.mode = 'new';
   }
   const idField = $('#pv-id-field');
   if (idField) idField.hidden = !!pid;
@@ -345,27 +371,12 @@ function savedModelMeta(id) {
   if (Array.isArray(model.reasoningEfforts) && model.reasoningEfforts.length) bits.push(model.reasoningEfforts.join(', '));
   return bits.join(' · ');
 }
-function renderAdvancedSummary() {
-  const el = $('#model-advanced-summary'); if (!el) return;
-  const pIn = String($('#m-in')?.value ?? '').trim();
-  const pCache = String($('#m-cache')?.value ?? '').trim();
-  const pOut = String($('#m-out')?.value ?? '').trim();
-  const pricePart = (!pIn && !pCache && !pOut)
-    ? 'Chưa đặt giá'
-    : (pIn && pCache && pOut ? `$${pIn}/$${pCache}/$${pOut}` : 'Giá chưa đủ 3 mức');
-  const activeEfforts = checkedEfforts().length;
-  const effortPart = activeEfforts ? `${activeEfforts} mức suy luận` : 'Suy luận: kế thừa';
-  const ctxNum = Number(String($('#m-context')?.value ?? '').trim());
-  const maxNum = Number(String($('#m-max')?.value ?? '').trim());
-  const ctxPart = Number.isInteger(ctxNum) && ctxNum > 0 ? formatTokenCount(ctxNum) : 'Kế thừa';
-  const maxPart = Number.isInteger(maxNum) && maxNum > 0 ? formatTokenCount(maxNum) : '';
-  const limitPart = maxPart ? `${ctxPart} / ${maxPart} max` : ctxPart;
-  el.textContent = [pricePart, effortPart, limitPart].join(' · ');
-}
 function renderSavedModels() {
+  const section = $('#saved-models');
   const list = $('#saved-model-rows'); if (!list || !state.values) return;
   const note = $('#saved-models-note');
   const pid = state.editingProvider;
+  if (section) section.hidden = !pid;
   const ids = pid ? modelsOf(pid) : [];
   const def = state.values.defaultModel || '';
   const busy = state.loading || state.saving || state.reloading;
@@ -373,11 +384,13 @@ function renderSavedModels() {
     ? (ids.length ? `${ids.length} model cho kết nối “${pid}”.` : `Chưa có model nào cho kết nối “${pid}”. Lưu form để thêm model đầu tiên.`)
     : 'Chọn hoặc tạo kết nối để xem model đã lưu.';
   list.replaceChildren(...ids.map(id => {
+    const isEditing = id === state.selectedModel;
     const item = document.createElement('li');
     item.className = 'saved-model-row';
-    item.dataset.editing = id === state.selectedModel ? 'true' : 'false';
+    item.dataset.editing = isEditing ? 'true' : 'false';
     const info = document.createElement('div');
     info.className = 'saved-model-info';
+    if (!isEditing) info.onclick = () => { if (!state.loading && !state.saving && !state.reloading) chooseModel(id); };
     const name = document.createElement('span');
     name.className = 'saved-model-name'; name.textContent = id;
     name.title = id;
@@ -400,12 +413,19 @@ function renderSavedModels() {
       use.onclick = () => { void setDefaultModel(id); };
       actions.appendChild(use);
     }
-    const edit = document.createElement('button');
-    edit.type = 'button'; edit.className = 'quiet-button';
-    edit.dataset.action = 'edit'; edit.dataset.model = id;
-    edit.textContent = 'Sửa'; edit.disabled = busy;
-    edit.onclick = () => chooseModel(id);
-    actions.appendChild(edit);
+    if (isEditing) {
+      const tag = document.createElement('span');
+      tag.className = 'saved-model-editing';
+      tag.textContent = 'Đang sửa';
+      actions.appendChild(tag);
+    } else {
+      const edit = document.createElement('button');
+      edit.type = 'button'; edit.className = 'quiet-button';
+      edit.dataset.action = 'edit'; edit.dataset.model = id;
+      edit.textContent = 'Sửa'; edit.disabled = busy;
+      edit.onclick = () => chooseModel(id);
+      actions.appendChild(edit);
+    }
     const del = document.createElement('button');
     del.type = 'button'; del.className = 'quiet-button is-danger';
     del.dataset.action = 'delete'; del.dataset.model = id;
@@ -443,12 +463,19 @@ async function deleteSavedModel(id) {
   }, { note: `Đã xóa model “${id}”.`, onPosted: () => { if (selectedModelId() === id) setModelFields(''); } });
 }
 function renderAll() {
-  renderConnectionTabs(); renderProviderSelects(); renderModelPicker(); renderCurrentDefault(); renderEditorActions(); renderSavedModels(); renderAdvancedSummary();
+  renderConnectionTabs(); renderProviderSelects(); renderModelPicker(); renderCurrentDefault(); renderEditorActions(); renderSavedModels();
 }
 function refreshBusyState() {
-  $('#editor-controls').disabled = state.loading || !state.values || state.saving || state.reloading;
-  $('#v-submit').disabled = state.verifying || state.loading || !state.values || state.saving || state.reloading;
-  $('#save-use').disabled = state.loading || !state.values || state.saving || state.reloading;
+  const busy = state.loading || !state.values || state.saving || state.reloading;
+  const dirty = !busy && editorIsDirty();
+  $('#editor-controls').disabled = busy;
+  $('#v-submit').disabled = state.verifying || busy;
+  $('#save-use').disabled = busy || !dirty;
+  const cancelBtn = $('#cancel-editor');
+  if (cancelBtn) {
+    cancelBtn.hidden = !dirty;
+    cancelBtn.disabled = busy;
+  }
 }
 
 function parseBaseUrl(raw) {
@@ -498,9 +525,9 @@ function setModelFields(id) {
   state.modelBaseline = modelFieldsSnapshot();
   renderEditorActions();
   renderSavedModels();
-  renderAdvancedSummary();
 }
 function chooseModel(id, { confirmDiscard = true } = {}) {
+  if (state.loading || state.saving || state.reloading) return false;
   if (id && state.discovery?.models.includes(id) && (!state.discovery || state.discovery.connectionRevision !== state.connectionRevision)) {
     setDiscoveryStatus('Danh sách model đã cũ. Tải lại trước khi chọn.', 'error'); return false;
   }
@@ -513,6 +540,11 @@ function chooseModel(id, { confirmDiscard = true } = {}) {
   }
   state.selectedModel = id || '';
   setModelFields(id || '');
+  if (!id || modelIsSaved(id)) {
+    state.editorBaseline = [state.providerBaseline || providerSnapshot(), modelSnapshot()];
+  }
+  syncDirtyStatus();
+  refreshBusyState();
   return true;
 }
 function fillConnection(id, { initial = false } = {}) {
@@ -701,10 +733,13 @@ async function submitEditor(event) {
   if (state.saving || state.loading || state.reloading) return false;
   clearFieldErrors(); setFormStatus('');
   let draft; try { draft = draftForSave(); } catch (error) { fail(error); return false; }
+  const isAlreadyDefault = !draft.connectionOnly && draft.modelId === (state.values?.defaultModel || '');
   return commitValues(fresh => mergeEditorDraft(fresh, draft), {
     note: draft.connectionOnly
       ? `Đã lưu kết nối “${draft.id}”.`
-      : `Đã lưu ${draft.modelId}. Chọn “Đặt mặc định” ở danh sách bên dưới để dùng model này.`,
+      : isAlreadyDefault
+        ? `Đã lưu ${draft.modelId}.`
+        : `Đã lưu ${draft.modelId}. Chọn “Đặt mặc định” ở danh sách bên dưới để dùng model này.`,
     onPosted: () => {
       state.editingProvider = draft.id;
       state.discovery = null;
@@ -725,9 +760,6 @@ async function deleteProvider() {
     if (values.defaultProvider === id) values.defaultProvider = Object.keys(values.providers).sort()[0];
     return values;
   }, { note: `Đã xóa kết nối “${id}”.`, onPosted: () => { state.editingProvider = ''; fillConnection(''); } });
-}
-async function deleteModel() {
-  return deleteSavedModel(selectedModelId());
 }
 async function reloadConfig() {
   if (state.loading || state.saving || state.reloading) return false;
@@ -759,8 +791,8 @@ function bind() {
     }
     syncDirtyStatus();
   });
-  $('#connection-form').addEventListener('input', () => { renderAdvancedSummary(); syncDirtyStatus(); });
-  $('#connection-form').addEventListener('change', () => { renderAdvancedSummary(); syncDirtyStatus(); });
+  $('#connection-form').addEventListener('input', () => { syncDirtyStatus(); });
+  $('#connection-form').addEventListener('change', () => { syncDirtyStatus(); });
   $('#pv-api').addEventListener('change', () => {
     const val = $('#pv-api').value;
     $('#pv-api').dataset.edited = 'true';
@@ -775,9 +807,8 @@ function bind() {
     invalidateDiscovery('Kiểu API đã đổi. Tải lại model.');
     syncDirtyStatus();
   });
-  $('#m-efforts').addEventListener('change', () => { paintEffortChips($('#m-efforts')); renderAdvancedSummary(); syncDirtyStatus(); });
+  $('#m-efforts').addEventListener('change', () => { paintEffortChips($('#m-efforts')); syncDirtyStatus(); });
   $('#delete-provider').onclick = deleteProvider;
-  $('#delete-model').onclick = deleteModel;
 }
 function selectBot(id) { if (id && getBot(id)) ctx.navigate('profile', { search: '?bot=' + encodeURIComponent(id) }); }
 function loadConversation(id, botId) { if (botId) selectBot(botId); }
@@ -790,9 +821,7 @@ function labelProfileLinks() {
 new MutationObserver(labelProfileLinks).observe(ctx.sidebar, { childList: true, subtree: true });
 function initAdvancedState() {
   const adv = $('#model-advanced');
-  if (adv && typeof window.matchMedia === 'function') {
-    adv.open = !!window.matchMedia('(min-width: 851px)').matches;
-  }
+  if (adv) adv.open = false;
 }
 async function boot() {
   bind(); initAdvancedState(); refreshBusyState();
@@ -814,6 +843,37 @@ async function boot() {
     state.loading = false; refreshBusyState(); setSaveStatus('Chưa tải được', 'error'); setStatus(`Không tải được cấu hình: ${error.message}`, 'error');
   }
 }
+  function resetSecretMood() {
+    const keyInput = $('#pv-key');
+    const keyToggle = $('#pv-key-toggle');
+    if (keyInput) keyInput.type = 'password';
+    if (keyToggle) {
+      keyToggle.setAttribute('aria-pressed', 'false');
+      keyToggle.setAttribute('aria-label', 'Hiện API key đang nhập');
+      keyToggle.textContent = 'Hiện';
+    }
+    window.setAvatarReveal?.(false);
+    window.setAvatarShy?.(false);
+  }
+  const keyInput = $('#pv-key');
+  const keyToggle = $('#pv-key-toggle');
+  keyInput?.addEventListener('focus', () => { window.setAvatarShy?.(true); });
+  keyInput?.addEventListener('blur', () => {
+    setTimeout(() => {
+      const active = typeof document !== 'undefined' ? document.activeElement : null;
+      if (active !== keyInput && active !== keyToggle) resetSecretMood();
+    }, 0);
+  });
+  keyToggle?.addEventListener('click', () => {
+    if (!keyInput) return;
+    const showing = keyInput.type === 'password';
+    keyInput.type = showing ? 'text' : 'password';
+    keyToggle.setAttribute('aria-pressed', String(showing));
+    keyToggle.setAttribute('aria-label', showing ? 'Ẩn API key đang nhập' : 'Hiện API key đang nhập');
+    keyToggle.textContent = showing ? 'Ẩn' : 'Hiện';
+    window.setAvatarShy?.(true);
+    window.setAvatarReveal?.(showing);
+  });
   const ready = boot();
-  return { ready, selectBot, loadConversation, sidebarLabel(_id, name) { return `Hồ sơ của ${name}`; }, onEnter() { if (externalConfigDirty && !state.loading && !state.saving && !state.reloading && state.values && !editorIsDirty()) void syncExternalConfig(); } };
+  return { ready, selectBot, loadConversation, sidebarLabel(_id, name) { return `Hồ sơ của ${name}`; }, onEnter() { if (externalConfigDirty && !state.loading && !state.saving && !state.reloading && state.values && !editorIsDirty()) void syncExternalConfig(); }, onLeave() { resetSecretMood(); } };
 } });

@@ -82,10 +82,15 @@ def test_profile_shared_by_default(node) -> None:
         const soulRoot = document.querySelector('#profile-root').innerHTML;
         selectDoc('IDENTITY.md');
         const identityRoot = document.querySelector('#profile-root').innerHTML;
+        const tplHtml = document.querySelector('template#tpl-profile').innerHTML;
         return {{
             title: $('#profile-title').textContent,
             shared: selectedBot, tab: state.tab, doc: state.doc,
-            sharedBtnHidden: $('#profile-shared').hidden,
+            noFooterBtns: !tplHtml.includes('profile-shared') && !tplHtml.includes('profile-reload'),
+            noTabFilenames: !userRoot.includes('<small>USER.md</small>') && !userRoot.includes('<small>SOUL.md</small>') && !userRoot.includes('<small>IDENTITY.md</small>'),
+            hasCleanTabLabels: userRoot.includes('><span>Về người dùng</span></button>')
+                && userRoot.includes('><span>Giọng nói</span></button>')
+                && userRoot.includes('><span>Danh tính</span></button>'),
             hasAllTabs: userRoot.includes('data-doc="USER.md"') && userRoot.includes('data-doc="SOUL.md"') && userRoot.includes('data-doc="IDENTITY.md"'),
             hasUserLabel: userRoot.includes('Về người dùng') && !userRoot.includes('Hồ sơ của bạn'),
             userOnlyFirst: userRoot.includes('id="file-USER.md"') && !userRoot.includes('id="file-SOUL.md"'),
@@ -98,10 +103,11 @@ def test_profile_shared_by_default(node) -> None:
     """, via="profile", emit="profile")
     assert out["title"] == "Hồ sơ chung"
     assert out["shared"] == "" and out["tab"] == "" and out["doc"] == "IDENTITY.md"
+    assert out["noTabFilenames"] is True and out["hasCleanTabLabels"] is True
     assert out["hasAllTabs"] and out["hasUserLabel"] and out["userOnlyFirst"] and out["soulSwitched"] and out["identitySwitched"]
     assert out["hasBotForm"] is False and out["hasBotModelCard"] is False
     assert out["hasBotHeading"] is False
-    assert out["sharedBtnHidden"] is True
+    assert out["noFooterBtns"] is True
 
 
 def test_profile_section_cards_partial_edit_and_add(node) -> None:
@@ -153,7 +159,8 @@ def test_profile_section_cards_partial_edit_and_add(node) -> None:
         return {{ beforeHtml, afterGoalEdit, afterAdd, plainHtml, posted }};
     """.format(repr(raw_user).replace("'", '"').replace("\\\\n", "\\n"), _ROSTER, _CONFIG), via="profile", emit="profile")
     assert 'profile-section-grid' in out["beforeHtml"]
-    assert out["beforeHtml"].count('class="profile-section-card"') == 3
+    assert out["beforeHtml"].count('<details class="profile-section-card"') == 3
+    assert ' open>' not in out["beforeHtml"]
     assert '<!-- keep:comment -->' in out["afterGoalEdit"]
     assert '## Context\n\n```md\n## not-a-heading\n```\n- Chi tiết B' in out["afterGoalEdit"]
     assert '## Goals\n\n- Mục tiêu mới' in out["afterGoalEdit"]
@@ -179,13 +186,17 @@ def test_profile_sidebar_select_shows_dossier_and_settings(node) -> None:
         await tick(30);
         const root = document.querySelector('#profile-root').innerHTML;
         const fields = document.querySelector('#bot-settings-fields').innerHTML;
+        const tplHtml = document.querySelector('template#tpl-profile').innerHTML;
         return {{
             replaced, route: ctx.route, tab: state.tab, shared: selectedBot,
             title: $('#profile-title').textContent,
             root, fields,
             hasBotForm: root.includes('bot-settings-form'),
             hasSharedDoc: root.includes('file-USER'),
-            sharedBtnHidden: $('#profile-shared').hidden,
+            noFooterShared: !tplHtml.includes('profile-shared'),
+            cleanSaveDisabled: $('#save-bot-settings').disabled,
+            cleanCancelHidden: $('#cancel-bot-settings').hidden,
+            effectiveHiddenOnExplicit: $('#bot-effective').hidden,
         }};
     """, via="profile", emit="profile")
     assert out["replaced"] and out["replaced"][-1] == "/"
@@ -193,11 +204,15 @@ def test_profile_sidebar_select_shows_dossier_and_settings(node) -> None:
     assert out["route"] == {"page": "profile", "search": "?bot=coder", "hash": ""}
     assert out["title"] == "Bạn và Coder"
     assert "Coder persona" in out["root"]
+    assert "Tính cách" in out["root"]
     assert out["hasBotForm"] is True
     assert '<option value="m1" selected>' in out["fields"]
     assert '<details class="profile-bot-advanced" id="bot-advanced">' in out["fields"]
     assert out["hasSharedDoc"] is False
-    assert out["sharedBtnHidden"] is False
+    assert out["noFooterShared"] is True
+    assert out["cleanSaveDisabled"] is True
+    assert out["cleanCancelHidden"] is True
+    assert out["effectiveHiddenOnExplicit"] is True
 
 
 def test_profile_deep_links_and_ghost(node) -> None:
@@ -243,7 +258,7 @@ def test_profile_shared_button_and_studio_shortcut(node) -> None:
         openBotStudio('coder');
         const studioOpen = document.querySelector('#expressions-dialog').open;
         const studioBot = document.querySelector('#expression-bot').value;
-        $('#profile-shared').onclick();
+        el.root.dispatch('click', {{ target: {{ closest: sel => sel === '[data-action]' ? {{ dataset: {{ action: 'show-shared' }} }} : null }} }});
         await tick();
         const sharedRoot = document.querySelector('#profile-root').innerHTML;
         return {{ studioOpen, studioBot, sharedRoot, tab: state.tab, shared: selectedBot, title: $('#profile-title').textContent }};
@@ -475,8 +490,19 @@ def test_profile_bot_save_posts_settings_only(node) -> None:
         globalThis.location.search = '?bot=coder';
         globalThis.location.pathname = '/ui/profile/index.html';
         await tick(); await boot(); await tick(30);
+        const cleanDisabled = $('#save-bot-settings').disabled;
         $('#bot-model').value = 'default';
+        $('#bot-model').onchange();
+        const dirtyEnabled = !$('#save-bot-settings').disabled;
+        const dirtyCancelVisible = !$('#cancel-bot-settings').hidden;
+        const effectiveShownOnDefault = !$('#bot-effective').hidden;
+        $('#cancel-bot-settings').onclick();
+        const afterCancelModel = $('#bot-model').value;
+        const afterCancelDisabled = $('#save-bot-settings').disabled;
+        $('#bot-model').value = 'default';
+        $('#bot-model').onchange();
         $('#bot-thinking').value = 'low';
+        $('#bot-thinking').onchange();
         await submitBotSettings();
         await tick(30);
         return {{
@@ -485,7 +511,10 @@ def test_profile_bot_save_posts_settings_only(node) -> None:
             savedEvents,
             liveModel: getBot('coder').model,
             hint: $('#bot-settings-hint').textContent,
-            enabled: !$('#save-bot-settings').disabled,
+            cleanDisabled, dirtyEnabled, dirtyCancelVisible, effectiveShownOnDefault,
+            afterCancelModel, afterCancelDisabled,
+            disabledAfterSave: $('#save-bot-settings').disabled,
+            cancelHiddenAfterSave: $('#cancel-bot-settings').hidden,
         }};
     """, via="profile", emit="profile")
     assert out["posted"] == [{
@@ -493,7 +522,10 @@ def test_profile_bot_save_posts_settings_only(node) -> None:
         "body": {"model": {"id": "default", "thinking": "low"}},
     }]
     assert out["configPosts"] == []
-    assert out["hint"] == "Đã lưu." and out["enabled"] is True
+    assert out["cleanDisabled"] is True and out["dirtyEnabled"] is True and out["dirtyCancelVisible"] is True
+    assert out["effectiveShownOnDefault"] is True
+    assert out["afterCancelModel"] == "m1" and out["afterCancelDisabled"] is True
+    assert out["hint"] == "Đã lưu." and out["disabledAfterSave"] is True and out["cancelHiddenAfterSave"] is True
     assert out["liveModel"] == {"id": "default", "thinking": "low"}
     assert out["savedEvents"] and out["savedEvents"][0]["botId"] == "coder"
 
@@ -764,3 +796,76 @@ def test_profile_bot_catalog_refreshes_on_config_saved(node) -> None:
         return {{ before, after }};
     """, via="profile", emit="profile")
     assert out == {"before": False, "after": True}
+
+
+def test_profile_inherited_thinking_hint_clear_and_open_sections_reset(node) -> None:
+    """Switching #bot-thinking to inherited resolves the provider default (not the
+    old override), reverting an invalid limit clears the stale error hint, and
+    showShared/submitEdit clear openSections."""
+    out = _run(node, f"""
+        const SETTINGS = {_SETTINGS};
+        let savedUser = '# User\\n\\n## One\\n- A\\n\\n## Two\\n- B\\n';
+        installFetch((url, opts = {{}}) => {{
+            if (url === '/api/bots') return {{ bots: {_ROSTER} }};
+            if (url === '/api/conversations') return {{ conversations: [] }};
+            if (url === '/api/config') return {_CONFIG};
+            if (url === '/api/memory/stats') return {{ files: [
+                {{ name: 'USER.md', content: savedUser }},
+                {{ name: 'SOUL.md', content: '# Soul\\n\\n## Voice\\n- Calm\\n' }},
+            ] }};
+            if (url === '/api/memory/canonical' && opts.method === 'POST') {{
+                const body = JSON.parse(opts.body);
+                if (body.name === 'USER.md') savedUser = body.content;
+                return {{ ok: true }};
+            }}
+            if (url === '/api/bots/coder/settings' && opts.method === 'POST') {{
+                throw new Error('server busy');
+            }}
+            if (SETTINGS[url]) return SETTINGS[url];
+            return {{}};
+        }});
+        globalThis.location.search = '?bot=coder';
+        globalThis.location.pathname = '/ui/profile/index.html';
+        await tick(); await boot(); await tick(30);
+        $('#bot-thinking').value = '';
+        $('#bot-thinking').onchange();
+        const inheritedEff = $('#bot-effective').textContent;
+        const inheritedHidden = $('#bot-effective').hidden;
+        await submitBotSettings();
+        const saveFailHint = $('#bot-settings-hint').textContent;
+        const saveRetryEnabled = !$('#save-bot-settings').disabled;
+        $('#bot-thinking').value = 'low';
+        $('#bot-thinking').onchange();
+        const hintAfterNextEdit = $('#bot-settings-hint').textContent;
+        $('#bot-thinking').value = 'custom';
+        $('#bot-thinking').onchange();
+        $('#bot-limit-contextTokens').value = '100';
+        await submitBotSettings();
+        const errHint = $('#bot-settings-hint').textContent;
+        $('#bot-limit-contextTokens').value = '';
+        $('#bot-limit-contextTokens').oninput();
+        const hintAfterRevert = $('#bot-settings-hint').textContent;
+
+        state.openSections.add(0);
+        globalThis.requestAnimationFrame = () => {{}};
+        showShared('file-SOUL.md');
+        const openAfterShared = state.openSections.size;
+        state.openSections.add(0);
+        openEdit('USER.md', null);
+        $('#edit-content').value = '# User\\n\\n## Renamed\\n- C\\n';
+        await submitEdit({{ preventDefault() {{}} }});
+        const openAfterFullSave = state.openSections.size;
+        return {{
+            inheritedEff, inheritedHidden, saveFailHint, saveRetryEnabled,
+            hintAfterNextEdit, errHint, hintAfterRevert,
+            openAfterShared, openAfterFullSave,
+        }};
+    """, via="profile", emit="profile")
+    assert out["inheritedHidden"] is False
+    assert out["inheritedEff"] == "Đang dùng: m1 · low"
+    assert "Không lưu được:" in out["saveFailHint"] and "server busy" in out["saveFailHint"]
+    assert out["saveRetryEnabled"] is True
+    assert out["hintAfterNextEdit"] == "Chưa lưu"
+    assert "32000" in out["errHint"]
+    assert out["hintAfterRevert"] == ""
+    assert out["openAfterShared"] == 0 and out["openAfterFullSave"] == 0

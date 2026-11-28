@@ -397,7 +397,7 @@ def test_root_spa_retains_all_workspaces_and_restores_history(
       const afterFreshBack = await fetch(window.__spaControlBase + '/state').then(response => response.json());
       const freshDefaultRoute = ThycaRouter.currentRoute();
       if ((detailCalls['/api/traces/stats'] || 0) || (detailCalls['/api/traces'] || 0) || afterFreshBack.apiCounts['/api/traces/stats'] !== 1 || afterFreshBack.apiCounts['/api/traces'] !== 1) throw new Error('fresh all-time detail did not make exactly one overview request pair: ' + JSON.stringify(afterFreshBack.apiCounts));
-      if (!view.querySelector('#trace-conversations button[data-conv="dm:thyca"][data-turn="0"]') || !document.querySelector('#stat-grid .stat-value')?.textContent.trim()) throw new Error('fresh all-time back did not render loaded overview data');
+      if (!view.querySelector('#trace-conversations button[data-conv="dm:thyca"][data-turn="0"]') || !document.querySelector('#usage-chart-total')?.textContent.trim()) throw new Error('fresh all-time back did not render loaded overview data');
       history.back();
       await wait(() => ThycaRouter.currentPage() === 'chat' && !document.querySelector('#chat-workspace').hidden, 'back after fresh detail reaches external previous entry');
       const externalReturnRoute = ThycaRouter.currentRoute();
@@ -463,7 +463,7 @@ def test_root_spa_retains_all_workspaces_and_restores_history(
       await wait(() => ThycaRouter.setupState() === 'ready' && ThycaRouter.currentPage() === 'chat');
       await ThycaRouter.navigate('dashboard');
       const view = document.querySelector('[data-page-workspace="dashboard"]');
-      await wait(() => !!view.querySelector('#trace-conversations button[data-conv="dm:thyca"][data-turn="0"]') && !!view.querySelector('#stat-grid .stat-value')?.textContent.trim());
+      await wait(() => !!view.querySelector('#trace-conversations button[data-conv="dm:thyca"][data-turn="0"]') && !!view.querySelector('#usage-chart-total')?.textContent.trim());
       const overview = window.__spaMode === 'usage-overview-screenshot';
       if (!overview) {
         view.querySelector('[data-usage-view="trace"]').click();
@@ -487,7 +487,7 @@ def test_root_spa_retains_all_workspaces_and_restores_history(
         route: ThycaRouter.currentRoute(), returnTo: history.state?.thycaReturn,
         overviewVisible: !view.querySelector('#usage-overview').hidden, headerControlsHidden: view.querySelector('#usage-header-controls').hidden,
         detailVisible: !view.querySelector('#turn-detail-view').hidden,
-        statValues: [...view.querySelectorAll('#stat-grid .stat-value')].map(el => el.textContent.trim()),
+        statValues: [view.querySelector('#usage-chart-total').textContent.trim(), view.querySelector('#cost-chart-total').textContent.trim()],
         turnText: view.querySelector('#trace-conversations').textContent, detailText: view.querySelector('#detail-body').textContent,
         scriptErrors: window.__scriptErrors || [], unhandledRejections: window.__promiseErrors || [], frames: document.querySelectorAll('iframe').length });
       return;
@@ -650,8 +650,7 @@ def test_root_spa_retains_all_workspaces_and_restores_history(
       }
       if (page === 'dashboard') {
         const view = document.querySelector('[data-page-workspace="dashboard"]');
-        const overviewScope = document.querySelector('#chat-sidebar #usage-overview-scope');
-        if (!overviewScope || overviewScope.hidden || document.querySelectorAll('#chat-sidebar #usage-overview-scope').length !== 1) throw new Error('Dashboard Overview scope button is missing, hidden, or duplicated');
+        if (document.querySelector('#chat-sidebar #usage-overview-scope')) throw new Error('Dashboard must not inject an Overview button into the team sidebar');
         await wait(() => !!view.querySelector('#trace-conversations button[data-conv="dm:thyca"][data-turn="0"]'), 'Usage trace list loaded');
         const beforeTabs = await fetch(window.__spaControlBase + '/state').then(response => response.json());
         for (const tab of ['cost', 'usage', 'trace']) {
@@ -673,11 +672,10 @@ def test_root_spa_retains_all_workspaces_and_restores_history(
         const dashboardRoute = ThycaRouter.currentRoute();
         await ThycaRouter.navigate('chat');
         await wait(() => ThycaRouter.currentPage() === 'chat' && !document.querySelector('#chat-workspace').hidden);
-        if (!overviewScope.hidden) throw new Error('Dashboard Overview scope remained visible after leaving the page');
         const chatRoute = ThycaRouter.currentRoute(), draft = document.querySelector('#message').value;
         const liveNode = document.querySelector('.running-response');
         await ThycaRouter.navigate('dashboard', dashboardRoute);
-        await wait(() => ThycaRouter.currentPage() === 'dashboard' && !view.querySelector('#usage-overview').hidden && !overviewScope.hidden);
+        await wait(() => ThycaRouter.currentPage() === 'dashboard' && !view.querySelector('#usage-overview').hidden);
         const q = view.querySelector('#filter-q');
         q.value = 'Synthetic quick'; q.dispatchEvent(new Event('input', { bubbles: true }));
         await wait(() => new URLSearchParams(ThycaRouter.currentRoute().search).get('q') === 'Synthetic quick');
@@ -712,7 +710,7 @@ def test_root_spa_retains_all_workspaces_and_restores_history(
       if (workspace.querySelectorAll('.ornament,.staff').length) throw new Error(`stale per-pane ornament in ${page}`);
       if (page === 'profile') {
         if (document.querySelectorAll('#team-bot-list .bot-card[data-selected="true"]').length) throw new Error('unknown Profile bot kept a Chat selection');
-        document.querySelector('#profile-shared').click();
+        document.querySelector('#profile-root [data-action="show-shared"]').click();
         await wait(() => ThycaRouter.currentPage() === 'profile' && ThycaRouter.currentRoute().search === '');
         if (document.querySelectorAll('#team-bot-list .bot-card[data-selected="true"]').length) throw new Error('shared Profile scope kept a selected bot');
         document.querySelector('#team-bot-list [data-action="select"][data-bot-id="coder"]').click();
@@ -725,7 +723,7 @@ def test_root_spa_retains_all_workspaces_and_restores_history(
         if (document.querySelectorAll('#team-bot-list .bot-card[data-selected="true"]').length) throw new Error(`${page} inherited a Chat selection: page=${ThycaRouter.currentPage()} highlight=${JSON.stringify(ThycaRouter.highlightedBot())} selected=${JSON.stringify([...document.querySelectorAll('#team-bot-list .bot-card[data-selected="true"]')].map(card => card.dataset.botId))}`);
         document.querySelector('#team-bot-list [data-action="select"][data-bot-id="coder"]').click();
         await wait(() => new URLSearchParams(ThycaRouter.currentRoute().search).get('bot') === 'coder');
-        if (page === 'dashboard') document.querySelector('#chat-sidebar #usage-overview-scope').click();
+        if (page === 'dashboard') document.querySelector('[data-page-workspace="dashboard"] #scope-clear').click();
         else document.querySelector('#team-bot-list [data-action="select"][data-bot-id="coder"]').click();
         await wait(() => !new URLSearchParams(ThycaRouter.currentRoute().search).has('bot'));
         if (document.querySelectorAll('#team-bot-list .bot-card[data-selected="true"]').length) throw new Error(`${page} filter clear kept a selected bot`);
@@ -786,7 +784,7 @@ def test_root_spa_retains_all_workspaces_and_restores_history(
     await fetch(window.__spaControlBase + '/release-settings');
     await wait(() => document.querySelector('#bot-settings-hint').textContent.includes('Đã lưu.'));
     if ((await waitForApiState(state => state.settingsPosts >= 1)).settingsPosts !== 1) throw new Error('duplicate bot settings POST');
-    if (!document.querySelector('#profile-root .bot-effective')?.textContent.includes('model-b · high')) throw new Error('saved Profile model summary did not update');
+    if (document.querySelector('#bot-model')?.value !== 'model-b' || document.querySelector('#bot-thinking')?.value !== 'high' || !document.querySelector('#save-bot-settings')?.disabled) throw new Error('saved Profile model state did not settle');
     const coderSaved = { model: document.querySelector('#bot-model').value, thinking: document.querySelector('#bot-thinking').value };
     await ThycaRouter.navigate('profile', { search: '?bot=thyca' });
     await wait(() => ThycaRouter.currentRoute().search === '?bot=thyca' && document.querySelector('#bot-model')?.value === 'model-a' && document.querySelector('#bot-thinking')?.value === 'low');
@@ -795,7 +793,7 @@ def test_root_spa_retains_all_workspaces_and_restores_history(
     document.querySelector('#bot-thinking').value = 'max';
     await ThycaRouter.navigate('memories'); await ThycaRouter.navigate('profile', { search: '?bot=thyca' });
     await wait(() => document.querySelector('#bot-model')?.value === 'model-b' && document.querySelector('#bot-thinking')?.value === 'max');
-    document.querySelector('#profile-shared').click();
+    document.querySelector('#profile-root [data-action="show-shared"]').click();
     await wait(() => ThycaRouter.currentRoute().search === '' && document.querySelector('[data-edit="USER.md"]'));
     if (document.querySelectorAll('#team-bot-list .bot-card[data-selected="true"]').length) throw new Error('shared Profile failed to clear bot selection');
     document.querySelector('[data-edit="USER.md"]').click();
@@ -2129,7 +2127,7 @@ SETUP_GATE_RESULT_SCRIPT = r"""
     if (gateCase === 'stale') {
       await wait(async()=> (await fetch(window.__controlBase+'/state').then(r=>r.json())).statusStarted);
       const checkingNotice=document.querySelector('#thyca-page-host>[data-setup-notice]');
-      const checkingVisible=!!checkingNotice&&checkingNotice.getAttribute('role')==='status'&&getComputedStyle(checkingNotice).gridColumnStart==='3';
+      const checkingVisible=!!checkingNotice&&checkingNotice.getAttribute('role')==='status'&&getComputedStyle(checkingNotice).gridColumnStart==='2';
       dispatchEvent(new Event('thyca:config-saved'));
       await wait(()=>ThycaRouter.setupState()==='required');
       await fetch(window.__controlBase+'/release');

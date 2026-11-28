@@ -38,17 +38,20 @@ def test_trace_code_uses_opaque_scoped_surface() -> None:
     results) sit on an opaque flat surface with a border — never the paper
     token — and the error variant keeps its own tint."""
     trace = _read("dashboard/dashboardcss/dashboard.css")
+    base = _read("share/base.css")
     assert ".dashboard-shell .tl-code{" in trace
     block = trace[trace.index(".dashboard-shell .tl-code{"):]
     block = block[: block.index("}")]
-    assert "background:#fff8ec" in block
+    assert "background:var(--surface-code)" in block
+    assert "--surface-code:#fff8ec" in base
     assert "border:1px solid" in block
     assert "white-space:pre-wrap" in block
     assert "overflow-wrap:anywhere" in block
     assert "max-height:320px" in block
     err = trace[trace.index(".dashboard-shell .tl-code.tl-code-err{"):]
     err = err[: err.index("}")]
-    assert "background:#fdf0ea" in err
-    assert "color:#944f3d" in err
+    assert "background:var(--danger-bg)" in err
+    assert "color:var(--danger-ink)" in err
+    assert "--danger-bg:#fdf0ea" in base and "--danger-ink:#944f3d" in base
     for banned in ("url(", "linear-gradient", "radial-gradient"):
         assert banned not in block and banned not in err

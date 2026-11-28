@@ -111,79 +111,89 @@ def _eval_dash(node: str, body: str) -> object:
     return json.loads(result.stdout)
 
 
-def test_model_rows_sorted_by_tokens_desc(node: str) -> None:
-    """"Model trong kỳ": one row per model, sorted by total_tokens desc,
-    name/requests/tokens/p50/cost as real text."""
+def test_model_series_sorted_stacked_and_folded_past_top_4(node: str) -> None:
+    """Model grouping ranks named models by the active metric, stacks bars
+    by model color, and folds models beyond the top 4 into 'Khác'."""
     models = [
-        {"model": "muse-spark-1.2-contributor", "requests": 30,
-         "total_tokens": 300, "cost_usd": 0.01, "latency_ms_p50": 900,
-         "last_started_at": "2026-09-19T09:00:00Z"},
-        {"model": "gpt-5.6-luna", "requests": 50,
-         "total_tokens": 5000, "cost_usd": 0.02, "latency_ms_p50": 1200,
-         "last_started_at": "2026-09-20T09:00:00Z"},
-        {"model": "a-very-long-model-name-with-date-suffix-20250929",
-         "requests": 20, "total_tokens": 200, "cost_usd": None,
-         "latency_ms_p50": None, "last_started_at": ""},
+        {"model": "m-small", "requests": 10, "total_tokens": 100, "cost_usd": 0.01, "latency_ms_p50": 300},
+        {"model": "gpt-5.6-luna", "requests": 50, "total_tokens": 5000, "cost_usd": 0.05, "latency_ms_p50": 1200},
+        {"model": "muse-spark", "requests": 80, "total_tokens": 300, "cost_usd": 0.02, "latency_ms_p50": 900},
+        {"model": "m-three", "requests": 20, "total_tokens": 400, "cost_usd": 0.03},
+        {"model": "m-four", "requests": 15, "total_tokens": 200, "cost_usd": 0.01},
+        {"model": "m-five", "requests": 5, "total_tokens": 50, "cost_usd": 0.005},
     ]
-    rows = _eval_dash(
+    by_day = [{
+        "day": "2026-09-20", "requests": 180, "total_tokens": 6050, "cost_usd": 0.125,
+        "by_model": [{"model": m["model"], "requests": m["requests"], "total_tokens": m["total_tokens"], "cost_usd": m["cost_usd"]} for m in models],
+    }]
+    out = _eval_dash(
         node,
-        f"statsData = {{ by_model: {json.dumps(models)} }};\n"
-        "renderModelRows();\n"
-        "console.log(JSON.stringify(document.querySelector('#rows-model').innerHTML));",
+        f"rangeFrom = '2026-09-14'; rangeTo = '2026-09-20';\n"
+        f"statsData = {{ totals: {{ total_tokens: 6050, requests: 180, cost_usd: 0.125 }}, by_model: {json.dumps(models)}, by_day: {json.dumps(by_day)} }};\n"
+        "setUsageGroup('model');\n"
+        "const tokLegend = document.querySelector('#usage-chart-legend').innerHTML;\n"
+        "const tokChart = document.querySelector('#chart-day').innerHTML;\n"
+        "setDayMetric('requests');\n"
+        "const reqLegend = document.querySelector('#usage-chart-legend').innerHTML;\n"
+        "const reqChart = document.querySelector('#chart-day').innerHTML;\n"
+        "console.log(JSON.stringify({ tokLegend, tokChart, reqLegend, reqChart }));",
     )
-    names = [
-        m.split('title="')[1].split('"')[0]
-        for m in rows.split('<span class="model-name"')[1:]
+    tok_labels = [
+        chunk.split("</span>")[0]
+        for chunk in out["tokLegend"].split('<span class="legend-label">')[1:]
     ]
-    assert names == [
-        "gpt-5.6-luna",
-        "muse-spark-1.2-contributor",
-        "a-very-long-model-name-with-date-suffix-20250929",
+    assert tok_labels == ["gpt-5.6-luna", "m-three", "muse-spark", "m-four", "Khác"]
+    assert "5.000" in out["tokLegend"]
+    assert "~1,2 giây" in out["tokLegend"]
+    assert out["tokChart"].count("dc-seg-series") == 5
+    req_labels = [
+        chunk.split("</span>")[0]
+        for chunk in out["reqLegend"].split('<span class="legend-label">')[1:]
     ]
-    assert "50 request" in rows
-    assert "5.000 token" in rows
-    assert "p50 1,2 giây" in rows
-    assert "$0.0200" in rows
-    assert "$0.0100" in rows
-    assert "200 token · — · p50 —" in rows
+    assert req_labels == ["muse-spark", "gpt-5.6-luna", "m-three", "m-four", "Khác"]
+    assert out["reqChart"].count("dc-seg-series") == 5
 
 
 def test_empty_zero_and_missing_models_are_honest(node: str) -> None:
-    """An empty by_model renders the empty note; a model with no p50/cost
-    keeps its em dashes."""
-    rows = _eval_dash(
+    """An empty period shows the empty chart note; zero recorded cost renders
+    honestly as $0.000000 in the Cost legend."""
+    out_empty = _eval_dash(
         node,
-        "statsData = { by_model: [] };\n"
-        "renderModelRows();\n"
-        "console.log(JSON.stringify(document.querySelector('#rows-model').innerHTML));",
+        "statsData = { by_model: [], by_day: [] };\n"
+        "setUsageGroup('model');\n"
+        "console.log(JSON.stringify(document.querySelector('#chart-day').innerHTML));",
     )
-    assert "Chưa có lượt nào trong kỳ." in rows
-    one = _eval_dash(
+    assert "Chưa có lượt nào trong kỳ." in out_empty
+    out = _eval_dash(
         node,
-        'statsData = { by_model: [{model: "solo-model", requests: 7,'
-        ' total_tokens: 70, cost_usd: 0, latency_ms_p50: 40,'
-        ' last_started_at: "2026-09-20T09:00:00Z"}] };\n'
-        "renderModelRows();\n"
-        "console.log(JSON.stringify(document.querySelector('#rows-model').innerHTML));",
+        'statsData = { totals: { total_tokens: 70, requests: 7, cost_usd: 0 },'
+        ' by_model: [{model: "solo-model", requests: 7, total_tokens: 70, cost_usd: 0, latency_ms_p50: 40}],'
+        ' by_day: [{day: "2026-09-20", requests: 7, total_tokens: 70, cost_usd: 0}] };\n'
+        "setUsageGroup('model'); renderCostChart();\n"
+        "console.log(JSON.stringify({ usage: document.querySelector('#usage-chart-legend').innerHTML,"
+        " cost: document.querySelector('#cost-chart-legend').innerHTML }));",
     )
-    assert one.count('class="model-row"') == 1
-    assert "solo-model" in one
-    assert "p50 40 ms" in one
-    assert "$0.000000" in one
+    assert "solo-model" in out["usage"] and "~40 ms" in out["usage"]
+    assert "$0.000000" in out["cost"]
 
 
 def test_long_and_hostile_names_stay_text(node: str) -> None:
-    """A hostile model id is escaped everywhere it renders — name and the
-    title attribute — never parsed into markup."""
-    rows = _eval_dash(
+    """A hostile model id is escaped everywhere it renders — legend label,
+    title tooltip and bar tooltip — never parsed into markup."""
+    out = _eval_dash(
         node,
-        'statsData = { by_model: [{model: "<img src=x onerror=alert(1)>",'
-        ' requests: 3, total_tokens: 30}] };\n'
-        "renderModelRows();\n"
-        "console.log(JSON.stringify(document.querySelector('#rows-model').innerHTML));",
+        "rangeFrom = '2026-09-14'; rangeTo = '2026-09-20';\n"
+        'statsData = { totals: { total_tokens: 30, requests: 3 },'
+        ' by_model: [{model: "<img src=x onerror=alert(1)>", requests: 3, total_tokens: 30}],'
+        ' by_day: [{day: "2026-09-20", requests: 3, total_tokens: 30,'
+        '   by_model: [{model: "<img src=x onerror=alert(1)>", requests: 3, total_tokens: 30}]}] };\n'
+        "setUsageGroup('model');\n"
+        "console.log(JSON.stringify({ legend: document.querySelector('#usage-chart-legend').innerHTML,"
+        " chart: document.querySelector('#chart-day').innerHTML }));",
     )
-    assert "<img src=x onerror=alert(1)>" not in rows
-    assert "&lt;img src=x onerror=alert(1)&gt;" in rows
+    for html in (out["legend"], out["chart"]):
+        assert "<img src=x onerror=alert(1)>" not in html
+        assert "&lt;img src=x onerror=alert(1)&gt;" in html
 
 
 def test_period_change_never_keeps_a_stale_response(node: str) -> None:
@@ -196,21 +206,20 @@ def test_period_change_never_keeps_a_stale_response(node: str) -> None:
           __jsonResponder = (url) => new Promise((resolve) => {
             pending.push({ url, resolve });
           });
+          setUsageGroup('model');
           rangeFrom = '2026-09-01'; rangeTo = '2026-09-30';
           const first = loadStats();
           rangeFrom = '2026-09-20'; rangeTo = '2026-09-26';
           const second = loadStats();
-          // The newer request resolves first…
-          pending[1].resolve({ totals: { requests: 5 }, by_model: [
+          pending[1].resolve({ totals: { requests: 5, total_tokens: 50 }, by_model: [
             { model: 'fresh-7d', requests: 5, total_tokens: 50 }] });
           await second;
-          const afterFast = document.querySelector('#rows-model').innerHTML;
-          // …then the older response lands late and must be ignored.
-          pending[0].resolve({ totals: { requests: 900 }, by_model: [
+          const afterFast = document.querySelector('#usage-chart-legend').innerHTML;
+          pending[0].resolve({ totals: { requests: 900, total_tokens: 9000 }, by_model: [
             { model: 'stale-30d', requests: 900, total_tokens: 9000 }] });
           await new Promise((r) => setTimeout(r, 5));
           return { afterFast,
-            final: document.querySelector('#rows-model').innerHTML,
+            final: document.querySelector('#usage-chart-legend').innerHTML,
             stats: statsData.totals.requests,
             statUrls: __jsonCalls.filter((u) => u.includes('stats')) };
         })().then((v) => console.log(JSON.stringify(v)))""",
@@ -248,18 +257,20 @@ def test_changed_scope_failure_keeps_stats_unknown_and_retryable(node: str) -> N
           __jsonResponder = async () => { throw new Error('scope unavailable'); };
           await loadStats();
           dayMetric = 'tokens'; renderDayChart();
-          const grid = document.querySelector('#stat-grid').innerHTML;
           return {
-            values: [...grid.matchAll(/class="stat-value">([^<]+)<\/p>/g)].map(match => match[1]),
-            grid,
+            totals: [
+              document.querySelector('#usage-chart-total').textContent,
+              document.querySelector('#cost-chart-total').textContent,
+            ],
+            usageLegend: document.querySelector('#usage-chart-legend').innerHTML,
+            costLegend: document.querySelector('#cost-chart-legend').innerHTML,
+            coverageHidden: document.querySelector('#cost-coverage').hidden,
+            coverageText: document.querySelector('#cost-coverage').textContent,
             status: document.querySelector('#stats-status-text').textContent,
             statusHidden: document.querySelector('#page-status').hidden,
             retryHidden: document.querySelector('#stats-retry').hidden,
             day: document.querySelector('#chart-day').innerHTML,
-            dayNote: document.querySelector('#chart-day-note').textContent,
-            hour: document.querySelector('#chart-hour').innerHTML,
-            bots: document.querySelector('#rows-bot').innerHTML,
-            models: document.querySelector('#rows-model').innerHTML,
+            cost: document.querySelector('#chart-cost').innerHTML,
             modelValue: document.querySelector('#filter-model').value,
             modelOptions: document.querySelector('#filter-model').options.map(option => option.value),
             statusValue: document.querySelector('#filter-status').value,
@@ -267,11 +278,13 @@ def test_changed_scope_failure_keeps_stats_unknown_and_retryable(node: str) -> N
           };
         })().then(value => console.log(JSON.stringify(value)))""",
     )
-    assert outcome["values"] == ["—"] * 4
-    assert "chưa có giá" not in outcome["grid"].lower()
+    assert outcome["totals"] == ["—", "—"]
+    assert 'id="usage-input-total">—</strong>' in outcome["usageLegend"]
+    assert outcome["costLegend"] == ""
+    assert outcome["coverageHidden"] is True and outcome["coverageText"] == ""
     assert outcome["statusHidden"] is False and "scope unavailable" in outcome["status"]
     assert outcome["retryHidden"] is False
-    assert all(outcome[key] == "" for key in ("day", "dayNote", "hour", "bots", "models"))
+    assert outcome["day"] == "" and outcome["cost"] == ""
     assert outcome["modelValue"] == "old-model" and "old-model" in outcome["modelOptions"]
     assert outcome["statusValue"] == "completed"
     assert outcome["statsData"] is None
@@ -289,12 +302,11 @@ def test_stats_and_trace_responses_have_independent_guards(node: str) -> None:
           });
           loadStats(true);
           loadTraces(true, true);
-          loadTraces(true, true);   // the user re-filters: a newer list request wins
+          loadTraces(true, true);
           pending[0].resolve({ totals: { requests: 9 }, by_model: [] });
           pending[2].resolve({ traces: [{ kind: 'dm', bot_id: 's2', turn_index: 0 }],
                                total: 1 });
           await new Promise((r) => setTimeout(r, 5));
-          // The stale first list page arrives late and must be dropped.
           pending[1].resolve({ traces: [{ kind: 'dm', bot_id: 'old', turn_index: 0 }],
                                total: 99 });
           await new Promise((r) => setTimeout(r, 5));
@@ -309,21 +321,21 @@ def test_stats_and_trace_responses_have_independent_guards(node: str) -> None:
     assert "old" not in outcome["html"]
 
 
-def _bot_rows_eval(node: str, by_bot: list, roster: dict) -> str:
+def _bot_legend_eval(node: str, by_bot: list, roster: dict) -> str:
     return _eval_dash(
         node,
         f"globalThis.__roster = {json.dumps(roster)};\n"
         f"statsData = {{ by_bot: {json.dumps(by_bot)},"
         "  totals: { requests: 10, total_tokens: 100 } };\n"
-        "renderBotRows();\n"
-        "console.log(JSON.stringify(document.querySelector('#rows-bot').innerHTML));",
+        "setUsageGroup('bot');\n"
+        "console.log(JSON.stringify(document.querySelector('#usage-chart-legend').innerHTML));",
     )
 
 
-def test_request_bots_avatar_sort_and_unknown(node: str) -> None:
-    """by_bot rows: requests desc, roster bots get a seal + card name,
-    unattributed turns render 'Chưa gắn bot' with the '?' chip, and the
-    share label uses the period total."""
+def test_request_bots_sort_color_and_unknown(node: str) -> None:
+    """Bot legend ranks by active metric desc, renders roster bots as
+    clickable scope buttons in their signature color, and labels unattributed
+    turns 'Chưa gắn bot' with the neutral fallback color."""
     by_bot = [
         {"bot_id": "designer", "requests": 2, "tool_calls": 1,
          "total_tokens": 20, "cost_usd": 0.001,
@@ -339,119 +351,113 @@ def test_request_bots_avatar_sort_and_unknown(node: str) -> None:
         "coder": {"id": "coder", "name": "Coder", "color": "#123", "state": "idle"},
         "designer": {"id": "designer", "name": "Designer", "color": "#456", "state": "idle"},
     }
-    rows = _bot_rows_eval(node, by_bot, roster)
-    assert rows.index("Coder") < rows.index("Designer") < rows.index("Chưa gắn bot")
-    assert "<ava:coder/>" in rows and "<ava:designer/>" in rows
-    assert '<span class="row-avatar id-chip" title="unknown">?</span>' in rows
-    assert "Chưa gắn bot" in rows
-    assert "70%" in rows and "20%" in rows and "10%" in rows
-    assert 'aria-label="70% tổng token"' in rows
+    legend = _bot_legend_eval(node, by_bot, roster)
+    assert legend.index("Coder") < legend.index("Designer") < legend.index("Chưa gắn bot")
+    assert 'data-bot-id="coder"' in legend and "background:#123" in legend
+    assert 'data-bot-id="designer"' in legend and "background:#456" in legend
+    assert 'data-bot-id="unknown"' not in legend and "background:#a08f68" in legend
+    assert "Chưa gắn bot" in legend
+    assert "70%" in legend and "20%" in legend and "10%" in legend
 
 
 def test_request_unknown_id_in_roster_renders_as_real_bot(node: str) -> None:
-    """If /api/bots really contains id 'unknown', it is a bot: seal + card
-    name instead of the '?' fallback."""
+    """If /api/bots really contains id 'unknown', botDisplayName resolves to
+    its card name instead of 'Chưa gắn bot'."""
     by_bot = [{"bot_id": "unknown", "requests": 1, "tool_calls": 0,
                "total_tokens": 10, "cost_usd": None,
                "last_started_at": "2026-09-18T09:00:00Z"}]
-    rows = _bot_rows_eval(
+    legend = _bot_legend_eval(
         node, by_bot,
         {"unknown": {"id": "unknown", "name": "Nemo", "color": "#789", "state": "idle"}},
     )
-    assert "<ava:unknown/>" in rows
-    assert "Nemo" in rows
-    assert "id-chip" not in rows
+    assert "Nemo" in legend
+    assert "Chưa gắn bot" not in legend
 
 
-def test_bot_row_meta_and_share_bar(node: str) -> None:
-    """Each bot row keeps the compact meta line (requests · tool · tokens ·
-    cost · last activity) and a share bar scaled to the largest bot."""
+def test_bot_legend_tooltip_and_shares(node: str) -> None:
+    """Usage bot legend carries concise values + percentages inline and full
+    turn/request counts in the hover tooltip."""
     by_bot = [
-        {"bot_id": "coder", "requests": 8, "tool_calls": 2,
+        {"bot_id": "coder", "turns": 4, "requests": 8, "tool_calls": 2,
          "total_tokens": 80, "cost_usd": 0.004,
          "last_started_at": "2026-09-20T09:00:00Z"},
         {"bot_id": "designer", "requests": 2, "tool_calls": 0,
          "total_tokens": 20, "cost_usd": 0.001,
          "last_started_at": "2026-09-19T09:00:00Z"},
     ]
-    rows = _bot_rows_eval(node, by_bot, {})
-    assert "8 request · 2 tool · 80 token · $0.0040" in rows
-    assert 'style="width:100%' in rows or "width:100;" in rows or "width:100%" in rows
-    assert "80% tổng token" in rows
-    assert "20% tổng token" in rows
+    legend = _bot_legend_eval(node, by_bot, {})
+    assert "4 lượt · 8 lần gọi" in legend
+    assert "2 lần gọi" in legend
+    assert "$0.0040" not in legend
+    assert "80%" in legend and "20%" in legend
 
 
-def test_model_rows_hide_unknown_but_keep_totals(node: str) -> None:
-    """The 'unknown' model bucket never renders in either by-model
-    listing, while totals/shares still count it and bot attribution is
-    untouched."""
+def test_model_series_folds_unknown_without_leaking_raw_id(node: str) -> None:
+    """When named models coexist with 'unknown', 'unknown' folds into 'Khác'
+    so stacked heights match totals while raw 'unknown' never renders."""
     by_model = [
         {"model": "unknown", "requests": 3, "total_tokens": 30,
-         "cost_usd": 0.03, "latency_ms_p50": 50,
-         "last_started_at": "2026-09-21T09:00:00Z"},
+         "cost_usd": 0.03, "latency_ms_p50": 50},
         {"model": "known-model", "requests": 7, "total_tokens": 70,
-         "cost_usd": 0.07, "latency_ms_p50": 60,
-         "last_started_at": "2026-09-20T09:00:00Z"},
+         "cost_usd": 0.07, "latency_ms_p50": 60},
     ]
     out = _eval_dash(
         node,
         f"statsData = {{ by_model: {json.dumps(by_model)},"
         "  totals: { total_tokens: 100, cost_usd: 0.10 } };\n"
-        "renderModelRows();\n"
-        "renderCostRows();\n"
+        "setUsageGroup('model');\n"
+        "renderCostChart();\n"
         "console.log(JSON.stringify({"
-        " usage: document.querySelector('#rows-model').innerHTML,"
-        " cost: document.querySelector('#rows-model-cost').innerHTML,"
+        " usage: document.querySelector('#usage-chart-legend').innerHTML,"
+        " cost: document.querySelector('#cost-chart-legend').innerHTML,"
         " kept: statsData.by_model.length }))",
     )
     for key in ("usage", "cost"):
         assert "known-model" in out[key]
+        assert "Khác" in out[key]
         assert "unknown" not in out[key]
-    assert "70%" in out["usage"]
-    assert "70%" in out["cost"]
+        assert "70%" in out[key] and "30%" in out[key]
     assert out["kept"] == 2
 
 
-def test_only_unknown_model_says_no_identifiable_model(node: str) -> None:
-    """An unknown-only period hides the row and says no model is
-    identifiable (not that there are no turns); bot rows still keep their
-    own 'unknown' attribution."""
+def test_only_unknown_model_labels_honestly(node: str) -> None:
+    """An unknown-only period labels the legend 'Không rõ model' (never raw
+    'unknown'), while bot grouping keeps 'Chưa gắn bot'."""
     out = _eval_dash(
         node,
         "statsData = { by_model: [{ model: 'unknown', requests: 1,"
         " total_tokens: 10, cost_usd: 0.01 }],"
         " by_bot: [{ bot_id: 'unknown', requests: 1, total_tokens: 10,"
-        " cost_usd: 0.01, last_started_at: '2026-09-20T09:00:00Z' }],"
+        " cost_usd: 0.01 }],"
         " totals: { total_tokens: 10, cost_usd: 0.01 } };\n"
-        "renderModelRows();\n"
-        "renderCostRows();\n"
-        "renderBotRows();\n"
-        "console.log(JSON.stringify({"
-        " usage: document.querySelector('#rows-model').innerHTML,"
-        " cost: document.querySelector('#rows-model-cost').innerHTML,"
-        " bots: document.querySelector('#rows-bot').innerHTML }))",
+        "setUsageGroup('model');\n"
+        "const usageModel = document.querySelector('#usage-chart-legend').innerHTML;\n"
+        "renderCostChart();\n"
+        "const costModel = document.querySelector('#cost-chart-legend').innerHTML;\n"
+        "setUsageGroup('bot');\n"
+        "const bots = document.querySelector('#usage-chart-legend').innerHTML;\n"
+        "console.log(JSON.stringify({ usageModel, costModel, bots }))",
     )
-    assert "Không có model xác định trong kỳ." in out["usage"]
-    assert "Không có model xác định trong kỳ." in out["cost"]
-    assert "Chưa có lượt nào trong kỳ." not in out["usage"]
-    assert "Chưa có dữ liệu chi phí theo model." not in out["cost"]
+    assert "Không rõ model" in out["usageModel"] and "unknown" not in out["usageModel"]
+    assert "Không rõ model" in out["costModel"] and "unknown" not in out["costModel"]
     assert "Chưa gắn bot" in out["bots"]
 
 
-def test_genuinely_empty_model_lists_keep_no_data_notes(node: str) -> None:
-    """A period with no by_model entries keeps the existing no-data
-    messages in both by-model listings."""
+def test_genuinely_empty_charts_keep_no_data_notes(node: str) -> None:
+    """A period with no buckets shows the empty note in both charts and
+    leaves series legends clean."""
     out = _eval_dash(
         node,
-        "statsData = { by_model: [],"
+        "statsData = { by_model: [], by_day: [], by_hour: [],"
         " totals: { total_tokens: 0, cost_usd: null } };\n"
-        "renderModelRows();\n"
-        "renderCostRows();\n"
+        "setUsageGroup('model');\n"
+        "renderCostChart();\n"
         "console.log(JSON.stringify({"
-        " usage: document.querySelector('#rows-model').innerHTML,"
-        " cost: document.querySelector('#rows-model-cost').innerHTML }))",
+        " usage: document.querySelector('#chart-day').innerHTML,"
+        " cost: document.querySelector('#chart-cost').innerHTML,"
+        " usageLegend: document.querySelector('#usage-chart-legend').innerHTML,"
+        " costLegend: document.querySelector('#cost-chart-legend').innerHTML }))",
     )
     assert "Chưa có lượt nào trong kỳ." in out["usage"]
-    assert "Chưa có dữ liệu chi phí theo model." in out["cost"]
-    assert "Không có model xác định trong kỳ." not in out["usage"]
-    assert "Không có model xác định trong kỳ." not in out["cost"]
+    assert "Chưa có lượt nào trong kỳ." in out["cost"]
+    assert out["usageLegend"] == "" and out["costLegend"] == ""

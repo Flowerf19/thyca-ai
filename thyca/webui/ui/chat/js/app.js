@@ -30,6 +30,8 @@ $('#stop-button').onclick = stopRun;
 
 $('#composer').onsubmit = e => {
   e.preventDefault(); const input = $('#message'); let text = input.value.trim(); if (!text || runs.has(currentConversation)) return;
+  const submittedMention = text.match(/^@([\w-]+)\b/);
+  if (submittedMention && getBot(submittedMention[1].toLowerCase())) mentionBot(submittedMention[1].toLowerCase());
   const match = text.match(mentionPattern()); const recipient = match ? match[1].toLowerCase() : selectedBot;
   if (attachment) { toast('Tệp đính kèm chưa được hỗ trợ — chỉ gửi phần chữ.'); }
   sendTurn(text, recipient);
@@ -47,7 +49,8 @@ $('#message').addEventListener('input', e => {
   const q = el.value.match(/@([\w-]*)$/); const popup = $('#mention-popup'); popup.hidden = !q;
   if (q) { const matches = bots.filter(b => b.id.startsWith(q[1].toLowerCase())); popup.innerHTML = matches.map(b => `<button type="button" class="mention-option" role="option" data-mention="${b.id}" style="color:${b.palette.ink}">@${b.name} · ${escapeHTML(b.role)}</button>`).join(''); popup.hidden = !matches.length; }
 });
-$('#message').addEventListener('focus', () => idleInput(selectedBot));
+$('#message').addEventListener('focus', () => { idleInput(selectedBot); window.ThycaChatFocused = true; if (typeof wakeEyeLoop === 'function') wakeEyeLoop(); });
+$('#message').addEventListener('blur', () => { window.ThycaChatFocused = false; if (typeof wakeEyeLoop === 'function') wakeEyeLoop(); });
 $('#mention-popup').onclick = e => { const item = e.target.closest('[data-mention]'); if (item) { $('#message').value = $('#message').value.replace(/@[\w-]*$/, '@' + item.dataset.mention + ' '); selectedBot = item.dataset.mention; typedMention = selectedBot; mentionBot(selectedBot); updateComposer(); $('#mention-popup').hidden = true; $('#message').focus(); } };
 $('#attach-file').onclick = () => $('#file-input').click(); $('#file-input').onchange = e => { attachment = e.target.files[0]; if (!attachment) return; $('#file-chip span').textContent = attachment.name; $('#file-chip').hidden = false; toast('Tệp đính kèm chưa được backend hỗ trợ.'); }; $('#remove-file').onclick = () => { attachment = null; $('#file-chip').hidden = true; $('#file-input').value = ''; };
 $('#message-list').addEventListener('click', async e => {

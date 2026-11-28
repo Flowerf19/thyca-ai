@@ -106,15 +106,13 @@
     const locked = setupState !== 'ready';
     document.documentElement.dataset.setupState = setupState;
     const sidebar = document.querySelector('#chat-sidebar'), menu = document.querySelector('.menu-button');
-    if (locked && sidebar?.classList.contains('mobile-open') && typeof closeMobile === 'function') closeMobile();
+    const navToggle = document.querySelector('#nav-toggle'), navSidebar = document.querySelector('#nav-sidebar');
+    if (locked && (sidebar?.classList.contains('mobile-open') || navSidebar?.classList.contains('mobile-open')) && typeof closeMobile === 'function') closeMobile();
     const isNarrow = matchMedia('(max-width:850px)').matches;
     if (sidebar) sidebar.inert = locked || (isNarrow && !sidebar.classList.contains('mobile-open'));
     if (menu) menu.disabled = locked;
-    const pageMenuBtn = document.querySelector('#page-menu-toggle');
-    if (pageMenuBtn) {
-      pageMenuBtn.disabled = locked;
-      if (locked && typeof closePageMenu === 'function') closePageMenu();
-    }
+    if (navToggle) navToggle.disabled = locked;
+    if (navSidebar) navSidebar.inert = locked || (isNarrow && !navSidebar.classList.contains('mobile-open'));
     if (typeof syncSidebarChrome === 'function') syncSidebarChrome();
     for (const link of document.querySelectorAll('[data-page-link]')) {
       if (locked && link.dataset.pageLink !== 'provider') {
@@ -129,8 +127,6 @@
         }
       }
     }
-    const splitter = document.querySelector('.splitter');
-    if (splitter) { splitter.inert = locked; splitter.setAttribute('aria-disabled', String(locked)); }
   }
   setNavigationLock();
   function renderSetupNotice() {
@@ -259,7 +255,17 @@
     });
     if (ticket !== generation) return;
   }
-  async function enableStyles(entry, ticket) {
+  async function preloadStyles(entry, ticket) {
+    const page = entry.page;
+    const shared = page === 'chat' ? null : styleLink('/ui/share/app-shell.css', 'app-shell');
+    const pageStyle = styleLink(entry.stylesheet, page);
+    for (const link of [shared, pageStyle].filter(Boolean)) {
+      if (!link.isConnected) link.media = 'print';
+      await awaitStylesheet(link, ticket);
+      if (ticket !== generation) return;
+    }
+  }
+  function activateStyles(entry) {
     const page = entry.page;
     const shared = page === 'chat' ? null : styleLink('/ui/share/app-shell.css', 'app-shell');
     const pageStyle = styleLink(entry.stylesheet, page);
@@ -282,9 +288,16 @@
         navTitle.removeAttribute('title');
       }
     }
-    for (const link of [shared, pageStyle].filter(Boolean)) {
-      await awaitStylesheet(link, ticket);
-      if (ticket !== generation) return;
+  }
+  function syncNavChrome(entry) {
+    const page = entry.page;
+    for (const link of document.querySelectorAll('[data-page-link]')) {
+      const active = link.dataset.pageLink === page;
+      link.classList.toggle('is-current', active);
+      if (active) {
+        link.setAttribute('aria-current', 'page');
+        link.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+      } else link.removeAttribute('aria-current');
     }
   }
   function contextFor(page, view) {
@@ -382,17 +395,11 @@
       for (const dialog of document.querySelectorAll('dialog[open]')) dialog.close();
       if (typeof closeMobile === 'function') closeMobile();
       previous?.controller?.onLeave?.();
-      if (previous) setWorkspace(previous, false);
     }
     const ticket = ++generation;
     if (force && previous === entry) setWorkspace(entry, false);
     current = entry;
-    const shell = document.querySelector('.notebook-shell');
-    if (shell) {
-      for (const id of pages.keys()) shell.classList.remove(`${id}-shell`);
-      shell.classList.add(`${page}-shell`);
-      shell.setAttribute('aria-label', `Thyca — ${entry.title}`);
-    }
+    syncNavChrome(entry);
     if (!entry.view) {
       entry.view = page === 'chat' ? document.querySelector('#chat-workspace') : document.createElement('section');
       if (!entry.view) { showError(host, new Error('Không tìm thấy vùng nội dung')); return; }
@@ -405,9 +412,19 @@
       bindWorkspaceDialogs(entry.view);
     }
     entry.ctx.route = { ...next };
-    try { await enableStyles(entry, ticket); }
+    const applyShellChrome = () => {
+      const shell = document.querySelector('.notebook-shell');
+      if (shell) {
+        for (const id of pages.keys()) shell.classList.remove(`${id}-shell`);
+        shell.classList.add(`${page}-shell`);
+        shell.setAttribute('aria-label', `Thyca — ${entry.title}`);
+      }
+      activateStyles(entry);
+    };
+    try { await preloadStyles(entry, ticket); }
     catch (err) {
       if (ticket !== generation || current !== entry) return;
+      applyShellChrome();
       for (const item of pages.values()) setWorkspace(item, item === entry);
       showError(entry.view, err, () => { entry.view.querySelector('.spa-error')?.remove(); navigate(page, entry.ctx.route, { replace: true, force: true }); });
       return;
@@ -417,6 +434,7 @@
     if (!entry.controller) {
       try { entry.controller = entry.mount(entry.ctx) || {}; }
       catch (err) {
+        applyShellChrome();
         showError(entry.view, err);
         for (const item of pages.values()) setWorkspace(item, item === entry);
         document.title = `Thyca — ${entry.title}`;
@@ -427,22 +445,49 @@
     if (destinationRouteChanged) notifyRoute(entry);
     await entry.ready;
     if (ticket !== generation || current !== entry) return;
-    for (const item of pages.values()) setWorkspace(item, item === entry);
-    if (destinationRouteChanged) entry.controller?.onRoute?.(entry.ctx.route);
-    entry.controller?.onEnter?.(entry.ctx.route);
-    renderTeam();
-    for (const link of document.querySelectorAll('[data-page-link]')) {
-      const active = link.dataset.pageLink === page;
-      link.classList.toggle('is-current', active);
-      if (active) {
-        link.setAttribute('aria-current', 'page');
-        link.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-      } else link.removeAttribute('aria-current');
+    const applySwap = () => {
+      applyShellChrome();
+      for (const item of pages.values()) setWorkspace(item, item === entry);
+      if (destinationRouteChanged) entry.controller?.onRoute?.(entry.ctx.route);
+      entry.controller?.onEnter?.(entry.ctx.route);
+      renderTeam();
+      syncNavChrome(entry);
+      document.title = `Thyca — ${entry.title}`;
+    };
+    const allowMotion = pageChanged
+      && !document.body.classList.contains('motion-paused')
+      && !matchMedia('(prefers-reduced-motion:reduce)').matches;
+    let swapped = false;
+    const runSwap = () => {
+      if (swapped) return;
+      swapped = true;
+      applySwap();
+    };
+    if (allowMotion && previous?.view && !previous.view.hidden && typeof document.startViewTransition === 'function') {
+      let vt = null;
+      try {
+        vt = document.startViewTransition(runSwap);
+      } catch {}
+      if (vt) {
+        vt.ready?.catch(() => {});
+        vt.finished?.catch(() => {});
+        await vt.updateCallbackDone.catch(err => {
+          if (err?.name !== 'AbortError') throw err;
+        });
+      }
+      if (!swapped && ticket === generation && current === entry) runSwap();
+    } else {
+      runSwap();
+      if (allowMotion && entry.view) {
+        entry.view.classList.remove('page-entering');
+        void entry.view.offsetWidth;
+        entry.view.classList.add('page-entering');
+        const clearEnter = () => entry.view?.classList.remove('page-entering');
+        entry.view.addEventListener?.('animationend', clearEnter, { once: true });
+        setTimeout(clearEnter, 260);
+      }
     }
-    const pageMenuLabel = document.querySelector('.page-menu-label');
-    if (pageMenuLabel) pageMenuLabel.textContent = entry.title;
-    if (typeof closePageMenu === 'function') closePageMenu();
-    document.title = `Thyca — ${entry.title}`;
+    if (ticket !== generation || current !== entry) return;
     if (pageChanged) {
       const heading = entry.view.querySelector('h1, [data-page-heading]') || entry.view;
       if (!heading.hasAttribute('tabindex')) heading.tabIndex = -1;

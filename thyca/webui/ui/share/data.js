@@ -90,9 +90,20 @@ const TINT_ORDER = ['accent', 'botanical', 'success-ink', 'ink', 'accent-deep'];
 
 const STATE_MAP = { idle: 'idle', thinking: 'thinking', running: 'working', waiting: 'waiting', done: 'done', error: 'error', offline: 'offline' };
 
+function isDarkThemeActive() { return typeof document !== 'undefined' && document.documentElement?.dataset?.theme === 'dark'; }
 function botStateFrom(card) {
   if (card.status === 'paused') return 'offline';
-  return STATE_MAP[String(card.agent_status?.state || 'idle')] || 'idle';
+  const st = String(card.agent_status?.state || 'idle');
+  const kind = String(card.agent_status?.waiting_on?.kind || card.agent_status?.phase || '').toLowerCase();
+  if (st === 'waiting' && (kind === 'user' || kind === 'private' || kind === 'private_followup')) return 'confused';
+  if (card.agent_status?.room_id && st === 'running') return 'group';
+  return STATE_MAP[st] || 'idle';
+}
+function botActionSummary(card) {
+  const ca = card.agent_status?.current_action;
+  if (typeof ca === 'string') return ca;
+  if (ca && typeof ca === 'object') return String(ca.name || ca.title || '');
+  return '';
 }
 function botElapsed(card) {
   const at = Date.parse(card.agent_status?.since || '');
@@ -108,7 +119,11 @@ function normalizeBot(card, index) {
     || TINT_HEX[card.tint]
     || TINT_HEX[TINT_ORDER[index % TINT_ORDER.length]];
   const shapeRaw = localStorage.getItem('thyca.shape.' + card.id);
-  const shape = (typeof DROP_NAMES !== 'undefined' && DROP_NAMES.includes(shapeRaw)) ? shapeRaw : null;
+  const shape = (typeof CREW_IDS !== 'undefined' && CREW_IDS.includes(shapeRaw)) ? shapeRaw : null;
+  const themeRaw = localStorage.getItem('thyca.theme.' + card.id);
+  const theme = (typeof THEME_IDS !== 'undefined' && THEME_IDS.includes(themeRaw)) ? themeRaw : null;
+  const accRaw = localStorage.getItem('thyca.acc.' + card.id);
+  const accessory = (typeof ACCESSORY_IDS !== 'undefined' && ACCESSORY_IDS.includes(accRaw)) ? accRaw : null;
   return {
     id: card.id,
     name: card.name || card.id,
@@ -117,10 +132,14 @@ function normalizeBot(card, index) {
     color: hex,
     tint: card.tint || 'accent',
     shape,
-    palette: derivePalette(hex),
+    theme,
+    accessory,
+    palette: derivePalette(hex, isDarkThemeActive()),
     state: botStateFrom(card),
+    roomId: card.agent_status?.room_id || null,
+    waitingOn: card.agent_status?.waiting_on || null,
     elapsed: botElapsed(card),
-    summary: String(card.agent_status?.current_action || ''),
+    summary: botActionSummary(card),
     capabilities: (card.skills || []).map(s => [s, '']),
     persona: String(card.persona || ''),
     memory: card.memory || null,
@@ -140,6 +159,18 @@ function normalizeBot(card, index) {
     taskGen: 0,
     idle: { since: Date.now(), nextAt: Date.now() + 3400 + Math.random() * 6200 + index * 900, nextGaze: Date.now() + 1200 + index * 850, active: null, endsAt: 0, comment: '', commentUntil: 0, last: null, lastGaze: -1, recentComments: [] },
   };
+}
+function refreshAllBotPalettes() {
+  const dark = isDarkThemeActive();
+  bots.forEach(b => {
+    b.palette = derivePalette(b.color, dark);
+    if (typeof document !== 'undefined' && document.querySelectorAll && typeof paletteStyle === 'function') {
+      const styleStr = paletteStyle(b);
+      document.querySelectorAll(`[data-bot-id="${b.id}"], .message-assistant[data-bot="${b.id}"]`).forEach(el => {
+        el.setAttribute('style', styleStr);
+      });
+    }
+  });
 }
 
 function currentChatWindow() {
@@ -301,7 +332,7 @@ async function syncRoster() {
     const cur = getBot(raw.id);
     if (!cur) { bots.push(normalizeBot(raw, i)); changed = true; return; }
     const next = normalizeBot(raw, i);
-    ['name', 'role', 'description', 'color', 'tint', 'shape', 'palette', 'capabilities', 'persona', 'tools', 'memory', 'system', 'model', 'bash', 'schedule'].forEach(k => { cur[k] = next[k]; });
+    ['name', 'role', 'description', 'color', 'tint', 'shape', 'theme', 'accessory', 'palette', 'capabilities', 'persona', 'tools', 'memory', 'system', 'model', 'bash', 'schedule', 'roomId', 'waitingOn'].forEach(k => { cur[k] = next[k]; });
     if (!botHasRun(cur.id)) { cur.state = next.state; cur.summary = next.summary; cur.elapsed = next.elapsed; }
   });
   for (let i = bots.length - 1; i >= 0; i--) if (!ids.has(bots[i].id)) { bots.splice(i, 1); changed = true; }

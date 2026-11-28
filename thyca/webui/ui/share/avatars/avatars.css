@@ -1,105 +1,121 @@
-.seal-avatar{display:inline-block;width:var(--bot-avatar,65px);height:var(--bot-avatar,65px);flex-shrink:0;position:relative;vertical-align:middle;isolation:isolate;transition:filter .3s,opacity .3s;user-select:none}
-.expression-tile .seal-avatar{width:92px;height:92px}
-.info-lockup .seal-avatar{width:85px;height:85px}
-.seal-motion{display:block;position:relative;width:100%;height:100%;transform-origin:50% 84%}
-.seal-avatar .base{display:block;width:100%;height:100%;overflow:visible;filter:drop-shadow(0 4px 3px #3026172e) drop-shadow(0 1px 0 #30261730)}
-
-.well-bg{fill:var(--bot-paper,#f8f1de);transform:translate(var(--well-x,0px),var(--well-y,0px));transition:transform .15s ease-out}
-.frame-ring{fill:none;stroke:var(--bot-color);stroke-width:2.5}
-.frame-ring-hi{fill:none;stroke:var(--bot-border);stroke-width:1.1;opacity:.75;transform:translate(var(--hi-x,0px),var(--hi-y,0px));transition:transform .15s ease-out}
-.orbit-arc{fill:none;stroke:var(--bot-dark);stroke-width:2.6;stroke-dasharray:16 170;stroke-linecap:round;opacity:0;transform-origin:32px 32px}
-.drop-body{stroke:var(--bot-dark);stroke-opacity:.38;stroke-width:1.1;paint-order:stroke}
-
-.char-rig{transform-origin:34px 58px;transition:transform .28s cubic-bezier(.22,.75,.28,1)}
-.char-parallax{transform:translate(var(--par-x,0px),var(--par-y,0px));transition:transform .15s ease-out}
-.prop-parallax{transform:translate(calc(var(--par-x,0px)*1.35),calc(var(--par-y,0px)*1.35));transition:transform .15s ease-out;transform-origin:32px 46px}
-.eyes-rig{transform:translate(var(--gaze-x,0px),var(--gaze-y,0px));transition:transform .2s cubic-bezier(.22,.75,.28,1);transform-origin:32px 34px}
-.seal-avatar.blink .eyes-rig{animation:m-blink .19s ease-in-out}
-
-.seal-avatar[data-state=idle] .char-rig{animation:peek-breathe var(--breathe,4.8s) ease-in-out var(--phase,-1s) infinite}
-
-.seal-avatar[data-state=thinking] .char-rig{animation:peek-think 3s ease-in-out infinite}
-.seal-avatar[data-state=thinking] .eyes-rig{transform:translate(-1.5px,-2.5px)}
-.seal-avatar[data-state=thinking] .orbit-arc{opacity:1;animation:spin-ring 8s steps(12,end) var(--ring-delay,0s) infinite}
-
-.seal-avatar[data-state=working] .char-rig{animation:peek-work .68s ease-in-out var(--phase,-.2s) infinite}
-.seal-avatar[data-state=working] .prop-anim{animation:prop-work .48s ease-in-out infinite alternate}
-.seal-avatar[data-state=working] .orbit-arc{opacity:1;animation:spin-ring 1.5s linear var(--ring-delay,0s) infinite}
-
-.seal-avatar[data-state=writing] .eyes-rig{animation:eye-read 1.6s ease-in-out infinite}
-.seal-avatar[data-state=writing] .prop-anim{animation:prop-write .4s ease-in-out infinite alternate}
-.seal-avatar[data-state=writing] .orbit-arc{opacity:.9;animation:spin-ring 4.5s linear var(--ring-delay,0s) infinite}
-.seal-avatar[data-state=writing][data-streaming=true] .eyes-rig{transform:translate(var(--writing-gaze,0px),1.2px);animation:none}
-
-.seal-avatar[data-state=waiting] .char-rig{transform:translateY(3.2px) scale(1.02,.97)}
-.seal-avatar[data-state=waiting] .eyes-rig{transform:translate(0,2.2px)}
-.seal-avatar[data-state=waiting] .orbit-arc{opacity:.75}
-
-.seal-avatar[data-state=done] .char-rig{animation:peek-done 1.5s cubic-bezier(.22,.75,.28,1) both}
-.seal-avatar[data-state=done] .eyes-open{opacity:0}
-.seal-avatar[data-state=done] .eyes-happy{opacity:1!important}
-.seal-avatar[data-state=done] .done-spark{opacity:1!important}
-
-.seal-avatar[data-state=error] .char-rig{animation:peek-error 1.6s ease-in-out both}
-.seal-avatar[data-state=error] .eyes-open{opacity:0}
-.seal-avatar[data-state=error] .eyes-error{opacity:1!important}
-.seal-avatar[data-state=error] .frame-ring{stroke:#c7584e;stroke-width:3}
-.seal-avatar[data-state=error] .orbit-arc{opacity:0}
-
-.seal-avatar[data-state=offline]{filter:grayscale(1);opacity:.45;transition:none}
-.seal-avatar[data-state=offline] *{animation:none!important;transition:none!important}
-.seal-avatar[data-state=offline] .eyes-open{opacity:0}
-.seal-avatar[data-state=offline] .eyes-rest{opacity:1!important}
-.seal-avatar[data-state=offline] .orbit-arc{opacity:.18}
-
-.seal-avatar[data-state=confused] .char-rig{transform:rotate(-10deg)}
-.seal-avatar[data-state=confused] .eyes-rig{transform:translate(-1.5px,-2px)}
-
-.seal-avatar[data-expression=mention] .char-rig{animation:peek-mention .5s ease-out both}
-
-.seal-avatar[data-state=group] .orbit-arc,.seal-avatar[data-group-active=true] .orbit-arc{opacity:.8;animation:spin-ring 4.2s linear var(--group-phase,0s) infinite}
-.seal-avatar[data-group-active=true][data-speaking=false]{filter:saturate(.8);opacity:.67}
-.seal-avatar[data-group-active=true][data-speaking=true]{filter:brightness(1.1) drop-shadow(0 0 4px var(--bot-border));opacity:1}
-.seal-avatar[data-group-active=true][data-speaking=false] .seal-pupils{transform:translate(var(--team-gaze,1px),0px)}
-
-.seal-avatar[data-state=idle][data-idle=look] .eyes-rig{animation:idle-look 5.8s ease-in-out both}
-.seal-avatar[data-state=idle][data-idle=peek] .char-rig{animation:peek-think 4.6s ease-in-out both}
-.seal-avatar[data-state=idle][data-idle=hum] .char-rig{animation:peek-work 2.6s ease-in-out 2}
-.seal-avatar[data-state=idle][data-idle=dream] .eyes-rig{transform:translate(-1.7px,-2.1px)}
-.seal-avatar[data-state=idle][data-idle=stretch] .char-rig{transform:scale(.98,1.05) translateY(-1px)}
-.seal-avatar[data-state=idle][data-idle=sleepy] .char-rig{transform:translateY(2px) rotate(4deg)}
-.seal-avatar[data-state=idle][data-idle=sleepy] .eyes-open{opacity:0}
-.seal-avatar[data-state=idle][data-idle=sleepy] .eyes-rest{opacity:1!important}
-.seal-avatar[data-state=idle][data-idle=wink] .eyes-rig{transform:rotate(-3deg)}
-.seal-avatar[data-state=idle][data-idle=spark] .done-spark{opacity:1!important}
-
-@keyframes m-blink{0%,100%{transform:scaleY(1)}45%,60%{transform:scaleY(.08)}}
-@keyframes peek-breathe{0%,100%{transform:translateY(0) rotate(0deg)}50%{transform:translateY(-1.6px) rotate(-.8deg)}}
-@keyframes peek-think{0%,100%{transform:translateY(-.5px) rotate(-4deg)}50%{transform:translateY(-2.2px) rotate(-7deg)}}
-@keyframes peek-work{0%,100%{transform:translateY(.8px) scale(1.02,.98)}50%{transform:translateY(-1.5px) scale(.98,1.02)}}
-@keyframes prop-work{from{transform:translate(0,0) rotate(0deg)}to{transform:translate(1.2px,-1.8px) rotate(-4deg)}}
-@keyframes prop-write{from{transform:translateX(-.8px) rotate(-2deg)}to{transform:translateX(1.2px) rotate(3deg)}}
-@keyframes eye-read{0%,100%{transform:translate(-2px,1.2px)}50%{transform:translate(2px,1.2px)}}
-@keyframes peek-done{0%,100%{transform:translateY(0) scale(1)}20%{transform:translateY(1.8px) scale(1.04,.95)}45%{transform:translateY(-4.5px) scale(.97,1.04)}}
-@keyframes peek-error{0%,45%,100%{transform:rotate(0)}10%{transform:rotate(-5deg)}20%{transform:rotate(5deg)}30%{transform:rotate(-3deg)}}
-@keyframes peek-mention{0%,100%{transform:translateY(0)}30%{transform:translateY(-2.6px) rotate(3deg)}65%{transform:translateY(.4px) rotate(-1deg)}}
+.crew-avatar{display:inline-block;width:var(--bot-avatar,65px);height:var(--bot-avatar,65px);flex-shrink:0;position:relative;vertical-align:middle;isolation:isolate;transition:filter .3s,opacity .3s;user-select:none}
+.crew-avatar.variant-stage,.crew-avatar.is-stage,.crew-avatar.is-group-stage{width:100%;height:100%;display:block}
+.crew-avatar.size-xl{width:124px;height:124px}
+.crew-avatar:where(.size-md){width:62px;height:62px}
+.crew-avatar.size-sm{width:34px;height:34px}
+.crew-avatar.size-xs{width:26px;height:26px}
+.crew-avatar.size-pick{width:50px;height:50px}
+.crew-avatar.size-tile{width:66px;height:66px}
+.expression-tile .crew-avatar{width:66px;height:66px}
+.info-lockup .crew-avatar{width:85px;height:85px}
+.crew-avatar svg.crew-svg,.crew-avatar .base{display:block;width:100%;height:100%;overflow:visible}
+.crew-avatar.is-circle svg.crew-svg{filter:drop-shadow(0 3px 3px var(--shadow-drop))}
+.crew-avatar.crew-fallback{display:inline-grid;place-items:center;border-radius:50%;background:var(--bot-pale,var(--surface-card));border:1px solid var(--bot-border,var(--border));color:var(--bot-ink,var(--ink));font:700 var(--fs-md) var(--sans)}
+.crew-avatar .char-body-shape,.crew-body{stroke:var(--bot-dark);stroke-opacity:.2;stroke-width:1.5;paint-order:stroke}
+html[data-theme="dark"] .crew-avatar .char-body-shape,html[data-theme="dark"] .crew-body{stroke:var(--body-stroke-dark);stroke-opacity:.14}
+.well-bg,.circle-well-bg{fill:var(--bot-paper);transition:fill .25s ease}
+.away-silhouette-shape{fill:var(--bot-color);fill-opacity:.11;stroke:var(--bot-dark);stroke-opacity:.44;stroke-width:2.5;stroke-dasharray:5.5 4.5;stroke-linecap:round;stroke-linejoin:round}
+.crew-avatar[data-bot-theme="starlight"] .away-silhouette-shape{fill:var(--starlight-away-fill);fill-opacity:.12;stroke:var(--starlight-away-stroke);stroke-opacity:.56}
+html[data-theme="dark"] .away-silhouette-shape{fill:var(--bot-color);fill-opacity:.16;stroke:color-mix(in srgb,var(--bot-color) 70%,var(--away-stroke-mix));stroke-opacity:.62}
+.away-silhouette-ant{fill:none;stroke:var(--bot-dark);stroke-opacity:.44;stroke-width:2.6;stroke-dasharray:4 4;stroke-linecap:round}
+.crew-avatar[data-bot-theme="starlight"] .away-silhouette-ant{stroke:var(--starlight-away-stroke);stroke-opacity:.56}
+html[data-theme="dark"] .away-silhouette-ant{stroke:color-mix(in srgb,var(--bot-color) 70%,var(--away-stroke-mix));stroke-opacity:.62}
+.crew-avatar.size-sm .theme-scene-art,.crew-avatar.size-xs .theme-scene-art,.group-mini-member .crew-avatar .theme-scene-art,.check-avatar .crew-avatar .theme-scene-art,.tl-bot .crew-avatar .theme-scene-art,.tl-byline .crew-avatar .theme-scene-art,.rail-avatar .crew-avatar .theme-scene-art{display:none}
+.crew-avatar.size-xs .char-acc-head,.group-mini-member .crew-avatar .char-acc-head{display:none}
+.crew-avatar.size-xs .char-acc-face,.group-mini-member .crew-avatar .char-acc-face{opacity:.85}
+.crew-avatar.size-sm .char-box,.crew-avatar.size-xs .char-box,.group-mini-member .crew-avatar .char-box,.rail-avatar .crew-avatar .char-box{transform:translate(-2px,0px) scale(1.03)}
+html[data-ornaments="off"] .theme-scene-art{display:none}
+.crew-avatar .char-root{transform-box:view-box;transform-origin:60px 108px;transition:transform .3s cubic-bezier(.3,1.5,.5,1)}
+.crew-avatar .char-face{will-change:transform;transform-box:fill-box;transform-origin:50% 50%}
+.crew-avatar .eye-lid{transform:scaleY(0);transform-box:fill-box;transform-origin:50% 0;transition:transform .15s ease-in}
+.crew-avatar .eye-lash{opacity:0;transition:opacity .09s ease}
+.crew-avatar .eye-sclera{transition:opacity .14s ease,transform .18s ease;transform-box:fill-box;transform-origin:50% 50%}
+.crew-avatar .eye-pupil-group{transition:opacity .14s ease;transform-box:fill-box;transform-origin:50% 50%}
+.crew-avatar .eye-expr{opacity:0;transition:opacity .14s ease}
+.crew-avatar .mouth-normal{transition:transform .18s ease,opacity .14s ease;transform-box:fill-box;transform-origin:50% 50%}
+.crew-avatar .mouth-alt{opacity:0;transition:opacity .14s ease}
+.crew-avatar .state-spark,.crew-avatar .state-question,.crew-avatar .state-think-dots{opacity:0;transition:opacity .18s ease}
+.crew-avatar .orbit-arc{fill:none;stroke:var(--bot-color);stroke-width:4.5;stroke-dasharray:28 312;stroke-linecap:round;opacity:0;transform-origin:60px 60px}
+.crew-avatar[data-bot-theme="starlight"] .orbit-arc{stroke:var(--starlight-orbit)}
+.crew-avatar .char-box.blink .eye-lid,.crew-avatar.blink .eye-lid{transform:scaleY(1)}
+.crew-avatar .char-box.blink .eye-lash,.crew-avatar.blink .eye-lash{opacity:1;transition-delay:.1s}
+.crew-avatar[data-state=idle] .char-root,.crew-avatar[data-expression=idle] .char-root{animation:crew-breathe var(--breathe,4.6s) ease-in-out var(--phase,-1s) infinite}
+.crew-avatar[data-state=waiting] .char-root,.crew-avatar[data-expression=waiting] .char-root{transform:translateY(4.5px) scale(1.02,.96)}
+.crew-avatar[data-state=waiting] .orbit-arc,.crew-avatar[data-expression=waiting] .orbit-arc{opacity:.72}
+.crew-avatar[data-state=thinking] .char-root,.crew-avatar[data-expression=thinking] .char-root{animation:crew-think 3.1s ease-in-out infinite}
+.crew-avatar[data-state=thinking] .eye-lid,.crew-avatar[data-expression=thinking] .eye-lid{transform:scaleY(.18)}
+.crew-avatar[data-state=thinking] .mouth-normal,.crew-avatar[data-expression=thinking] .mouth-normal{opacity:0}
+.crew-avatar[data-state=thinking] .mouth-think,.crew-avatar[data-expression=thinking] .mouth-think{opacity:1}
+.crew-avatar[data-state=thinking] .state-think-dots,.crew-avatar[data-expression=thinking] .state-think-dots{opacity:1}
+.crew-avatar[data-state=thinking] .state-think-dots circle,.crew-avatar[data-expression=thinking] .state-think-dots circle{animation:think-dot 1.5s ease-in-out infinite}
+.crew-avatar[data-state=thinking] .state-think-dots circle:nth-child(2),.crew-avatar[data-expression=thinking] .state-think-dots circle:nth-child(2){animation-delay:.25s}
+.crew-avatar[data-state=thinking] .state-think-dots circle:nth-child(3),.crew-avatar[data-expression=thinking] .state-think-dots circle:nth-child(3){animation-delay:.5s}
+.crew-avatar[data-state=thinking] .orbit-arc,.crew-avatar[data-expression=thinking] .orbit-arc{opacity:1;animation:spin-ring 8s steps(12,end) var(--ring-delay,0s) infinite}
+.crew-avatar[data-state=working] .char-root,.crew-avatar[data-expression=working] .char-root{animation:crew-work .68s ease-in-out var(--phase,-.2s) infinite}
+.crew-avatar[data-state=working] .orbit-arc,.crew-avatar[data-expression=working] .orbit-arc{opacity:1;animation:spin-ring 1.5s linear var(--ring-delay,0s) infinite}
+.crew-avatar[data-state=writing] .char-root,.crew-avatar[data-expression=writing] .char-root{animation:crew-write 1.3s ease-in-out infinite}
+.crew-avatar[data-streaming=true] .char-root{animation:crew-write .65s ease-in-out infinite}
+.crew-avatar[data-state=writing] .orbit-arc,.crew-avatar[data-expression=writing] .orbit-arc{opacity:.9;animation:spin-ring 4.2s linear var(--ring-delay,0s) infinite}
+.crew-avatar[data-state=done] .char-root,.crew-avatar[data-expression=done] .char-root{animation:crew-hop .52s cubic-bezier(.32,1.35,.45,1) 2}
+.crew-avatar[data-state=done] .eye-lid,.crew-avatar[data-expression=done] .eye-lid{transform:scaleY(1)}
+.crew-avatar[data-state=done] .eye-lash,.crew-avatar[data-expression=done] .eye-lash{opacity:0}
+.crew-avatar[data-state=done] .eye-happy,.crew-avatar[data-expression=done] .eye-happy{opacity:1}
+.crew-avatar[data-state=done] .mouth-normal,.crew-avatar[data-expression=done] .mouth-normal{transform:scale(1.15,1.18)}
+.crew-avatar[data-state=done] .state-spark,.crew-avatar[data-expression=done] .state-spark{opacity:1;animation:spark-pop 1s ease-in-out infinite alternate}
+.crew-avatar[data-state=error] .char-face-shake,.crew-avatar[data-expression=error] .char-face-shake{animation:crew-nope .52s ease}
+.crew-avatar[data-state=error] .eye-pupil-group,.crew-avatar[data-expression=error] .eye-pupil-group{opacity:0}
+.crew-avatar[data-state=error] .eye-error,.crew-avatar[data-expression=error] .eye-error{opacity:1}
+.crew-avatar[data-state=error] .mouth-normal,.crew-avatar[data-expression=error] .mouth-normal{opacity:0}
+.crew-avatar[data-state=error] .mouth-sad,.crew-avatar[data-expression=error] .mouth-sad{opacity:1}
+.crew-avatar[data-state=error] .frame-ring,.crew-avatar[data-expression=error] .frame-ring{stroke:var(--danger-ink);stroke-width:4.5}
+.crew-avatar[data-state=offline],.crew-avatar[data-expression=offline]{filter:grayscale(1);opacity:.5}
+.crew-avatar[data-state=offline] .eye-lid,.crew-avatar[data-expression=offline] .eye-lid{transform:scaleY(1)}
+.crew-avatar[data-state=offline] .eye-lash,.crew-avatar[data-expression=offline] .eye-lash{opacity:1}
+.crew-avatar[data-state=offline] .mouth-normal,.crew-avatar[data-expression=offline] .mouth-normal{transform:scaleY(.24)}
+.crew-avatar[data-expression=mention] .char-root{animation:crew-mention .48s cubic-bezier(.28,1.5,.5,1) both}
+.crew-avatar[data-expression=mention] .eye-sclera{transform:scale(1.12)}
+.crew-avatar[data-expression=mention] .eye-pupil-group{transform:scale(.84)}
+.crew-avatar[data-expression=mention] .mouth-normal{opacity:0}
+.crew-avatar[data-expression=mention] .mouth-surprised{opacity:1}
+.crew-avatar[data-state=confused] .char-root,.crew-avatar[data-expression=confused] .char-root{transform:rotate(-7deg)}
+.crew-avatar[data-state=confused] .eye-left .eye-lid,.crew-avatar[data-expression=confused] .eye-left .eye-lid{transform:scaleY(.38)}
+.crew-avatar[data-state=confused] .mouth-normal,.crew-avatar[data-expression=confused] .mouth-normal{opacity:0}
+.crew-avatar[data-state=confused] .mouth-confused,.crew-avatar[data-expression=confused] .mouth-confused{opacity:1}
+.crew-avatar[data-state=confused] .state-question,.crew-avatar[data-expression=confused] .state-question{opacity:1}
+.crew-avatar[data-state=group] .orbit-arc,.crew-avatar[data-expression=group] .orbit-arc{opacity:.85;animation:spin-ring 4.2s linear var(--ring-delay,0s) infinite}
+.crew-avatar[data-group-active=true] .char-root,.crew-avatar .char-box[data-working-together=true] .char-root{animation:crew-work .92s ease-in-out var(--phase,-.3s) infinite}
+.crew-avatar[data-speaking=true] .char-root,.crew-avatar .char-box[data-speaking=true] .char-root{animation:crew-work .72s ease-in-out infinite}
+.crew-avatar[data-speaking=false],.crew-avatar .char-box[data-speaking=false]{filter:saturate(.84);opacity:.8}
+.crew-avatar[data-idle=look] .eye-pupil-group{opacity:1}
+.crew-avatar[data-idle=peek] .char-root{animation:none;transform:translateX(4px) rotate(4deg)}
+.crew-avatar[data-idle=hum] .char-root{animation:crew-work 2.1s ease-in-out infinite}
+.crew-avatar[data-idle=hum] .eye-lid,.crew-avatar[data-idle=stretch] .eye-lid{transform:scaleY(1)}
+.crew-avatar[data-idle=hum] .eye-happy,.crew-avatar[data-idle=stretch] .eye-happy{opacity:1}
+.crew-avatar[data-idle=stretch] .char-root{animation:none;transform:scale(.95,1.07) translateY(-2px)}
+.crew-avatar[data-idle=sleepy] .char-root{animation:none;transform:translateY(4px) rotate(4deg)}
+.crew-avatar[data-idle=sleepy] .eye-lid{transform:scaleY(.76)}
+.crew-avatar[data-idle=sleepy] .mouth-normal{transform:scaleY(.35)}
+.crew-avatar[data-idle=wink] .eye-left .eye-lid{transform:scaleY(1)}
+.crew-avatar[data-idle=wink] .eye-left .eye-lash{opacity:1}
+.crew-avatar[data-idle=wink] .char-root{animation:none;transform:rotate(-3deg)}
+.crew-avatar[data-idle=spark] .state-spark{opacity:1}
+body.is-shy .crew-avatar:not(.expression-preview) .char-root,.crew-avatar.is-shy .char-root{animation:none;transform:translateX(-6px)}
+body.is-shy .crew-avatar:not(.expression-preview) .eye-lid,.crew-avatar.is-shy .eye-lid{transform:scaleY(1)}
+body.is-shy .crew-avatar:not(.expression-preview) .eye-lash,.crew-avatar.is-shy .eye-lash{opacity:1;transition-delay:.1s}
+body.is-shy .crew-avatar:not(.expression-preview) .mouth-normal,.crew-avatar.is-shy .mouth-normal{transform:scaleY(.32)}
+body.is-shy.is-reveal .crew-avatar:not(.expression-preview)[data-crew-char="orb"] .eye-lid,body.is-shy.is-reveal .crew-avatar:not(.expression-preview) .char-box[data-crew-char="orb"] .eye-lid,.crew-avatar.is-shy.is-reveal[data-crew-char="orb"] .eye-lid,.crew-avatar.is-shy.is-reveal .char-box[data-crew-char="orb"] .eye-lid{transform:scaleY(.54)}
+body.is-shy.is-reveal .crew-avatar:not(.expression-preview)[data-crew-char="orb"] .eye-lash,body.is-shy.is-reveal .crew-avatar:not(.expression-preview) .char-box[data-crew-char="orb"] .eye-lash,.crew-avatar.is-shy.is-reveal[data-crew-char="orb"] .eye-lash,.crew-avatar.is-shy.is-reveal .char-box[data-crew-char="orb"] .eye-lash{opacity:0}
+.crew-avatar.just-returned .char-root{animation:crew-return .44s cubic-bezier(.24,1.45,.48,1) both}
+.stream-interruption{font:italic var(--fs-xs)/1.5 var(--serif);color:var(--danger-ink);margin:8px 0 0}
 @keyframes spin-ring{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
-@keyframes idle-look{0%,100%{transform:translate(0,0)}14%,31%{transform:translate(-3px,.5px)}48%,66%{transform:translate(1.7px,-.5px)}80%,90%{transform:translate(.5px,2px)}}
-
-.exchange-group .seal-avatar .fine-detail,#exchange-modal-title .seal-avatar .fine-detail,.check-avatar .seal-avatar .fine-detail{display:none}
-
-.stage-portrait .seal-avatar{width:154px;height:154px;z-index:1}
-#expressions-dialog .expression-tile .seal-avatar{width:76px;height:76px}
-.group-preview-member .seal-avatar{width:76px;height:76px}
-.expression-preview *{animation:none!important;transition:none!important}
-.stream-interruption{font:italic var(--fs-md)/1.6 var(--serif);color:var(--muted);padding-top:10px;border-top:1px dashed var(--line)}
-
-@media(prefers-reduced-motion:reduce){
-.seal-avatar *{animation:none!important}
-.seal-avatar .char-rig,.seal-avatar .eyes-rig,.seal-avatar .prop-anim{transform:none!important}
-}
-@media(max-width:600px){
-.stage-portrait .seal-avatar{width:106px;height:106px}
-#expression-extras .expression-tile .seal-avatar{width:65px;height:65px}
-.group-preview-member .seal-avatar{width:66px;height:66px}
-}
+@keyframes crew-breathe{0%,100%{transform:translateY(0) scale(1,1)}50%{transform:translateY(-2px) scale(.99,1.015)}}
+@keyframes crew-think{0%,100%{transform:translateY(-1px) rotate(-3deg)}50%{transform:translateY(-3px) rotate(-6deg)}}
+@keyframes think-dot{0%,100%{transform:translateY(0);opacity:.35}50%{transform:translateY(-3px);opacity:1}}
+@keyframes crew-work{0%,100%{transform:translateY(1.2px) scale(1.03,.97)}50%{transform:translateY(-2.8px) scale(.97,1.03)}}
+@keyframes crew-write{0%,100%{transform:translateY(0) rotate(-1.5deg)}50%{transform:translateY(-1.8px) rotate(1.5deg)}}
+@keyframes crew-hop{0%,100%{transform:translateY(0)}40%{transform:translateY(-9px) scale(.96,1.05)}}
+@keyframes crew-nope{0%,100%{transform:translateX(0)}20%{transform:translateX(-5px)}40%{transform:translateX(4.5px)}60%{transform:translateX(-3px)}80%{transform:translateX(2px)}}
+@keyframes crew-mention{0%,100%{transform:translateY(0)}35%{transform:translateY(-6px) scale(.96,1.06)}70%{transform:translateY(1px) scale(1.02,.98)}}
+@keyframes spark-pop{from{transform:scale(.85) rotate(-8deg);opacity:.72}to{transform:scale(1.12) rotate(8deg);opacity:1}}
+@keyframes crew-return{0%{transform:translateY(18px) scale(.92);opacity:.25}65%{transform:translateY(-3px) scale(1.02,.98);opacity:1}100%{transform:translateY(0) scale(1);opacity:1}}
+@media(prefers-reduced-motion:reduce){.crew-avatar *,.orbit-arc,.char-root{animation:none!important;transition:none!important}}

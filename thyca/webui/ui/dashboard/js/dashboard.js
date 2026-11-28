@@ -7,13 +7,26 @@ ThycaRouter.register('dashboard', { title: 'Sử dụng', stylesheet: '/ui/dashb
 const FIRST_PAGE = 15;
 const MORE_PAGE = 50;
 const MAX_DAY_COLUMNS = 62;
-const MAX_SESSIONS = 200;
+const MAX_MODEL_SERIES = 4;
+const MAX_BOT_SERIES = 6;
+const MODEL_COLORS = ['var(--series-0)', 'var(--series-1)', 'var(--series-2)', 'var(--series-3)'];
+const OTHER_COLOR = 'var(--series-other)';
+const UNKNOWN_BOT_COLOR = '#a08f68';
+const USAGE_MODES = [
+  { value: 'tokens:parts', label: 'Token · Input / Cache / Output', teamOnly: false },
+  { value: 'tokens:model', label: 'Token · Theo model', teamOnly: false },
+  { value: 'tokens:bot', label: 'Token · Theo bot', teamOnly: true },
+  { value: 'requests:model', label: 'Lần gọi · Theo model', teamOnly: false },
+  { value: 'requests:bot', label: 'Lần gọi · Theo bot', teamOnly: true },
+];
 
 let rangeFrom = '', rangeTo = '';
 let rangeAll = false;
-let customRangeOpen = false;
 let botScope = '';
 let dayMetric = 'tokens';
+let tokenGroup = 'parts';
+let requestGroup = 'model';
+let costGroup = 'model';
 let statsData = null, statsError = '', statsLoading = false;
 let statsKey = null, listKey = null, detailKey = '';
 let statsLoaded = false, listLoaded = false;
@@ -84,12 +97,6 @@ function statusChip(status) {
   return `<span class="st-chip ${cls}">${escapeHTML(label)}</span>`;
 }
 
-function avatarCell(botId) {
-  const b = botId && getBot(botId);
-  if (b) return `<span class="row-avatar">${avatar(b, b.state, 'expression-preview')}</span>`;
-  const mark = botId && botId !== 'unknown' ? escapeHTML(botId.slice(0, 2).toUpperCase()) : '?';
-  return `<span class="row-avatar id-chip" title="${escapeHTML(botId || '')}">${mark}</span>`;
-}
 function botDisplayName(botId) {
   const b = botId && getBot(botId);
   if (b) return b.name;
@@ -113,61 +120,37 @@ function turnRowHtml(turn) {
   const kind = turn.kind === 'dm' ? 'Chat riêng' : turn.kind === 'group' ? 'Chat nhóm' : 'Phiên';
   const rawTitle = turn.title || turn.group_id || turn.bot_id || '—';
   const title = turn.kind === 'group' && rawTitle === turn.group_id ? 'Hội thoại chung' : rawTitle;
+  const showTitle = !!title && title !== name && title !== id;
   const conv = turn.kind === 'dm' ? dmKey(turn.bot_id) : groupKey(turn.group_id);
   const status = botScope && turn.status === 'failed' ? 'Lượt có lỗi' : null;
+  const callsBit = `${fmtInt(turn.requests)} lần gọi` + (turn.tool_calls > 0 ? ` · ${fmtInt(turn.tool_calls)} tool` : '');
   return `<li><button type="button" class="tl-turn" data-conv="${escapeHTML(conv)}" data-turn="${turn.turn_index}"
       title="Mở lượt #${turn.turn_index} của “${escapeHTML(title)}”">
     <span class="tl-turn-idx">#${fmtInt(turn.turn_index)}</span>${face}<span class="tl-turn-main">
-      <span class="tl-turn-line"><b>${escapeHTML(name)}</b><span class="tl-turn-title">${escapeHTML(title)}</span></span>
-      <span class="tl-turn-sub"><span>${kind}</span><span>${escapeHTML(fmtDateTime(turn.started_at))}</span><span>${escapeHTML(turn.model || '—')}</span><span>${fmtInt(turn.requests)} gọi model</span><span>${fmtInt(turn.tool_calls)} gọi tool</span><span>${fmtInt(turn.total_tokens)} token</span><span>${fmtCost(turn.cost_usd)}</span><span>${fmtDur(turn.latency_ms)}</span></span>
+      <span class="tl-turn-line"><b>${escapeHTML(name)}</b>${showTitle ? `<span class="tl-turn-title">${escapeHTML(title)}</span>` : ''}<span class="tl-turn-kind">${kind}</span><span class="tl-turn-time">${escapeHTML(fmtDateTime(turn.started_at))}</span></span>
+      <span class="tl-turn-sub"><span class="tl-turn-model">${escapeHTML(turn.model || '—')}</span><span>${fmtInt(turn.total_tokens)} token</span><span>${fmtCost(turn.cost_usd)}</span><span>${fmtDur(turn.latency_ms)}</span><span>${callsBit}</span></span>
     </span>${status ? `<span class="tl-chip s-error">${status}</span>` : statusChip(turn.status)}</button></li>`;
 }
 function updateRangeNote() {
-  const f = $('#range-from').value, t = $('#range-to').value;
   const nice = v => v ? new Date(v + 'T00:00:00').toLocaleDateString('vi-VN', { day: 'numeric', month: 'numeric', year: 'numeric' }) : '…';
-  $('#range-note').textContent = rangeAll ? 'Tất cả' : 'Kỳ ' + nice(f) + ' – ' + nice(t);
-}
-function syncRangeCustomUI() {
-  const bar = $('#range-custom-bar'), toggle = $('#range-custom-toggle');
-  if (bar) bar.hidden = !customRangeOpen;
-  if (toggle) {
-    toggle.setAttribute('aria-expanded', String(customRangeOpen));
-    toggle.setAttribute('aria-pressed', String(customRangeOpen));
-  }
+  $('#range-note').textContent = rangeAll ? 'Tất cả' : 'Kỳ ' + nice(rangeFrom) + ' – ' + nice(rangeTo);
 }
 function updatePresetButtons() {
-  const from = $('#range-from').value, to = $('#range-to').value;
   const today = new Date();
   const preset = days => { const start = new Date(today); start.setDate(start.getDate() - (days - 1)); return [isoDay(start), isoDay(today)]; };
-  const matchesPreset = rangeAll || [1, 7, 30].some(days => {
-    const [pFrom, pTo] = preset(days);
-    return pFrom === from && pTo === to;
-  });
-  if (!matchesPreset && (from || to)) customRangeOpen = true;
   $$('.range-presets .chip').forEach(button => {
-    const days = button.dataset.preset;
-    const active = days === 'all' ? rangeAll : !rangeAll && days && preset(Number(days))[0] === from && preset(Number(days))[1] === to;
+    const days = Number(button.dataset.preset);
+    const [pFrom, pTo] = days ? preset(days) : ['', ''];
+    const active = !rangeAll && days > 0 && pFrom === rangeFrom && pTo === rangeTo;
     button.setAttribute('aria-pressed', String(!!active));
   });
-  syncRangeCustomUI();
-}
-function applyRange() {
-  const f = $('#range-from').value, t = $('#range-to').value;
-  if (f && t && f > t) { toast('Ngày bắt đầu phải trước hoặc bằng ngày kết thúc.'); return; }
-  rangeFrom = f; rangeTo = t; rangeAll = !f && !t;
-  updateRangeNote(); updatePresetButtons();
-  applyControlRoute();
 }
 function setPreset(days) {
-  customRangeOpen = false;
-  if (String(days) === 'all') {
-    rangeFrom = ''; rangeTo = ''; rangeAll = true;
-  } else {
-    const to = new Date(), from = new Date();
-    from.setDate(from.getDate() - (Number(days) - 1));
-    rangeFrom = isoDay(from); rangeTo = isoDay(to); rangeAll = false;
-  }
-  $('#range-from').value = rangeFrom; $('#range-to').value = rangeTo;
+  const n = Number(days);
+  if (![1, 7, 30].includes(n)) return;
+  const to = new Date(), from = new Date();
+  from.setDate(from.getDate() - (n - 1));
+  rangeFrom = isoDay(from); rangeTo = isoDay(to); rangeAll = false;
   updateRangeNote(); updatePresetButtons();
   applyControlRoute();
 }
@@ -234,7 +217,6 @@ function readRoute(route, initial = false) {
     const today = new Date(), from = new Date(); from.setDate(from.getDate() - 6);
     rangeFrom = isoDay(from); rangeTo = isoDay(today);
   }
-  $('#range-from').value = rangeFrom; $('#range-to').value = rangeTo;
   $('#filter-q').value = listFilters.q;
   updateRangeNote(); updatePresetButtons(); updateScopeChip(); updateViewShell();
   fillModelFilter(statsData?.models || []);
@@ -289,19 +271,13 @@ function updateScopeChip() {
 
     }
   }
-  ctx.sidebar?.querySelector('#usage-overview-scope')?.setAttribute('aria-pressed', String(!botScope));
 }
 function updateViewShell() {
-  const labels = { usage: 'Sử dụng token', cost: 'Chi phí', trace: 'Trace' };
-  const bot = botScope && getBot(botScope);
+  const labels = { usage: 'Sử dụng', cost: 'Chi phí', trace: 'Trace' };
   $('#usage-scope-eyebrow').textContent = botScope ? botDisplayName(botScope) : 'Tổng quan';
   $('#usage-view-title').textContent = labels[activeView] || labels.usage;
   $('#detail-back-label').textContent = labels[activeView] || labels.usage;
-  $('#card-bot').hidden = !!botScope;
-  $('#card-bot-cost').hidden = !!botScope;
-  $('#usage-scope-note').textContent = botScope
-    ? `Chỉ tính đóng góp được gắn rõ với ${bot ? bot.name : botScope}; một lượt vẫn có thể chứa hoạt động của bot khác. Thống kê dựa trên tối đa ${MAX_SESSIONS} phiên gần nhất. Lượt chưa gắn bot chỉ có trong Tổng quan.`
-    : `Tổng quan gồm cả lượt chưa gắn bot; thống kê dựa trên tối đa ${MAX_SESSIONS} phiên gần nhất.`;
+  updateChartControls();
   for (const view of ['usage', 'cost', 'trace']) {
     const button = $(`#usage-view-tabs [data-usage-view="${view}"]`);
     button?.setAttribute('aria-pressed', String(view === activeView));
@@ -484,44 +460,171 @@ function applyRoute(route, { force = false } = {}) {
   if (force || listChanged || listKey !== listRequestKey()) void loadTraces(true, force);
 }
 
-function heroCard(label, value, hint) {
-  return `<section class="stat"><p class="stat-label">${label}</p><p class="stat-value">${value}</p>${hint ? `<p class="stat-hint">${hint}</p>` : ''}</section>`;
+function effectiveUsageGroup() {
+  const raw = dayMetric === 'tokens' ? tokenGroup : requestGroup;
+  if (dayMetric === 'requests' && raw === 'parts') return 'model';
+  if (botScope && raw === 'bot') return dayMetric === 'tokens' ? 'parts' : 'model';
+  return raw;
+}
+function effectiveCostGroup() {
+  return botScope ? 'model' : costGroup;
+}
+function isSingleDayRange() {
+  return !rangeAll && !!rangeFrom && !!rangeTo && rangeFrom === rangeTo;
+}
+function usageChartModeValue() {
+  return `${dayMetric}:${effectiveUsageGroup()}`;
+}
+function updateChartControls() {
+  const modeSel = $('#usage-chart-mode');
+  if (modeSel) {
+    const allowed = USAGE_MODES.filter(item => !botScope || !item.teamOnly);
+    modeSel.replaceChildren(
+      ...allowed.map(item => Object.assign(document.createElement('option'), { value: item.value, textContent: item.label })),
+    );
+    modeSel.value = usageChartModeValue();
+  }
+  const costSel = $('#cost-chart-mode');
+  if (costSel) {
+    costSel.hidden = !!botScope;
+    costSel.value = effectiveCostGroup();
+  }
+}
+function setUsageChartMode(value) {
+  const mode = USAGE_MODES.find(item => item.value === value && (!botScope || !item.teamOnly));
+  if (!mode) return;
+  const [metric, group] = mode.value.split(':');
+  dayMetric = metric;
+  if (metric === 'tokens') tokenGroup = group;
+  else requestGroup = group;
+  updateChartControls();
+  updateUsageChartHeader();
+  renderDayChart();
+}
+function setDayMetric(metric) {
+  if (!['tokens', 'requests'].includes(metric)) return;
+  dayMetric = metric;
+  updateChartControls();
+  updateUsageChartHeader();
+  renderDayChart();
+}
+function setUsageGroup(group) {
+  if (!['parts', 'model', 'bot'].includes(group)) return;
+  if (dayMetric === 'requests' && group === 'parts') return;
+  if (botScope && group === 'bot') return;
+  if (dayMetric === 'tokens') tokenGroup = group;
+  else requestGroup = group;
+  updateChartControls();
+  renderDayChart();
+}
+function setCostGroup(group) {
+  if (!['model', 'bot'].includes(group)) return;
+  if (botScope && group === 'bot') return;
+  costGroup = group;
+  updateChartControls();
+  renderCostChart();
+}
+function chartUnit(data = statsData) {
+  if (!isSingleDayRange()) return 'day';
+  if (!data) return 'hour';
+  const hasHour = (data.by_hour || []).length > 0;
+  const hasDay = (data.by_day || []).length > 0;
+  return hasHour || !hasDay ? 'hour' : 'day';
+}
+function updateUsageChartHeader(totals = statsData?.totals || null, data = statsData) {
+  const t = totals;
+  const titleEl = $('#usage-chart-title'), totalEl = $('#usage-chart-total'), subEl = $('#usage-chart-sub');
+  const isTokens = dayMetric === 'tokens';
+  const unitLabel = chartUnit(data) === 'hour' ? 'theo giờ' : 'theo ngày';
+  if (titleEl) titleEl.textContent = (isTokens ? 'Token ' : 'Lần gọi ') + unitLabel;
+  if (!t) {
+    if (totalEl) totalEl.textContent = '—';
+    if (subEl) { subEl.textContent = ''; subEl.hidden = true; }
+    return;
+  }
+  if (totalEl) totalEl.textContent = isTokens ? fmtInt(t.total_tokens) : fmtInt(t.requests);
+  if (subEl) {
+    const sub = !isTokens && typeof t.turns === 'number' ? `${fmtInt(t.turns)} lượt` : '';
+    subEl.textContent = sub;
+    subEl.hidden = !sub;
+  }
+}
+function updateCostChartHeader(totals = statsData?.totals || null, data = statsData) {
+  const titleEl = $('#cost-chart-title'), totalEl = $('#cost-chart-total'), cov = $('#cost-coverage');
+  if (titleEl) titleEl.textContent = chartUnit(data) === 'hour' ? 'Chi phí theo giờ' : 'Chi phí theo ngày';
+  if (!totals) {
+    if (totalEl) totalEl.textContent = '—';
+    if (cov) { cov.textContent = ''; cov.hidden = true; }
+    return;
+  }
+  if (totalEl) totalEl.textContent = fmtCost(totals.cost_usd);
+  if (!cov) return;
+  if (totals.cost_usd == null) {
+    cov.textContent = 'Chưa có giá';
+    cov.hidden = false;
+  } else if (typeof totals.priced_turns === 'number' && typeof totals.turns === 'number' && totals.priced_turns < totals.turns) {
+    cov.textContent = `${fmtInt(totals.priced_turns)}/${fmtInt(totals.turns)} lượt có giá`;
+    cov.hidden = false;
+  } else {
+    cov.textContent = '';
+    cov.hidden = true;
+  }
+}
+function renderTokenPartsLegend(box, totals) {
+  if (!box) return;
+  const t = totals || {};
+  const inTok = typeof t.prompt_tokens === 'number'
+    ? Math.max(0, t.prompt_tokens - (typeof t.cached_tokens === 'number' ? t.cached_tokens : 0))
+    : t.prompt_tokens;
+  const sum = t.total_tokens;
+  const partCard = (key, cls, label, id, val, tip, note) => {
+    const pct = share(val, sum);
+    const pctHtml = pct !== '—' ? `<span class="legend-pct">${pct}</span>` : '';
+    return `<span class="legend-item" data-series-key="${key}" title="${tip}"><i class="legend-swatch ${cls}"></i><span class="legend-body"><span class="legend-top"><span class="legend-label">${label}</span><span class="legend-value"><strong id="${id}">${fmtInt(val)}</strong>${pctHtml}</span></span><span class="legend-note">${note}</span></span></span>`;
+  };
+  box.innerHTML =
+    partCard('input', 'legend-input', 'Input', 'usage-input-total', inTok, 'Không bao gồm Cache read.', 'Prompt mới, chưa gồm Cache')
+    + partCard('cache', 'legend-cache', 'Cache', 'usage-cache-total', t.cached_tokens, 'Tính riêng, không nằm trong Input.', 'Đọc lại từ bộ nhớ đệm')
+    + partCard('output', 'legend-output', 'Output', 'usage-output-total', t.completion_tokens, 'Token hoàn tất từ model.', 'Token model sinh ra');
 }
 function renderStats(s, { loading = false } = {}) {
+  updateChartControls();
   if (loading) {
-    $('#stat-grid').innerHTML = [
-      heroCard('Token', '—', 'Input — · Cache — · Output —'),
-      heroCard('Chi phí', '—', ''),
-      heroCard('Gọi model', '—', '— tool · — lượt'),
-      heroCard('Độ trễ p50', '—', 'p90 —'),
-    ].join('');
-    for (const id of ['chart-day', 'chart-cost', 'chart-hour', 'rows-bot', 'rows-model', 'rows-bot-cost', 'rows-model-cost']) $(`#${id}`).innerHTML = '';
-    $('#chart-day-note').textContent = ''; $('#chart-cost-note').textContent = ''; $('#cost-coverage').textContent = '';
-    $('#usage-input-total').textContent = '—'; $('#usage-cache-total').textContent = '—'; $('#usage-output-total').textContent = '—';
-    $('#card-bot').hidden = !!botScope;
-    $('#card-bot-cost').hidden = !!botScope;
+    updateUsageChartHeader(null, null);
+    updateCostChartHeader(null, null);
+    if (dayMetric === 'tokens' && effectiveUsageGroup() === 'parts') renderTokenPartsLegend($('#usage-chart-legend'), null);
+    else $('#usage-chart-legend').innerHTML = '';
+    $('#cost-chart-legend').innerHTML = '';
+    for (const id of ['usage-chart-summary', 'cost-chart-summary']) {
+      const el = $(`#${id}`);
+      if (el) { el.textContent = ''; el.hidden = true; }
+    }
+    const traceSum = $('#trace-head-summary');
+    if (traceSum) { traceSum.textContent = ''; traceSum.removeAttribute?.('title'); }
+    for (const id of ['chart-day', 'chart-cost']) $(`#${id}`).innerHTML = '';
     fillModelFilter(s.models || []);
     fillStatusFilter(s.by_status || []);
     updateScopeChip();
     return;
   }
   const t = s.totals || {};
-  const inTok = typeof t.prompt_tokens === 'number' ? Math.max(0, t.prompt_tokens - (typeof t.cached_tokens === 'number' ? t.cached_tokens : 0)) : t.prompt_tokens;
-  $('#stat-grid').innerHTML = [
-    heroCard('Token', fmtInt(t.total_tokens), `Input ${fmtCompact(inTok)} · Cache ${fmtCompact(t.cached_tokens)} · Output ${fmtCompact(t.completion_tokens)}`),
-    heroCard('Chi phí', fmtCost(t.cost_usd),
-      t.cost_usd == null ? 'chưa có giá'
-        : (typeof t.requests === 'number' && t.requests ? 'TB ' + fmtCost(t.cost_usd / t.requests) + ' / req' : '')),
-    heroCard('Gọi model', fmtInt(t.requests), `${fmtInt(t.tool_calls)} tool · ${fmtInt(t.turns)} lượt`),
-    heroCard('Độ trễ p50', fmtDur(t.latency_ms_p50), 'p90 ' + fmtDur(t.latency_ms_p90)),
-  ].join('');
-  $('#usage-input-total').textContent = fmtInt(inTok);
-  $('#usage-cache-total').textContent = fmtInt(t.cached_tokens);
-  $('#usage-output-total').textContent = fmtInt(t.completion_tokens);
-  $('#cost-coverage').textContent = typeof t.priced_turns === 'number' && typeof t.turns === 'number'
-    ? `${fmtInt(t.priced_turns)} / ${fmtInt(t.turns)} lượt có giá · phần thiếu không tính là $0.`
-    : 'Chưa có dữ liệu tỷ lệ định giá.';
-  renderDayChart(); renderCostChart(); renderBotRows(); renderModelRows(); renderCostRows(); renderHourChart();
+  updateUsageChartHeader(t, s);
+  updateCostChartHeader(t, s);
+  const traceSum = $('#trace-head-summary');
+  if (traceSum) {
+    const bits = [];
+    if (typeof t.turns === 'number') bits.push(`${fmtInt(t.turns)} lượt`);
+    else if (typeof t.requests === 'number') bits.push(`${fmtInt(t.requests)} lần gọi`);
+    if (typeof t.latency_ms_p50 === 'number') bits.push(`~${fmtDur(t.latency_ms_p50)}`);
+    traceSum.textContent = bits.join(' · ');
+    if (typeof t.latency_ms_p50 === 'number') {
+      const tip = `Trung vị (p50): ${fmtDur(t.latency_ms_p50)}` + (typeof t.latency_ms_p90 === 'number' ? ` · p90: ${fmtDur(t.latency_ms_p90)}` : '');
+      traceSum.title = tip;
+    } else {
+      traceSum.removeAttribute?.('title');
+    }
+  }
+  renderDayChart(s); renderCostChart(s);
   fillModelFilter(s.models || []);
   fillStatusFilter(s.by_status || []);
   updateScopeChip();
@@ -536,129 +639,407 @@ function dayColumns(byDay) {
       const days = [];
       for (let t = from; t <= to; t += 864e5) {
         const key = new Date(t).toISOString().slice(0, 10);
-        days.push(map.get(key) || { day: key, requests: 0, prompt_tokens: 0, cached_tokens: 0, completion_tokens: 0, cost_usd: null });
+        days.push(map.get(key) || { day: key, requests: 0, prompt_tokens: 0, cached_tokens: 0, completion_tokens: 0, cost_usd: 0 });
       }
       return days;
     }
   }
   return byDay;
 }
+function chartBuckets(data = statsData) {
+  if (chartUnit(data) === 'hour') {
+    const byHour = data?.by_hour || [];
+    const map = new Map(byHour.map(h => [h.hour, h]));
+    const cols = [];
+    for (let h = 0; h < 24; h++) {
+      const key = String(h).padStart(2, '0');
+      cols.push(map.get(key) || {
+        hour: key, requests: 0, prompt_tokens: 0, cached_tokens: 0,
+        completion_tokens: 0, total_tokens: 0, cost_usd: 0, by_model: [], by_bot: [],
+      });
+    }
+    return { unit: 'hour', cols, hasAny: byHour.length > 0 };
+  }
+  const rawDays = data?.by_day || [];
+  const cols = dayColumns(rawDays);
+  return { unit: 'day', cols, hasAny: rawDays.length > 0 };
+}
 function dayTokenParts(day) {
   if (![day.prompt_tokens, day.cached_tokens, day.completion_tokens].every(value => typeof value === 'number' && Number.isFinite(value))) return null;
   return { input: Math.max(day.prompt_tokens - day.cached_tokens, 0), cache: Math.max(day.cached_tokens, 0), output: Math.max(day.completion_tokens, 0) };
 }
-function renderDayChart() {
+function colTotalTokens(col) {
+  if (typeof col.total_tokens === 'number' && Number.isFinite(col.total_tokens)) return col.total_tokens;
+  const parts = dayTokenParts(col);
+  return parts ? parts.input + parts.cache + parts.output : null;
+}
+function sumMetric(rows, field) {
+  if (field === 'cost_usd') {
+    const priced = rows.filter(r => typeof r.cost_usd === 'number' && Number.isFinite(r.cost_usd));
+    return priced.length ? priced.reduce((acc, r) => acc + r.cost_usd, 0) : null;
+  }
+  return rows.reduce((acc, r) => acc + (typeof r[field] === 'number' && Number.isFinite(r[field]) ? r[field] : 0), 0);
+}
+function buildSeries(group, metricField, data = statsData) {
+  if (group === 'model') {
+    const raw = data?.by_model || [];
+    const named = raw.filter(row => row.model && row.model !== 'unknown').slice().sort((a, b) =>
+      ((b[metricField] ?? -1) - (a[metricField] ?? -1))
+      || ((b.total_tokens ?? 0) - (a.total_tokens ?? 0))
+      || String(a.model).localeCompare(String(b.model)));
+    const unknownRow = raw.find(row => row.model === 'unknown') || null;
+    if (!named.length) {
+      if (!unknownRow) return [];
+      return [{
+        key: '__unidentified__',
+        label: 'Không rõ model',
+        color: OTHER_COLOR,
+        value: unknownRow[metricField],
+        keys: new Set(['unknown']),
+        row: unknownRow,
+        clickable: false,
+      }];
+    }
+    const top = named.slice(0, MAX_MODEL_SERIES);
+    const tail = named.slice(MAX_MODEL_SERIES);
+    const series = top.map((row, index) => ({
+      key: row.model,
+      label: row.model,
+      color: MODEL_COLORS[index % MODEL_COLORS.length],
+      value: row[metricField],
+      row,
+      clickable: false,
+    }));
+    const otherRows = [...tail, ...(unknownRow ? [unknownRow] : [])];
+    if (otherRows.length) {
+      const otherVal = sumMetric(otherRows, metricField);
+      if (tail.length || (typeof otherVal === 'number' && otherVal > 0)) {
+        series.push({
+          key: '__other__',
+          label: 'Khác',
+          color: OTHER_COLOR,
+          value: otherVal,
+          keys: new Set(otherRows.map(r => r.model)),
+          rows: otherRows,
+          clickable: false,
+        });
+      }
+    }
+    return series;
+  }
+  const raw = (data?.by_bot || []).slice().sort((a, b) =>
+    ((b[metricField] ?? -1) - (a[metricField] ?? -1))
+    || ((b.total_tokens ?? 0) - (a.total_tokens ?? 0))
+    || String(a.bot_id || '').localeCompare(String(b.bot_id || '')));
+  const top = raw.slice(0, MAX_BOT_SERIES);
+  const tail = raw.slice(MAX_BOT_SERIES);
+  const series = top.map(row => {
+    const bot = row.bot_id && row.bot_id !== 'unknown' && getBot(row.bot_id);
+    return {
+      key: row.bot_id || 'unknown',
+      label: botDisplayName(row.bot_id),
+      color: bot ? bot.color : UNKNOWN_BOT_COLOR,
+      value: row[metricField],
+      row,
+      bot: bot || null,
+      clickable: !!bot,
+    };
+  });
+  if (tail.length) {
+    series.push({
+      key: '__other__',
+      label: 'Khác',
+      color: OTHER_COLOR,
+      value: sumMetric(tail, metricField),
+      keys: new Set(tail.map(r => r.bot_id || 'unknown')),
+      rows: tail,
+      clickable: false,
+    });
+  }
+  return series;
+}
+function bucketSeriesValues(col, group, metricField, series) {
+  const entries = group === 'model' ? col.by_model : col.by_bot;
+  if (!Array.isArray(entries) || !entries.length || !series.length) return null;
+  const idField = group === 'model' ? 'model' : 'bot_id';
+  const knownKeys = new Set(series.filter(item => !item.keys).map(item => item.key));
+  const map = new Map();
+  let otherSum = 0;
+  for (const entry of entries) {
+    const key = entry[idField] || 'unknown';
+    const raw = entry[metricField];
+    const value = typeof raw === 'number' && Number.isFinite(raw) && raw > 0 ? raw : 0;
+    if (knownKeys.has(key)) map.set(key, (map.get(key) || 0) + value);
+    else otherSum += value;
+  }
+  return series.map(item => ({
+    series: item,
+    value: item.keys ? otherSum : (map.get(item.key) || 0),
+  }));
+}
+function seriesLegendTip(item, group, metricField) {
+  const bits = [];
+  if (group === 'bot' && item.clickable) bits.push(`Xem sử dụng của ${item.label}`);
+  else bits.push(item.label);
+  const row = item.row;
+  if (row) {
+    if (metricField === 'total_tokens' && typeof row.total_tokens === 'number') bits.push(`${fmtInt(row.total_tokens)} token`);
+    if (typeof row.turns === 'number') bits.push(`${fmtInt(row.turns)} lượt`);
+    if (typeof row.requests === 'number') bits.push(`${fmtInt(row.requests)} lần gọi`);
+    if (metricField === 'cost_usd') bits.push(fmtCost(row.cost_usd));
+    if (typeof row.latency_ms_p50 === 'number') bits.push(`~${fmtDur(row.latency_ms_p50)}`);
+  } else if (item.rows) {
+    bits.push(`${item.rows.length} mục`);
+  }
+  return bits.join(' · ');
+}
+function seriesLegendNote(item, group, metricField) {
+  const row = item.row;
+  if (!row) return item.rows ? `${item.rows.length} mục khác` : '';
+  const bits = [];
+  if (group === 'model') {
+    if (metricField === 'total_tokens') {
+      if (typeof row.requests === 'number') bits.push(`${fmtInt(row.requests)} lần gọi`);
+      if (typeof row.latency_ms_p50 === 'number') bits.push(`~${fmtDur(row.latency_ms_p50)}`);
+    } else if (metricField === 'requests') {
+      if (typeof row.total_tokens === 'number') bits.push(`${fmtCompact(row.total_tokens)} token`);
+      if (typeof row.latency_ms_p50 === 'number') bits.push(`~${fmtDur(row.latency_ms_p50)}`);
+    } else {
+      if (typeof row.requests === 'number') bits.push(`${fmtInt(row.requests)} lần gọi`);
+      if (typeof row.total_tokens === 'number') bits.push(`${fmtCompact(row.total_tokens)} token`);
+    }
+  } else {
+    if (typeof row.turns === 'number') bits.push(`${fmtInt(row.turns)} lượt`);
+    if (metricField === 'requests') {
+      if (typeof row.total_tokens === 'number') bits.push(`${fmtCompact(row.total_tokens)} token`);
+    } else if (metricField === 'cost_usd') {
+      if (typeof row.total_tokens === 'number') bits.push(`${fmtCompact(row.total_tokens)} token`);
+      else if (typeof row.requests === 'number') bits.push(`${fmtInt(row.requests)} lần gọi`);
+    } else if (typeof row.requests === 'number') {
+      bits.push(`${fmtInt(row.requests)} lần gọi`);
+    }
+  }
+  return bits.join(' · ');
+}
+function renderSeriesLegend(box, { group, metricField, series, total, formatValue, emptyNote = '', data = statsData }) {
+  if (!box) return;
+  if (!data) { box.innerHTML = ''; return; }
+  if (!series.length) {
+    box.innerHTML = emptyNote ? `<span class="legend-empty">${escapeHTML(emptyNote)}</span>` : '';
+    return;
+  }
+  box.innerHTML = series.map(item => {
+    const val = formatValue(item.value);
+    const pct = share(item.value, total);
+    const pctHtml = pct !== '—' ? `<span class="legend-pct">${pct}</span>` : '';
+    const note = seriesLegendNote(item, group, metricField);
+    const tip = seriesLegendTip(item, group, metricField);
+    const inner = `<i class="legend-swatch" style="background:${item.color}"></i><span class="legend-body"><span class="legend-top"><span class="legend-label">${escapeHTML(item.label)}</span><span class="legend-value"><strong>${val}</strong>${pctHtml}</span></span>${note ? `<span class="legend-note">${escapeHTML(note)}</span>` : ''}</span>`;
+    if (item.clickable && item.bot) {
+      return `<button type="button" class="legend-item legend-bot-btn" data-action="select-bot" data-bot-id="${escapeHTML(item.bot.id)}" data-series-key="${escapeHTML(item.key)}" title="${escapeHTML(tip)}" aria-label="Xem sử dụng của ${escapeHTML(item.bot.name)}">${inner}</button>`;
+    }
+    return `<span class="legend-item" data-series-key="${escapeHTML(item.key)}" title="${escapeHTML(tip)}">${inner}</span>`;
+  }).join('');
+}
+function fmtAxisValue(value, kind) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return '';
+  if (kind === 'cost') {
+    if (value === 0) return '$0';
+    return '$' + value.toFixed(value >= 10 ? 0 : value >= 1 ? 2 : value >= 0.01 ? 3 : 4);
+  }
+  if (value >= 1e6) return (value / 1e6).toLocaleString('vi-VN', { maximumFractionDigits: 1 }) + 'm';
+  if (value >= 1e3) return (value / 1e3).toLocaleString('vi-VN', { maximumFractionDigits: value >= 1e4 ? 0 : 1 }) + 'k';
+  return fmtInt(Math.round(value));
+}
+function chartFrameHtml({ chartHtml, max, kind }) {
+  const yAxis = max > 0
+    ? `<div class="chart-yaxis" aria-hidden="true"><span>${fmtAxisValue(max, kind)}</span><span>${fmtAxisValue(max / 2, kind)}</span><span>${kind === 'cost' ? '$0' : '0'}</span></div>`
+    : `<div class="chart-yaxis" aria-hidden="true"><span></span><span></span><span>${kind === 'cost' ? '$0' : '0'}</span></div>`;
+  return `<div class="chart-frame">${yAxis}<div class="chart-plot"><div class="chart-grid" aria-hidden="true"><i></i><i></i><i></i></div>${chartHtml}</div></div>`;
+}
+function updateChartSummary(el, { cols, values, unit, kind, data, group = '', isTokens = true }) {
+  if (!el) return;
+  const bits = [];
+  let maxVal = 0, peakIdx = -1, activeCount = 0, activeSum = 0;
+  values.forEach((val, idx) => {
+    if (typeof val === 'number' && Number.isFinite(val) && val > 0) {
+      activeCount++;
+      activeSum += val;
+      if (val > maxVal) { maxVal = val; peakIdx = idx; }
+    }
+  });
+  if (peakIdx >= 0) {
+    const col = cols[peakIdx];
+    const peakLabel = unit === 'hour' ? `${col.hour}:00–${col.hour}:59` : fmtDay(col.day);
+    const peakText = kind === 'cost'
+      ? fmtCost(maxVal)
+      : isTokens ? `${fmtAxisValue(maxVal, 'num')} token` : `${fmtInt(maxVal)} lần gọi`;
+    bits.push(`Cao nhất: ${peakLabel} (${peakText})`);
+  }
+  const t = data?.totals || {};
+  if (kind === 'cost') {
+    if (typeof t.cost_usd === 'number' && typeof t.requests === 'number' && t.requests > 0) {
+      bits.push(`TB ${fmtCost(t.cost_usd / t.requests)} / lần gọi`);
+    }
+  } else if (group === 'parts' && typeof t.prompt_tokens === 'number' && t.prompt_tokens > 0 && typeof t.cached_tokens === 'number') {
+    bits.push(`Tỷ lệ cache: ${share(t.cached_tokens, t.prompt_tokens)}`);
+  } else if (activeCount > 1) {
+    const avg = activeSum / activeCount;
+    const avgText = isTokens ? `${fmtAxisValue(avg, 'num')} token` : `${fmtInt(Math.round(avg))} lần gọi`;
+    bits.push(`TB ${unit === 'hour' ? 'giờ' : 'ngày'} hoạt động: ${avgText}`);
+  }
+  el.textContent = bits.join(' · ');
+  el.hidden = !bits.length;
+}
+function bindLegendHighlight(legendEl, chartEl) {
+  if (!legendEl || !chartEl || typeof legendEl.addEventListener !== 'function') return;
+  const apply = key => {
+    const host = chartEl;
+    if (!key) {
+      host.removeAttribute?.('data-hl-series');
+      host.querySelectorAll?.('.is-hl').forEach(el => el.classList.remove('is-hl'));
+      return;
+    }
+    host.setAttribute?.('data-hl-series', key);
+    host.querySelectorAll?.('[data-series-key]').forEach(el =>
+      el.classList.toggle('is-hl', el.dataset.seriesKey === key));
+  };
+  legendEl.addEventListener('pointerover', event => {
+    const item = event.target?.closest?.('[data-series-key]');
+    if (item) apply(item.dataset.seriesKey);
+  });
+  legendEl.addEventListener('pointerleave', () => apply(''));
+}
+function bucketLabel(col, unit) {
+  return unit === 'hour' ? `${col.hour}:00–${col.hour}:59` : fmtDayFull(col.day);
+}
+function axisLabel(col, unit, index, totalLen, step) {
+  if (unit === 'hour') return (Number(col.hour) % 6 === 0 || col.hour === '23') ? col.hour + 'h' : '';
+  return (index % step === 0 || index === totalLen - 1) ? fmtDay(col.day) : '';
+}
+function stackedBarsHtml(segments, total, max, fallbackClass) {
+  if (total === null) return '<i class="dc-unavailable">—</i>';
+  if (!total) return `<i class="dc-bar ${fallbackClass} is-zero" style="height:0%"></i>`;
+  const pct = value => max ? (value / max) * 100 : 0;
+  const active = segments ? segments.filter(seg => seg.value > 0) : [];
+  if (!active.length) return `<i class="dc-bar ${fallbackClass}" style="height:${pct(total)}%"></i>`;
+  return active.slice().reverse().map(seg =>
+    `<i class="dc-bar dc-seg-series" data-series-key="${escapeHTML(seg.series.key)}" style="height:${pct(seg.value)}%;background:${seg.series.color}"></i>`
+  ).join('');
+}
+function renderDayChart(data = statsData) {
   const box = $('#chart-day');
-  if (!statsData) { box.innerHTML = ''; $('#chart-day-note').textContent = ''; return; }
-  const cols = dayColumns(statsData.by_day || []);
-  if (!cols.length) { box.innerHTML = '<div class="empty-note"><strong>Chưa có lượt nào trong kỳ.</strong>Các cột sẽ xuất hiện khi có phiên.</div>'; $('#chart-day-note').textContent = ''; return; }
-  const vals = cols.map(day => dayMetric === 'tokens' ? dayTokenParts(day) : null);
-  const totals = cols.map((day, index) => dayMetric === 'tokens'
-    ? (vals[index] ? vals[index].input + vals[index].cache + vals[index].output : null)
-    : (typeof day.requests === 'number' && Number.isFinite(day.requests) ? day.requests : null));
+  const legendBox = $('#usage-chart-legend');
+  const summaryEl = $('#usage-chart-summary');
+  if (!data) {
+    box.innerHTML = '';
+    if (summaryEl) { summaryEl.textContent = ''; summaryEl.hidden = true; }
+    return;
+  }
+  const group = effectiveUsageGroup();
+  const isTokens = dayMetric === 'tokens';
+  const metricField = isTokens ? 'total_tokens' : 'requests';
+  const series = group === 'parts' ? [] : buildSeries(group, metricField, data);
+  if (group === 'parts') {
+    renderTokenPartsLegend(legendBox, data.totals || {});
+  } else {
+    renderSeriesLegend(legendBox, {
+      group,
+      metricField,
+      series,
+      total: data.totals?.[metricField],
+      formatValue: isTokens ? fmtCompact : fmtInt,
+      emptyNote: group === 'model' && (data.by_model || []).length ? 'Không có model xác định trong kỳ.' : '',
+      data,
+    });
+  }
+  const { unit, cols, hasAny } = chartBuckets(data);
+  if (!hasAny) {
+    box.innerHTML = '<div class="empty-note"><strong>Chưa có lượt nào trong kỳ.</strong>Các cột sẽ xuất hiện khi có phiên.</div>';
+    if (summaryEl) { summaryEl.textContent = ''; summaryEl.hidden = true; }
+    return;
+  }
+  const partsList = group === 'parts' ? cols.map(dayTokenParts) : null;
+  const totals = cols.map((col, index) => {
+    if (group === 'parts') return partsList[index] ? partsList[index].input + partsList[index].cache + partsList[index].output : null;
+    if (isTokens) return colTotalTokens(col);
+    return typeof col.requests === 'number' && Number.isFinite(col.requests) ? col.requests : null;
+  });
   const max = Math.max(0, ...totals.filter(value => value !== null));
   const step = Math.max(1, Math.ceil(cols.length / 15));
-  box.innerHTML = `<div class="day-chart" role="img" aria-label="${dayMetric === 'tokens' ? 'Thành phần token' : 'Lượt gọi model'} theo ngày">` + cols.map((day, index) => {
+  const denseCls = unit === 'hour' ? ' is-hourly' : cols.length > 14 ? ' is-compact' : '';
+  const ariaLabel = `${isTokens ? 'Token' : 'Lần gọi AI'} ${unit === 'hour' ? 'theo giờ' : 'theo ngày'}`;
+  const chartHtml = `<div class="day-chart${denseCls}" role="img" aria-label="${ariaLabel}">` + cols.map((col, index) => {
     const total = totals[index], pct = value => max && total !== null ? (value / max) * 100 : 0;
-    const parts = vals[index];
-    const tip = dayMetric === 'tokens'
-      ? `${fmtDayFull(day.day)} · Input ${fmtInt(day.prompt_tokens)} (Cache ${fmtInt(day.cached_tokens)}) · Output ${fmtInt(day.completion_tokens)}`
-      : `${fmtDayFull(day.day)} · ${fmtInt(day.requests)} lượt gọi model`;
-    const bars = total === null ? '' : dayMetric === 'tokens'
-      ? `<i class="dc-bar dc-seg-output" style="height:${pct(parts.output)}%"></i><i class="dc-bar dc-seg-cache" style="height:${pct(parts.cache)}%"></i><i class="dc-bar dc-seg-input" style="height:${pct(parts.input)}%"></i>`
-      : `<i class="dc-bar dc-bar-requests${total ? '' : ' is-zero'}" style="height:${pct(total)}%"></i>`;
-    return `<div class="dc-col${total === null ? ' is-unavailable' : ''}" title="${escapeHTML(tip)}"><span class="dc-track">${bars || '<i class="dc-unavailable">—</i>'}</span><span class="dc-day">${index % step === 0 || index === cols.length - 1 ? fmtDay(day.day) : ''}</span></div>`;
+    const head = bucketLabel(col, unit);
+    let bars, tip;
+    if (group === 'parts') {
+      const parts = partsList[index];
+      tip = `${head} · Input ${fmtInt(col.prompt_tokens)} (Cache ${fmtInt(col.cached_tokens)}) · Output ${fmtInt(col.completion_tokens)}`;
+      bars = total === null ? '<i class="dc-unavailable">—</i>'
+        : total === 0 ? '<i class="dc-bar dc-bar-tokens is-zero" style="height:0%"></i>'
+        : `<i class="dc-bar dc-seg-output" data-series-key="output" style="height:${pct(parts.output)}%"></i><i class="dc-bar dc-seg-cache" data-series-key="cache" style="height:${pct(parts.cache)}%"></i><i class="dc-bar dc-seg-input" data-series-key="input" style="height:${pct(parts.input)}%"></i>`;
+    } else {
+      const segments = bucketSeriesValues(col, group, metricField, series);
+      const breakdown = segments ? segments.filter(seg => seg.value > 0).map(seg => `${seg.series.label} ${fmtInt(seg.value)}`) : [];
+      const unitWord = isTokens ? 'token' : 'lần gọi';
+      tip = `${head} · ${fmtInt(total)} ${unitWord}${breakdown.length ? ' · ' + breakdown.join(' · ') : ''}`;
+      bars = stackedBarsHtml(segments, total, max, isTokens ? 'dc-bar-tokens' : 'dc-bar-requests');
+    }
+    return `<div class="dc-col${total === null ? ' is-unavailable' : ''}" title="${escapeHTML(tip)}"><span class="dc-track">${bars}</span><span class="dc-day">${axisLabel(col, unit, index, cols.length, step)}</span></div>`;
   }).join('') + '</div>';
-  $('#chart-day-note').textContent = dayMetric === 'tokens'
-    ? 'Ngày theo UTC; cột tách Input chưa cache, Cache và Output.'
-    : 'Ngày theo UTC; số lượt gọi model mỗi ngày.';
+  box.innerHTML = chartFrameHtml({ chartHtml, max, kind: 'num' });
+  updateChartSummary(summaryEl, { cols, values: totals, unit, kind: 'num', data, group, isTokens });
 }
-function renderCostChart() {
+function renderCostChart(data = statsData) {
   const box = $('#chart-cost');
-  if (!statsData) { box.innerHTML = ''; $('#chart-cost-note').textContent = ''; return; }
-  const cols = dayColumns(statsData.by_day || []);
-  if (!cols.length) { box.innerHTML = '<div class="empty-note"><strong>Chưa có lượt nào trong kỳ.</strong></div>'; $('#chart-cost-note').textContent = ''; return; }
-  const values = cols.map(day => typeof day.cost_usd === 'number' && Number.isFinite(day.cost_usd) ? day.cost_usd : null);
+  const legendBox = $('#cost-chart-legend');
+  const summaryEl = $('#cost-chart-summary');
+  if (!data) {
+    box.innerHTML = '';
+    if (legendBox) legendBox.innerHTML = '';
+    if (summaryEl) { summaryEl.textContent = ''; summaryEl.hidden = true; }
+    return;
+  }
+  const group = effectiveCostGroup();
+  const series = buildSeries(group, 'cost_usd', data);
+  renderSeriesLegend(legendBox, {
+    group,
+    metricField: 'cost_usd',
+    series,
+    total: data.totals?.cost_usd,
+    formatValue: fmtCost,
+    emptyNote: group === 'model' && (data.by_model || []).length ? 'Không có model xác định trong kỳ.' : '',
+    data,
+  });
+  const { unit, cols, hasAny } = chartBuckets(data);
+  if (!hasAny) {
+    box.innerHTML = '<div class="empty-note"><strong>Chưa có lượt nào trong kỳ.</strong></div>';
+    if (summaryEl) { summaryEl.textContent = ''; summaryEl.hidden = true; }
+    return;
+  }
+  const values = cols.map(col => typeof col.cost_usd === 'number' && Number.isFinite(col.cost_usd) ? col.cost_usd : null);
   const max = Math.max(0, ...values.filter(value => value !== null));
   const step = Math.max(1, Math.ceil(cols.length / 15));
-  box.innerHTML = '<div class="day-chart cost-day-chart" role="img" aria-label="Chi phí đã ghi nhận theo ngày">' + cols.map((day, index) => {
-    const value = values[index], pct = value !== null && max ? value / max * 100 : 0;
-    const tip = `${fmtDayFull(day.day)} · chi phí đã ghi nhận ${fmtCost(day.cost_usd)}`;
-    return `<div class="dc-col${value === null ? ' is-unavailable' : ''}" title="${escapeHTML(tip)}"><span class="dc-track">${value === null ? '<i class="dc-unavailable">—</i>' : `<i class="dc-bar dc-bar-cost${value ? '' : ' is-zero'}" style="height:${pct}%"></i>`}</span><span class="dc-day">${index % step === 0 || index === cols.length - 1 ? fmtDay(day.day) : ''}</span></div>`;
+  const denseCls = unit === 'hour' ? ' is-hourly' : cols.length > 14 ? ' is-compact' : '';
+  const ariaLabel = unit === 'hour' ? 'Chi phí theo giờ' : 'Chi phí theo ngày';
+  const chartHtml = `<div class="day-chart cost-day-chart${denseCls}" role="img" aria-label="${ariaLabel}">` + cols.map((col, index) => {
+    const value = values[index];
+    const segments = value ? bucketSeriesValues(col, group, 'cost_usd', series) : null;
+    const breakdown = segments ? segments.filter(seg => seg.value > 0).map(seg => `${seg.series.label} ${fmtCost(seg.value)}`) : [];
+    const partial = typeof col.priced_turns === 'number' && typeof col.turns === 'number' && col.priced_turns < col.turns
+      ? ` (${fmtInt(col.priced_turns)}/${fmtInt(col.turns)} lượt có giá)`
+      : '';
+    const inactive = value === 0 && !col.requests && !col.turns;
+    const costLabel = value === null
+      ? `${col.requests ? fmtInt(col.requests) + ' lần gọi · ' : ''}chưa có giá`
+      : inactive ? 'không có hoạt động' : fmtCost(value) + partial;
+    const tip = `${bucketLabel(col, unit)} · ${costLabel}${breakdown.length ? ' · ' + breakdown.join(' · ') : ''}`;
+    const bars = stackedBarsHtml(segments, value, max, 'dc-bar-cost');
+    return `<div class="dc-col${value === null ? ' is-unavailable' : ''}" title="${escapeHTML(tip)}"><span class="dc-track">${bars}</span><span class="dc-day">${axisLabel(col, unit, index, cols.length, step)}</span></div>`;
   }).join('') + '</div>';
-  $('#chart-cost-note').textContent = 'Ngày theo UTC; “—” là chưa có giá, không phải $0.';
-}
-
-function meterWidth(value, max) {
-  return typeof value === 'number' && Number.isFinite(value) && typeof max === 'number' && max > 0
-    ? Math.max(0, Math.min(100, value / max * 100)) : 0;
-}
-function rowMeta(row) {
-  return `${fmtInt(row.conversations)} phiên · ${fmtInt(row.turns)} lượt · ${fmtInt(row.requests)} request · ${fmtInt(row.tool_calls)} tool · ${fmtInt(row.total_tokens)} token · ${fmtCost(row.cost_usd)}`;
-}
-function renderBotRows() {
-  $('#card-bot').hidden = !!botScope;
-  const rows = (statsData?.by_bot || []).slice().sort((a, b) => (b.total_tokens || 0) - (a.total_tokens || 0));
-  const total = statsData?.totals?.total_tokens;
-  const max = Math.max(0, ...rows.map(row => typeof row.total_tokens === 'number' ? row.total_tokens : 0));
-  $('#rows-bot').innerHTML = !statsData ? '' : rows.length ? rows.map(row => {
-    const bot = row.bot_id && row.bot_id !== 'unknown' && getBot(row.bot_id), value = row.total_tokens;
-    const pct = meterWidth(value, max), percent = share(value, total);
-    const meta = rowMeta(row) + ` · cuối ${relTime(row.last_started_at)}`;
-    const contents = `${avatarCell(row.bot_id)}<span class="bot-row-main"><span class="bot-row-name">${escapeHTML(botDisplayName(row.bot_id))}</span><span class="bot-row-meta">${meta}</span><span class="share-bar" role="img" aria-label="${escapeHTML(percent)} tổng token"><i style="width:${pct}%;background:${bot ? bot.color : '#a08f68'}"></i></span></span><span class="bot-row-share">${fmtInt(value)}<small>token · ${percent}</small></span>`;
-    return `<li>${bot ? `<button type="button" class="bot-row bot-row-scope" data-action="select-bot" data-bot-id="${escapeHTML(row.bot_id)}" aria-label="Xem sử dụng của ${escapeHTML(bot.name)}">${contents}</button>` : `<div class="bot-row">${contents}</div>`}</li>`;
-  }).join('') : '<li><div class="empty-note"><strong>Chưa có dữ liệu bot trong kỳ.</strong></div></li>';
-}
-function renderModelRows() {
-  const rows = (statsData?.by_model || []).filter(row => row.model !== 'unknown').slice().sort((a, b) => (b.total_tokens || 0) - (a.total_tokens || 0));
-  const total = statsData?.totals?.total_tokens, max = Math.max(0, ...rows.map(row => typeof row.total_tokens === 'number' ? row.total_tokens : 0));
-  $('#rows-model').innerHTML = !statsData ? '' : rows.length ? rows.map(row => `
-    <li class="model-row"><span class="model-name" title="${escapeHTML(row.model || '—')}">${escapeHTML(row.model || '—')}</span>
-      <span class="model-cost">${fmtInt(row.total_tokens)} token</span>
-      <span class="model-meta">${escapeHTML(rowMeta(row))} · p50 ${fmtDur(row.latency_ms_p50)} · dùng cuối ${relTime(row.last_started_at)}</span>
-      <span class="meter row-meter" role="img" aria-label="${escapeHTML(share(row.total_tokens, total))} tổng token"><i style="width:${meterWidth(row.total_tokens, max)}%"></i></span>
-    </li>`).join('') : ((statsData?.by_model || []).length ? '<li><div class="empty-note"><strong>Không có model xác định trong kỳ.</strong></div></li>' : '<li><div class="empty-note"><strong>Chưa có lượt nào trong kỳ.</strong></div></li>');
-}
-function costMeta(row) {
-  return `${fmtInt(row.priced_turns)} lượt có ghi nhận giá · ${fmtInt(row.turns)} lượt · ${fmtInt(row.conversations)} phiên · ${fmtInt(row.requests)} request · ${fmtInt(row.total_tokens)} token`;
-}
-function renderCostRows() {
-  $('#card-bot-cost').hidden = !!botScope;
-  const bots = (statsData?.by_bot || []).slice().sort((a, b) => (b.cost_usd ?? -1) - (a.cost_usd ?? -1));
-  const models = (statsData?.by_model || []).filter(row => row.model !== 'unknown').slice().sort((a, b) => (b.cost_usd ?? -1) - (a.cost_usd ?? -1));
-  const total = statsData?.totals?.cost_usd;
-  const botMax = Math.max(0, ...bots.map(row => typeof row.cost_usd === 'number' ? row.cost_usd : 0));
-  const modelMax = Math.max(0, ...models.map(row => typeof row.cost_usd === 'number' ? row.cost_usd : 0));
-  $('#rows-bot-cost').innerHTML = !statsData ? '' : bots.length ? bots.map(row => {
-    const bot = row.bot_id && row.bot_id !== 'unknown' && getBot(row.bot_id), value = row.cost_usd, percent = share(value, total);
-    const contents = `${avatarCell(row.bot_id)}<span class="bot-row-main"><span class="bot-row-name">${escapeHTML(botDisplayName(row.bot_id))}</span><span class="bot-row-meta">${costMeta(row)}</span><span class="share-bar" role="img" aria-label="${escapeHTML(percent)} chi phí đã ghi nhận"><i style="width:${meterWidth(value, botMax)}%;background:${bot ? bot.color : '#a08f68'}"></i></span></span><span class="bot-row-share">${fmtCost(value)}<small>${percent}</small></span>`;
-    return `<li>${bot ? `<button type="button" class="bot-row bot-row-scope" data-action="select-bot" data-bot-id="${escapeHTML(row.bot_id)}" aria-label="Xem sử dụng của ${escapeHTML(bot.name)}">${contents}</button>` : `<div class="bot-row">${contents}</div>`}</li>`;
-  }).join('') : '<li><div class="empty-note"><strong>Chưa có dữ liệu chi phí theo bot.</strong></div></li>';
-  $('#rows-model-cost').innerHTML = !statsData ? '' : models.length ? models.map(row => `
-    <li class="model-row"><span class="model-name" title="${escapeHTML(row.model || '—')}">${escapeHTML(row.model || '—')}</span>
-      <span class="model-cost">${fmtCost(row.cost_usd)}</span>
-      <span class="model-meta">${escapeHTML(costMeta(row))} · p50 ${fmtDur(row.latency_ms_p50)}</span>
-      <span class="meter row-meter" role="img" aria-label="${escapeHTML(share(row.cost_usd, total))} chi phí đã ghi nhận"><i class="cost-meter-fill" style="width:${meterWidth(row.cost_usd, modelMax)}%"></i></span>
-    </li>`).join('') : ((statsData?.by_model || []).length ? '<li><div class="empty-note"><strong>Không có model xác định trong kỳ.</strong></div></li>' : '<li><div class="empty-note"><strong>Chưa có dữ liệu chi phí theo model.</strong></div></li>');
-}
-
-function renderHourChart() {
-  const map = new Map((statsData?.by_hour || []).map(h => [h.hour, h]));
-  const cols = [];
-  for (let h = 0; h < 24; h++) {
-    const key = String(h).padStart(2, '0');
-    const v = map.get(key);
-    cols.push({ hour: key, requests: v ? v.requests : 0, cost_usd: v ? v.cost_usd : null });
-  }
-  const max = Math.max(0, ...cols.map(c => c.requests));
-  const box = $('#chart-hour');
-  if (!max) { box.innerHTML = '<div class="empty-note"><strong>Chưa có lượt nào trong kỳ.</strong></div>'; return; }
-  box.innerHTML = '<div class="hour-chart" role="img" aria-label="Lượt theo giờ UTC">' + cols.map(c => {
-    const pct = max ? (c.requests / max) * 100 : 0;
-    const tip = `${c.hour}:00–${c.hour}:59 · ${fmtInt(c.requests)} request · ${fmtCost(c.cost_usd)}`;
-    const label = (Number(c.hour) % 6 === 0 || c.hour === '23') ? c.hour + 'h' : '';
-    return `<div class="hc-col" title="${escapeHTML(tip)}"><span class="hc-track"><i class="hc-bar${c.requests ? '' : ' is-zero'}" style="height:${pct}%"></i></span><span class="hc-hour">${label}</span></div>`;
-  }).join('') + '</div>';
+  box.innerHTML = chartFrameHtml({ chartHtml, max, kind: 'cost' });
+  updateChartSummary(summaryEl, { cols, values, unit, kind: 'cost', data, group });
 }
 
 function fillModelFilter(models) {
@@ -738,40 +1119,9 @@ function queryInput() {
     if (ctx.isActive() && viewMode === 'overview') ensureOverviewData(false);
   }, 350);
 }
-function ensureOverviewScopeButton() {
-  const sidebar = ctx.sidebar;
-  const list = sidebar?.querySelector('#team-bot-list');
-  if (!sidebar || !list) return;
-  let button = sidebar.querySelector('#usage-overview-scope');
-  if (!button) {
-    button = document.createElement('button');
-    button.id = 'usage-overview-scope';
-    button.type = 'button';
-    button.className = 'quiet-button bot-select team-bot-item usage-overview-scope';
-    button.setAttribute('aria-label', 'Tổng quan mọi bot');
-    button.textContent = 'Tổng quan';
-    button.hidden = true;
-    const heading = sidebar.querySelector('.sessions-heading');
-    if (heading) {
-      const createBtn = heading.querySelector('#team-shared-create');
-      if (createBtn) heading.insertBefore(button, createBtn);
-      else heading.appendChild(button);
-    } else {
-      list.parentNode.insertBefore(button, list);
-    }
-    button.onclick = () => {
-      if (sidebar.classList.contains('mobile-open') && typeof closeMobile === 'function') closeMobile();
-      selectBot('');
-    };
-  }
-  button.setAttribute('aria-pressed', String(!botScope));
-}
 function buildPage() {
   const dashTpl = document.querySelector('template#tpl-dashboard');
   $('.workspace').insertAdjacentHTML('beforeend', dashTpl ? dashTpl.innerHTML : '');
-  ensureOverviewScopeButton();
-  $('#range-apply').onclick = applyRange;
-  $('#range-custom-toggle').onclick = () => { customRangeOpen = !customRangeOpen; syncRangeCustomUI(); };
   $('#usage-scope-card').addEventListener('click', event => {
     if (event.target?.closest?.('#scope-clear, .bot-scope-clear')) selectBot('');
   });
@@ -780,11 +1130,10 @@ function buildPage() {
     const button = event.target.closest('[data-usage-view]');
     if (button) selectUsageView(button.dataset.usageView);
   };
-  $$('.seg-toggle .chip').forEach(button => button.onclick = () => {
-    dayMetric = button.dataset.dayMetric;
-    $$('.seg-toggle .chip').forEach(item => item.setAttribute('aria-pressed', String(item === button)));
-    renderDayChart();
-  });
+  $('#usage-chart-mode').onchange = event => setUsageChartMode(event.target.value);
+  $('#cost-chart-mode').onchange = event => setCostGroup(event.target.value);
+  bindLegendHighlight($('#usage-chart-legend'), $('#chart-day'));
+  bindLegendHighlight($('#cost-chart-legend'), $('#chart-cost'));
   $('#filter-model').onchange = $('#filter-status').onchange = applyListFilters;
   $('#filter-q').addEventListener('input', queryInput);
   $('#trace-refresh').onclick = () => ensureOverviewData(true);
@@ -824,14 +1173,10 @@ const ready = boot();
 return { ready, selectBot, loadConversation,
   sidebarLabel(id, name, status) { return `Xem sử dụng của ${name}`; },
   onEnter() {
-    const overviewButton = ctx.sidebar?.querySelector('#usage-overview-scope');
-    if (overviewButton) overviewButton.hidden = false;
     if (viewMode === 'overview') ensureOverviewData(false);
   },
   onLeave() {
     clearTimeout(qTimer); qTimer = null;
-    const overviewButton = ctx.sidebar?.querySelector('#usage-overview-scope');
-    if (overviewButton) overviewButton.hidden = true;
   },
   onRoute(route) {
     const key = route.search + route.hash;

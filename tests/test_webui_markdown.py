@@ -273,28 +273,36 @@ hooks.getJson = async url => {
 _DASH_RET = """; return {
   get statsData() { return statsData; },
   get dayMetric() { return dayMetric; },
-  setDayMetric(v) { dayMetric = v; },
-  renderStats, renderModelRows, renderDayChart, renderCostChart, renderBotRows, renderTraceTable,
+  setDayMetric, setUsageGroup, setCostGroup,
+  renderStats, renderDayChart, renderCostChart, renderTraceTable,
   setRange(from, to) { rangeFrom = from; rangeTo = to; },
   fmtCost, fmtInt, fmtDur, traceState, loadTraces, dayColumns,
 };"""
 
 _DASH_SCENARIO = r"""
 await settle();
-const rowsModel = document.querySelector('#rows-model').innerHTML;
-// Keep boot's default seven-day requests intact; set the local chart range to
-// the fixture dates without changing controls or triggering another request.
 page.setRange('2026-09-14', '2026-09-15');
+page.setUsageGroup('model');
+const modelLegend = document.querySelector('#usage-chart-legend').innerHTML;
+page.setUsageGroup('bot');
+const botLegend = document.querySelector('#usage-chart-legend').innerHTML;
 page.setDayMetric('requests');
-page.renderDayChart();
 page.renderCostChart();
+const chartDay = document.querySelector('#chart-day').innerHTML;
+const chartCost = document.querySelector('#chart-cost').innerHTML;
+const costLegend = document.querySelector('#cost-chart-legend').innerHTML;
+page.setRange('2026-09-14', '2026-09-14');
+page.renderDayChart();
+const chartHour = document.querySelector('#chart-day').innerHTML;
 console.log(JSON.stringify({
-  statGrid: document.querySelector('#stat-grid').innerHTML,
-  rowsBot: document.querySelector('#rows-bot').innerHTML,
-  rowsModel,
-  chartDay: document.querySelector('#chart-day').innerHTML,
-  chartCost: document.querySelector('#chart-cost').innerHTML,
-  chartHour: document.querySelector('#chart-hour').innerHTML,
+  usageTotal: document.querySelector('#usage-chart-total').textContent,
+  costTotal: document.querySelector('#cost-chart-total').textContent,
+  modelLegend,
+  botLegend,
+  costLegend,
+  chartDay,
+  chartCost,
+  chartHour,
   traceRows: document.querySelector('#trace-conversations').innerHTML,
   filterModel: document.querySelector('#filter-model').children.map(o => o.textContent),
   gets: calls.gets,
@@ -303,27 +311,27 @@ console.log(JSON.stringify({
 
 
 def test_dashboard_renders_stats_models_and_paged_rows() -> None:
-    """Usage renders hero stats, ranked model/bot rows and flat turn rows;
-    daily model calls and recorded costs use separate charts. A model without
-    a configured price shows '—' (never an invented $0); rows rank by tokens."""
+    """Usage renders unified stacked charts with model/bot legends, auto-switches
+    to 24-hour bars on a 1-day range, keeps unpriced models as '—' in Cost,
+    and renders flat paged Trace rows."""
     out = _run_page(DASH_JS, _DASH_RET, _DASH_SCENARIO, _DASH_SETUP)
 
-    assert "stat-value" in out["statGrid"]
-    assert "$1.23" in out["statGrid"]
+    assert out["usageTotal"] != "—"
+    assert out["costTotal"] == "$1.23"
 
-    assert out["rowsModel"].index("big-model") < out["rowsModel"].index("mid-model")
-    assert out["rowsModel"].index("mid-model") < out["rowsModel"].index("cheap-model")
-    assert "—" in out["rowsModel"]
-    assert "$1.50" in out["rowsModel"]
+    assert out["modelLegend"].index("big-model") < out["modelLegend"].index("mid-model")
+    assert out["modelLegend"].index("mid-model") < out["modelLegend"].index("cheap-model")
+    assert "—" in out["costLegend"]
+    assert "$1.50" in out["costLegend"]
 
-    assert "Coder" in out["rowsBot"]
-    assert "ghost" in out["rowsBot"]
-    assert "id-chip" in out["rowsBot"]
+    assert "Coder" in out["botLegend"]
+    assert "ghost" in out["botLegend"]
+    assert 'data-bot-id="coder"' in out["botLegend"]
 
-    assert 'aria-label="Lượt gọi model theo ngày"' in out["chartDay"] and "dc-bar" in out["chartDay"]
+    assert 'aria-label="Lần gọi AI theo ngày"' in out["chartDay"] and "dc-bar" in out["chartDay"]
     assert "dc-bar" in out["chartCost"] and "Chi phí" in out["chartCost"]
     assert "$0.5000" in out["chartCost"] and "is-unavailable" in out["chartCost"]
-    assert "hc-col" in out["chartHour"]
+    assert 'class="day-chart is-hourly"' in out["chartHour"] and out["chartHour"].count('class="dc-col') == 24
     assert "Tất cả model" in out["filterModel"]
     assert "big-model" in out["filterModel"]
 
@@ -339,33 +347,34 @@ def test_dashboard_renders_stats_models_and_paged_rows() -> None:
 
 
 def test_dashboard_page_structure() -> None:
-    """The rebuilt Sử dụng page has route-persisted views, range presets,
-    separate daily token/request and cost charts, ranked rows and filters."""
+    """The rebuilt Sử dụng page has route-persisted views, 1/7/30-day presets
+    on one horizontal bar, unified stacked charts on Usage and Cost with
+    inline legends, and Trace filters."""
     js = DASH_JS.read_text(encoding="utf-8")
     css = DASH_CSS.read_text(encoding="utf-8")
     entry = (UI / "chat" / "index.html").read_text(encoding="utf-8")
 
     assert 'src="../dashboard/js/dashboard.js"' in entry
 
-    for marker in ('id="range-from"', 'id="range-to"', 'id="range-apply"',
-                   'data-preset="1"', 'data-preset="7"', 'data-preset="30"'):
+    for marker in ('data-preset="1"', 'data-preset="7"', 'data-preset="30"',
+                   'id="usage-chart-total"', 'id="cost-chart-total"',
+                   'id="usage-chart-legend"', 'id="cost-chart-legend"'):
         assert marker in entry, marker
+    for gone in ('id="stat-grid"', 'id="range-custom-toggle"', 'id="range-custom-bar"',
+                 'data-preset="all"', 'id="analysis-details"', 'id="rows-bot"',
+                 'id="rows-model"', 'id="chart-hour"'):
+        assert gone not in entry, gone
 
     assert "let dayMetric = 'tokens'" in js
-    assert 'data-day-metric="requests"' in entry
-    assert 'data-day-metric="tokens"' in entry
+    assert 'id="usage-chart-mode"' in entry and 'id="cost-chart-mode"' in entry
+    assert 'id="usage-chart-footer"' in entry and 'id="cost-chart-footer"' in entry
     assert 'id="chart-cost"' in entry
     dash_tpl = entry.split('<template id="tpl-dashboard">', 1)[1].split("</template>", 1)[0]
+    assert dash_tpl.index('id="chart-day"') < dash_tpl.index('id="usage-chart-footer"')
+    assert dash_tpl.index('id="chart-cost"') < dash_tpl.index('id="cost-chart-footer"')
     assert all(dash_tpl.count(f'data-usage-view="{view}"') == 1 for view in ("usage", "cost", "trace"))
-    assert "dc-col" in js and "dc-bar" in js
-    assert ".day-chart" in css and ".dc-bar" in css
-
-    for marker in ('id="rows-bot"', 'id="rows-model"'):
-        assert marker in dash_tpl, marker
-    for marker in ("share-bar", "model-cost"):
-        assert marker in js, marker
-    assert re_block(css, ".bot-row", "display:grid", "align-items:center")
-    assert ".share-bar" in css and ".model-cost" in css
+    assert "dc-col" in js and "dc-bar" in js and "dc-seg-series" in js
+    assert ".day-chart" in css and ".dc-bar" in css and ".chart-legend" in css and ".chart-mode-select" in css and ".chart-footer" in css
 
     assert 'id="filter-model"' in dash_tpl and 'id="filter-status"' in dash_tpl
     assert "q.set('offset', offset)" in js
@@ -455,12 +464,12 @@ def test_trace_page_structure() -> None:
     assert ".dashboard-shell .tl-detail-head" in dashboard_css
 
     for sel, needles in (
-        (".dashboard-shell .tl-user", ("border-radius:14px 14px 3px 14px", "background:#eee6d56b")),
-        (".message-user", ("border-radius:14px 14px 3px 14px", "background:#eee6d56b")),
+        (".dashboard-shell .tl-user", ("border-radius:14px 14px 3px 14px", "background:var(--surface-pill)")),
+        (".message-user", ("border-radius:14px 14px 3px 14px", "background:var(--surface-pill)")),
         (".dashboard-shell .tl-byline", ("var(--bot-ink,var(--forest))", "var(--serif)")),
         (".message-byline", ("var(--bot-ink,var(--forest))", "var(--serif)")),
-        (".dashboard-shell .tl-body", ("var(--serif)", "color:#433d30")),
-        (".live-copy", ("var(--serif)", "color:#433d30")),
+        (".dashboard-shell .tl-body", ("var(--serif)", "color:var(--ink-body)")),
+        (".live-copy", ("var(--serif)", "color:var(--ink-body)")),
     ):
         sheet = dashboard_css if sel.startswith(".dashboard-shell") else chat
         assert re_block(sheet, sel, *needles), sel
@@ -513,11 +522,13 @@ def test_memories_groups_leaves_by_day_and_filters() -> None:
     across title/snippet/conversation instead of re-sorting."""
     out = _run_page(MEM_JS, _MEM_RET, _MEM_SCENARIO, _MEM_SETUP)
 
-    assert "Tổng lá" in out["stats"]
+    assert "Tất cả" in out["stats"]
     assert out["count"] == "3 lá"
 
     html = out["leavesHtml"]
     assert html.count('class="mem-day"') == 2
+    assert ' open>' not in html
+    assert "mem-sid" not in html
     day21, day19 = html.index("21/9/2026"), html.index("19/9/2026")
     assert day21 < day19
     assert html.index("Trang hai") < html.index("Trang ba") < day19
@@ -525,6 +536,7 @@ def test_memories_groups_leaves_by_day_and_filters() -> None:
         assert title in html
 
     assert "Trang hai" in out["filteredHtml"]
+    assert ' open>' in out["filteredHtml"]
     assert "Trang một" not in out["filteredHtml"]
     assert out["countAfter"] == "1/3 lá"
 

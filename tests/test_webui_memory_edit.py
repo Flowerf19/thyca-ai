@@ -1,14 +1,11 @@
 """Execute ui/memories/js/memories.js with a minimal DOM harness.
 
-The rebuilt Nhật ký page keeps one leaf list grouped by day and paged 60
-leaves at a time. Bot scope is no longer a toolbar <select>: sidebar bot
-cards and drawer sessions route through selectBot()/loadConversation(), which
-toggle the scope, rewrite ?bot= in the URL, hit stats?bot_id= and fill the
-scope card (with a "Bỏ lọc" button). Kind/use filtering and search stay
-client-side via the #memory-kind / #memory-use ghost selects. These
-scenarios cover scoped stats loads with echo validation, stale-answer
-dropping, the three leaf actions (reinforce / forget / update), the
-filters + pager, and ?bot= deep links.
+The streamlined Nhật ký page uses one compact status tab strip + kind/search
+controls (no reload button or duplicate dropdown) above a collapsed-by-default
+`<details>` leaf list grouped by day and paged 60 leaves at a time. Flagged
+leaves (expiring / suggest-removal) highlight in red (`is-alert`), clicking a
+row expands its content + clean metadata (no technical ID) + actions, and
+typing a search auto-expands matching rows.
 """
 from __future__ import annotations
 
@@ -28,10 +25,21 @@ _HARNESS = r"""
 import fs from 'node:fs';
 const elementRegistry = new Map();
 function makeEl(tag = 'div') {
+  const classes = new Set();
   return {
     tag, attrs: {}, dataset: {}, listeners: {}, children: [],
     style: {}, value: '', hidden: false, disabled: false, open: false,
     _html: '', _text: '', _qs: new Map(),
+    classList: {
+      add(c) { classes.add(c); },
+      remove(c) { classes.delete(c); },
+      contains(c) { return classes.has(c); },
+      toggle(c, force) {
+        const on = force === undefined ? !classes.has(c) : Boolean(force);
+        if (on) classes.add(c); else classes.delete(c);
+        return on;
+      },
+    },
     setAttribute(k, v) { this.attrs[k] = String(v); },
     getAttribute(k) { return this.attrs[k] ?? null; },
     removeAttribute(k) { delete this.attrs[k]; },
@@ -241,6 +249,7 @@ fireAct('reinforce');
 await settle();
 const meta = document.querySelector('#memory-leaves [data-chunk="c1"]')
   .querySelector('.mem-meta').innerHTML;
+const expires = page.memState.byChunk.get('c1').expires_at;
 
 // Quên: asks first, posts, then reloads the stats.
 hooks.postJson = async () => ({ ok: true });
@@ -270,7 +279,7 @@ console.log(JSON.stringify({
   gets: calls.gets,
   getsAfterBoot,
   meta,
-  expires: LEAF.expires_at,
+  expires,
   opened, closed,
   dialogOpenAfterFailure: document.querySelector('#memory-edit-dialog').open,
   toasts: calls.toasts,
@@ -375,38 +384,43 @@ const pageOne = {
   leaves: leafCount(),
   pager: document.querySelector('#memory-leaves').innerHTML.includes('mem-pager'),
   info: (document.querySelector('#memory-leaves').innerHTML.match(/Trang \d+\/\d+/) || [''])[0],
-};
-// The kind + use ghost selects filter client-side — no refetch.
-document.querySelector('#memory-kind').onchange({ target: { value: 'habit' } });
-const habit = { leaves: leafCount(),
-  count: document.querySelector('#memory-count').textContent };
-document.querySelector('#memory-use').onchange({ target: { value: 'untouched' } });
-const habitUntouched = { leaves: leafCount(),
-  count: document.querySelector('#memory-count').textContent };
-// Reset both, then page two via the delegated pager button.
-document.querySelector('#memory-kind').onchange({ target: { value: '' } });
-document.querySelector('#memory-use').onchange({ target: { value: '' } });
-fireAct('next');
-const pageTwo = {
-  leaves: leafCount(), memPage: page.memState.page,
-  info: (document.querySelector('#memory-leaves').innerHTML.match(/Trang \d+\/\d+/) || [''])[0],
+  collapsedByDefault: !document.querySelector('#memory-leaves').innerHTML.includes(' open>'),
 };
 const fireStat = filter => {
   const btn = { dataset: { statFilter: filter }, closest: s => (s === '[data-stat-filter]' ? btn : null) };
   fire(document.querySelector('#memory-stats'), 'click', { target: btn });
 };
-// Single-bullet snippets align flush left without wrapping in <ul><li>.
+document.querySelector('#memory-kind').onchange({ target: { value: 'habit' } });
+const habit = { leaves: leafCount(),
+  count: document.querySelector('#memory-count').textContent };
+fireStat('used');
+const habitUsed = { leaves: leafCount(),
+  count: document.querySelector('#memory-count').textContent };
+document.querySelector('#memory-kind').onchange({ target: { value: '' } });
+fireStat('');
+fireAct('next');
+const pageTwo = {
+  leaves: leafCount(), memPage: page.memState.page,
+  info: (document.querySelector('#memory-leaves').innerHTML.match(/Trang \d+\/\d+/) || [''])[0],
+};
 const usedBtnHtml = document.querySelector('#memory-leaves').innerHTML;
 const hasSingleBulletParagraph = !usedBtnHtml.includes('<ul><li>') && usedBtnHtml.includes('<p>nội dung');
-// Clicking KPI filter strips narrows leaves client-side without refetching.
 fireStat('used');
-const statUsed = { leaves: leafCount(), useVal: document.querySelector('#memory-use').value };
+const statUsed = { leaves: leafCount(), useVal: page.memState.use };
 fireStat('expiring');
-const statExpiring = { leaves: leafCount(), useVal: document.querySelector('#memory-use').value };
+const statExpiring = { leaves: leafCount(), useVal: page.memState.use };
 fireStat('expiring');
-const statReset = { leaves: leafCount(), useVal: document.querySelector('#memory-use').value };
+const statReset = { leaves: leafCount(), useVal: page.memState.use };
+fire(document.querySelector('#memory-search'), 'input', { target: { value: 'Lá 12' } });
+const searchExpanded = {
+  leaves: leafCount(),
+  opened: document.querySelector('#memory-leaves').innerHTML.includes(' open>'),
+};
+fire(document.querySelector('#memory-search'), 'input', { target: { value: '' } });
+const searchClearedCollapsed = !document.querySelector('#memory-leaves').innerHTML.includes(' open>');
 console.log(JSON.stringify({
-  pageOne, habit, habitUntouched, pageTwo, hasSingleBulletParagraph, statUsed, statExpiring, statReset, gets: calls.gets,
+  pageOne, habit, habitUsed, pageTwo, hasSingleBulletParagraph, statUsed, statExpiring, statReset,
+  searchExpanded, searchClearedCollapsed, gets: calls.gets,
 }));
 """),
 }
@@ -466,24 +480,27 @@ def filters() -> dict:
 
 
 def test_stats_load_renders_tiles_leaves_and_global_scope(stats: dict) -> None:
-    """Boot loads the global stats — no bot_id — into tiles + the leaf list;
-    the scope card stays hidden until a sidebar bot is chosen. The toolbar
-    carries kind/use/search filters — the old #memory-bot select is gone."""
+    """Boot loads global stats into compact filter tabs + collapsed `<details>`
+    leaves without technical memory IDs, reload buttons, or duplicate selects."""
     assert stats["gets"] == ["/api/memory/stats"]
-    for tile in ("Tổng lá", "Đã dùng", "Được tìm", "Sắp hết hạn", "Gợi ý xóa"):
-        assert tile in stats["stats"], tile
+    for tab in ("Tất cả", "Đã dùng", "Sắp hết hạn", "Gợi ý xóa"):
+        assert tab in stats["stats"], tab
     assert "Trang một" in stats["leaves"]
     assert "Nội dung một" in stats["leaves"]
-    assert "mem-leaf" in stats["leaves"]
+    assert '<details class="mem-leaf"' in stats["leaves"]
+    assert ' open>' not in stats["leaves"]
+    assert "mem-sid" not in stats["leaves"]
+    assert ">s1<" not in stats["leaves"]
+    assert "Thói quen" in stats["leaves"]
+    assert "· viết" not in stats["leaves"]
     assert stats["count"] == "1 lá"
     assert stats["scopeCardHidden"] is True
     ws = stats["workspace"]
-    assert 'id="memory-bot"' not in ws
-    for marker in ('id="memory-kind"', 'id="memory-use"',
-                   'id="memory-search"', 'id="memory-reload"'):
+    for dropped in ('id="memory-bot"', 'id="memory-use"', 'id="memory-reload"'):
+        assert dropped not in ws, dropped
+    for marker in ('id="memory-stats"', 'id="memory-kind"', 'id="memory-search"'):
         assert marker in ws, marker
     assert 'value="habit"' in ws and 'value="checkpoint"' in ws
-    assert 'value="used"' in ws and 'value="untouched"' in ws
 
 
 def test_scope_echo_mismatch_rejected(scope: dict) -> None:
@@ -538,7 +555,8 @@ def test_leaf_actions_post_the_right_endpoints(actions: dict) -> None:
     }
     assert actions["confirms"] == 1
     assert actions["expires"] == "2026-10-20T00:00:00Z"
-    assert "hết hạn" in actions["meta"]
+    assert "Hết hạn" in actions["meta"]
+    assert "s1" not in actions["meta"]
     reloads = actions["gets"][actions["getsAfterBoot"]:]
     assert reloads == ["/api/memory/stats", "/api/memory/stats"]
     assert "Đã gia hạn trang." in actions["toasts"]
@@ -610,14 +628,14 @@ def test_stale_bot_deep_link_clears_after_boot(deeplink_stale: dict) -> None:
 
 
 def test_kind_use_filters_page_through_60_leaves(filters: dict) -> None:
-    """The ghost selects + pager replaced the old category views: kind and
-    use filter the loaded leaves client-side (count follows 'shown/total')
-    and .mem-pager buttons walk 60-leaf pages — all without a refetch."""
+    """Compact status tabs + kind/search filter client-side without refetching,
+    rows stay collapsed by default, and active search auto-expands matches."""
     assert filters["pageOne"]["leaves"] == 60
     assert filters["pageOne"]["pager"] is True
     assert filters["pageOne"]["info"] == "Trang 1/2"
+    assert filters["pageOne"]["collapsedByDefault"] is True
     assert filters["habit"] == {"leaves": 22, "count": "22/65 lá"}
-    assert filters["habitUntouched"] == {"leaves": 11, "count": "11/65 lá"}
+    assert filters["habitUsed"] == {"leaves": 11, "count": "11/65 lá"}
     assert filters["pageTwo"]["leaves"] == 5
     assert filters["pageTwo"]["info"] == "Trang 2/2"
     assert filters["pageTwo"]["memPage"] == 2
@@ -625,6 +643,8 @@ def test_kind_use_filters_page_through_60_leaves(filters: dict) -> None:
     assert filters["statUsed"] == {"leaves": 32, "useVal": "used"}
     assert filters["statExpiring"] == {"leaves": 0, "useVal": "expiring"}
     assert filters["statReset"] == {"leaves": 60, "useVal": ""}
+    assert filters["searchExpanded"] == {"leaves": 1, "opened": True}
+    assert filters["searchClearedCollapsed"] is True
     assert filters["gets"] == ["/api/memory/stats"]
 
 
@@ -684,8 +704,59 @@ def test_expiring_kpi_reinforce_and_empty_filter() -> None:
     assert "Không tìm thấy lá nào" in out["emptySuggestHtml"]
     assert "Chưa có lá nhớ nào" not in out["emptySuggestHtml"]
     assert "Ghi chú sắp hạn" in out["beforeReinforceHtml"] and out["countBefore"] == "1 lá"
+    assert 'class="mem-leaf is-alert"' in out["beforeReinforceHtml"]
     assert "Ghi chú sắp hạn" not in out["afterReinforceHtml"] and out["countAfter"] == "0/1 lá"
     assert "Sắp hết hạn" in out["beforeReinforceHtml"]
-    assert 'data-stat-filter="expiring" aria-pressed="true"><b>0</b>' in out["statsAfter"]
-    assert '<div class="mem-chips"></div>' in out["afterClearHtml"]
+    assert 'data-stat-filter="expiring" aria-pressed="true"><span>Sắp hết hạn</span><b>0</b>' in out["statsAfter"]
+    assert 'class="mem-leaf"' in out["afterClearHtml"]
+    assert "is-alert" not in out["afterClearHtml"]
+    assert "me1" not in out["afterClearHtml"]
     assert out["gets"] == ["/api/memory/stats"]
+
+
+def test_chunks_sharing_memory_id_merge_into_one_row() -> None:
+    """Multiple chunks from the same memory_id collapse into one row, summing
+    usage counts, combining unique snippets, and syncing tab counts."""
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node not installed")
+    setup = """
+        const CHUNKS = [
+            { chunk_id: 'm1#1', memory_id: '2026-11-25#81078be7',
+              heading: '## 10:59 — Top model ngày 25/11/2026', snippet: '- Đoạn một',
+              timeline_day: '2026-11-25', get_count: 1, search_count: 2, bots: ['march7th'] },
+            { chunk_id: 'm1#2', memory_id: '2026-11-25#81078be7',
+              heading: '## 10:59 — Top model ngày 25/11/2026', snippet: '- Đoạn hai',
+              timeline_day: '2026-11-25', get_count: 2, search_count: 0, bots: ['march7th'] },
+            { chunk_id: 'm2#1', memory_id: '2026-11-25#aaaaaaaa',
+              heading: '## 11:00 — Ghi chú riêng', snippet: '- Ghi chú khác',
+              timeline_day: '2026-11-25', get_count: 0, search_count: 0, bots: ['thyca'] },
+        ];
+        hooks.getJson = async () => ({
+            bot_id: null, total: 3, used: 2, unused: 1, searched: 1, untouched: 1,
+            expiring: [], suggest_removal: [{ chunk_id: 'm2#1' }], leaves: CHUNKS,
+        });
+    """
+    body = """
+        await settle();
+        const html = document.querySelector('#memory-leaves').innerHTML;
+        console.log(JSON.stringify({
+            rows: (html.match(/<details class="mem-leaf/g) || []).length,
+            count: document.querySelector('#memory-count').textContent,
+            stats: document.querySelector('#memory-stats').innerHTML,
+            html,
+        }));
+    """
+    result = subprocess.run(
+        [node, "--input-type=module", "-e", _HARNESS + setup + _EVAL + body],
+        cwd=ROOT, check=True, capture_output=True, text=True, timeout=15,
+        env={**os.environ, "MEM_JS": str(MEM_JS), "INDEX_HTML": str(INDEX_HTML)},
+    )
+    out = json.loads(result.stdout)
+    assert out["rows"] == 2
+    assert out["count"] == "2 lá"
+    assert "<span>Tất cả</span><b>2</b>" in out["stats"]
+    assert "<span>Đã dùng</span><b>1</b>" in out["stats"]
+    assert "<span>Gợi ý xóa</span><b>1</b>" in out["stats"]
+    assert "Đoạn một" in out["html"] and "Đoạn hai" in out["html"]
+    assert "Đã dùng 3" in out["html"] and "Tìm thấy 2" in out["html"]

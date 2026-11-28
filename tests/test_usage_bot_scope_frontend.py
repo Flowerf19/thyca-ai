@@ -45,18 +45,26 @@ def test_content_view_is_excluded_from_authoritative_request_keys(node: str) -> 
     assert out["activeView"] == "cost"
 
 
-def test_cost_bot_rows_are_hidden_when_scoped_and_unknown_is_informational(node: str) -> None:
+def test_bot_group_controls_hide_when_scoped_and_unknown_is_informational(node: str) -> None:
     out = _eval_dash(
         node,
-        "statsData = { totals: {}, by_bot: [{ bot_id: 'coder', total_tokens: 2, cost_usd: 0.1 },"
+        "statsData = { totals: { total_tokens: 3, cost_usd: 0.3 }, by_bot: [{ bot_id: 'coder', total_tokens: 2, cost_usd: 0.1 },"
         "{ bot_id: 'unknown', total_tokens: 1, cost_usd: 0.2 }] };"
-        "botScope = 'coder'; renderCostRows(); renderBotRows();"
-        "console.log(JSON.stringify({ hidden: document.querySelector('#card-bot-cost').hidden,"
-        " cost: document.querySelector('#rows-bot-cost').innerHTML, usage: document.querySelector('#rows-bot').innerHTML }))",
+        "setUsageGroup('bot'); setCostGroup('bot');"
+        "const overviewUsage = document.querySelector('#usage-chart-legend').innerHTML;"
+        "const overviewCost = document.querySelector('#cost-chart-legend').innerHTML;"
+        "botScope = 'coder'; updateViewShell(); renderDayChart(); renderCostChart();"
+        "console.log(JSON.stringify({ costToggleHidden: document.querySelector('#cost-chart-mode').hidden,"
+        " usageModeValues: document.querySelector('#usage-chart-mode').options.map(o => o.value),"
+        " usageGroup: effectiveUsageGroup(), costGroup: effectiveCostGroup(),"
+        " overviewUsage, overviewCost }))",
     )
-    assert out["hidden"] is True
-    assert 'data-action="select-bot" data-bot-id="unknown"' not in out["cost"]
-    assert 'data-action="select-bot" data-bot-id="unknown"' not in out["usage"]
+    assert out["costToggleHidden"] is True
+    assert out["usageModeValues"] == ["tokens:parts", "tokens:model", "requests:model"]
+    assert out["usageGroup"] == "parts"
+    assert out["costGroup"] == "model"
+    assert 'data-action="select-bot" data-bot-id="unknown"' not in out["overviewCost"]
+    assert 'data-action="select-bot" data-bot-id="unknown"' not in out["overviewUsage"]
 
 
 def test_explicit_bot_contribution_and_full_turn_context_are_distinguished(node: str) -> None:
@@ -80,9 +88,8 @@ def test_dashboard_structure_and_scope_lifecycle_guards() -> None:
     root = Path(__file__).resolve().parents[1]
     source = (root / "thyca/webui/ui/dashboard/js/dashboard.js").read_text(encoding="utf-8")
     css = (root / "thyca/webui/ui/dashboard/dashboardcss/dashboard.css").read_text(encoding="utf-8")
-    assert "let button = sidebar.querySelector('#usage-overview-scope')" in source
-    assert "if (overviewButton) overviewButton.hidden = false" in source
-    assert "if (overviewButton) overviewButton.hidden = true" in source
+    assert "usage-overview-scope" not in source
+    assert "usage-overview-scope" not in css
     assert "ctx.navigate('dashboard', { search: pageQuery(view), hash: '' })" in source
     assert "sidebarLabel(id, name, status) { return `Xem sử dụng của ${name}`; }" in source
     assert ".dashboard-shell .workspace{display:flex;flex-direction:column}" in css

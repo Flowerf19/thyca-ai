@@ -127,67 +127,78 @@ def test_share_denominator_and_vi_format(node: str) -> None:
     assert almost == "100%"
 
 
-def test_hero_cards_carry_the_cost_and_token_split(node: str) -> None:
-    """The shared stat grid consolidates into four compact KPIs: Token
-    (with Input/Cache/Output split), Chi phí, Gọi model (with tool & turn
-    counts), and Độ trễ p50."""
+def test_tab_headers_carry_own_token_cost_and_trace_totals(node: str) -> None:
+    """Each of the 3 tabs owns its own summary without a shared stat-grid:
+    Usage owns total tokens + Input/Cache/Output, Cost owns total cost (hiding
+    coverage when 100% priced), and Trace owns turns + latency summary."""
     totals = {
-        "requests": 5, "tool_calls": 7, "turns": 4, "prompt_tokens": 150,
-        "cached_tokens": 30, "completion_tokens": 15, "total_tokens": 165,
-        "cost_usd": 0.03, "latency_ms_p50": 1200, "latency_ms_p90": 3400,
+        "requests": 5, "tool_calls": 7, "turns": 4, "priced_turns": 4,
+        "prompt_tokens": 150, "cached_tokens": 30, "completion_tokens": 15,
+        "total_tokens": 165, "cost_usd": 0.03,
+        "latency_ms_p50": 1200, "latency_ms_p90": 3400,
     }
-    html = _eval_dash(
+    out = _eval_dash(
         node,
         f"renderStats({{ totals: {json.dumps(totals)} }});\n"
-        "console.log(JSON.stringify(document.querySelector('#stat-grid').innerHTML));",
+        "console.log(JSON.stringify({"
+        " usageTotal: document.querySelector('#usage-chart-total').textContent,"
+        " legend: document.querySelector('#usage-chart-legend').innerHTML,"
+        " costTotal: document.querySelector('#cost-chart-total').textContent,"
+        " costCoverage: document.querySelector('#cost-coverage').textContent,"
+        " costCoverageHidden: document.querySelector('#cost-coverage').hidden,"
+        " traceSummary: document.querySelector('#trace-head-summary').textContent,"
+        " traceTitle: document.querySelector('#trace-head-summary').title || '' }));",
     )
-    assert ">Token</p>" in html
-    assert "Input 120 · Cache 30 · Output 15" in html
-    assert ">165</p>" in html
-    assert ">Chi phí</p>" in html and "$0.0300" in html
-    assert "TB $0.006000 / req" in html
-    assert ">Gọi model</p>" in html and ">5</p>" in html
-    assert "7 tool · 4 lượt" in html
-    assert ">Độ trễ p50</p>" in html
-    assert "1,2 giây" in html and "p90 3,4 giây" in html
-    for removed in (">Gọi tool</p>", ">Phiên</p>", ">Lượt</p>"):
-        assert removed not in html
+    assert out["usageTotal"] == "165"
+    assert 'id="usage-input-total">120</strong>' in out["legend"]
+    assert 'id="usage-cache-total">30</strong>' in out["legend"]
+    assert 'id="usage-output-total">15</strong>' in out["legend"]
+    assert out["costTotal"] == "$0.0300"
+    assert out["costCoverageHidden"] is True and out["costCoverage"] == ""
+    assert out["traceSummary"] == "4 lượt · ~1,2 giây"
+    assert "3,4 giây" in out["traceTitle"]
 
 
 def test_cost_card_without_any_priced_turn(node: str) -> None:
-    """cost_usd == null on the totals means no turn recorded a price: the
-    card shows the em dash + the explicit hint, never $0."""
-    html = _eval_dash(
+    """cost_usd == null means no turn recorded a price: the Cost tab header
+    shows an em dash + explicit 'Chưa có giá', never $0."""
+    out = _eval_dash(
         node,
         "renderStats({ totals: { requests: 3, cost_usd: null,"
         " latency_ms_p50: null, latency_ms_p90: null } });\n"
-        "console.log(JSON.stringify(document.querySelector('#stat-grid').innerHTML));",
+        "console.log(JSON.stringify({"
+        " total: document.querySelector('#cost-chart-total').textContent,"
+        " coverage: document.querySelector('#cost-coverage').textContent,"
+        " hidden: document.querySelector('#cost-coverage').hidden }));",
     )
-    assert "chưa có giá" in html
-    assert ">—</p>" in html
-    assert "$0" not in html
-    assert "TB " not in html
+    assert out["total"] == "—"
+    assert out["coverage"] == "Chưa có giá" and out["hidden"] is False
+    assert "$0" not in out["total"]
 
 
 def test_multi_model_turn_tokens_split_not_double_counted(node: str) -> None:
-    """A turn whose prompt side is all cache: the hint still shows
-    in/cache/out once each — "in" drops to the uncached remainder (0 here),
-    cache is inside prompt, never stacked on top."""
-    html = _eval_dash(
+    """A turn whose prompt side is all cache: Input drops to uncached
+    remainder (0 here), Cache stays 200, Output 5, total 205."""
+    out = _eval_dash(
         node,
         "renderStats({ totals: { requests: 1, prompt_tokens: 200,"
         " cached_tokens: 200, completion_tokens: 5, total_tokens: 205,"
         " cost_usd: null, latency_ms_p50: null, latency_ms_p90: null } });\n"
-        "console.log(JSON.stringify(document.querySelector('#stat-grid').innerHTML));",
+        "console.log(JSON.stringify({"
+        " total: document.querySelector('#usage-chart-total').textContent,"
+        " legend: document.querySelector('#usage-chart-legend').innerHTML }));",
     )
-    assert "Input 0 · Cache 200 · Output 5" in html
-    assert ">205</p>" in html
+    assert out["total"] == "205"
+    assert 'id="usage-input-total">0</strong>' in out["legend"]
+    assert 'id="usage-cache-total">200</strong>' in out["legend"]
+    assert 'id="usage-output-total">5</strong>' in out["legend"]
 
 
 def test_daily_costs_zero_fill_missing_days(node: str) -> None:
     """dayColumns: the range drives the columns — every day in [from, to]
-    gets a bucket (sparse days fill with 0 requests / null cost), payload
-    days outside the range are dropped, a broken 'day' key never lands."""
+    gets a bucket (inactive missing days fill with 0 requests / $0 cost,
+    keeping active unpriced days as null), payload days outside the range
+    are dropped, and a broken 'day' key never lands."""
     by_day = [
         {"day": "2026-09-20", "requests": 4, "cost_usd": 0.5},
         {"day": "2026-09-22", "requests": 1, "cost_usd": None},
@@ -201,7 +212,7 @@ def test_daily_costs_zero_fill_missing_days(node: str) -> None:
     )
     assert days == [
         {"day": "2026-09-20", "requests": 4, "cost_usd": 0.5},
-        {"day": "2026-09-21", "requests": 0, "prompt_tokens": 0, "cached_tokens": 0, "completion_tokens": 0, "cost_usd": None},
+        {"day": "2026-09-21", "requests": 0, "prompt_tokens": 0, "cached_tokens": 0, "completion_tokens": 0, "cost_usd": 0},
         {"day": "2026-09-22", "requests": 1, "cost_usd": None},
     ]
 
@@ -254,7 +265,31 @@ def test_daily_usage_and_cost_charts_keep_distinct_metrics(node: str) -> None:
     cost_heights = [float(p.split('height:')[1].split('%')[0]) for p in out["cost"].split('dc-bar-cost')[1:]]
     assert cost_heights[:2] == pytest.approx([100, 1 / 9 * 100])
     assert 'dc-bar-cost is-zero' in out['cost'] and 'dc-unavailable' in out['cost']
-    assert 'aria-label="Chi phí đã ghi nhận theo ngày"' in out['cost']
+    assert 'aria-label="Chi phí theo ngày"' in out['cost']
+
+
+def test_cost_chart_distinguishes_inactive_unpriced_and_partial_days(node: str) -> None:
+    """Cost chart separates 3 distinct states cleanly: inactive missing days
+    render a zero baseline ('không có hoạt động', no '—'), active unpriced days
+    render '—' ('chưa có giá'), and partially priced days note X/Y coverage."""
+    stats = {
+        "totals": {"requests": 7, "turns": 5, "priced_turns": 3, "cost_usd": 0.42},
+        "by_day": [
+            {"day": "2026-09-20", "requests": 5, "turns": 4, "priced_turns": 2, "cost_usd": 0.42},
+            {"day": "2026-09-22", "requests": 2, "turns": 1, "priced_turns": 0, "cost_usd": None},
+        ],
+    }
+    html = _eval_dash(
+        node,
+        f"rangeFrom = '2026-09-20'; rangeTo = '2026-09-22'; statsData = {json.dumps(stats)};\n"
+        "renderCostChart();\n"
+        "console.log(JSON.stringify(document.querySelector('#chart-cost').innerHTML))",
+    )
+    assert "(2/4 lượt có giá)" in html
+    assert "không có hoạt động" in html
+    assert "2 lần gọi · chưa có giá" in html
+    assert html.count("dc-unavailable") == 1
+    assert html.count("dc-bar-cost is-zero") == 1
 
 
 def test_paging_multiple_pages_and_midway_failure(node: str) -> None:
@@ -336,9 +371,9 @@ def test_load_more_hidden_at_total_and_rows_render(node: str) -> None:
     assert out["second"]["more"] is True
 
 
-def test_cost_bot_rows_have_avatar_slots(node: str) -> None:
-    """Overview by_bot rows keep an aligned avatar slot: a seal for roster
-    bots, the dashed '?' chip for unattributed ('unknown') rows."""
+def test_cost_bot_legend_scopes_roster_bots_and_labels_unknown(node: str) -> None:
+    """Cost and Usage bot legends paint roster bots as clickable scope buttons
+    with their signature color, while unattributed ('unknown') stays plain text."""
     by_bot = [
         {"bot_id": "coder", "requests": 3, "tool_calls": 1,
          "total_tokens": 30, "cost_usd": 0.01,
@@ -347,16 +382,20 @@ def test_cost_bot_rows_have_avatar_slots(node: str) -> None:
          "total_tokens": 10, "cost_usd": None,
          "last_started_at": "2026-09-18T09:00:00Z"},
     ]
-    html = _eval_dash(
+    out = _eval_dash(
         node,
         "globalThis.__roster = { coder: { id: 'coder', name: 'Coder',"
         " color: '#123', state: 'idle' } };\n"
-        f"statsData = {{ by_bot: {json.dumps(by_bot)}, totals: {{ requests: 4, total_tokens: 40 }} }};\n"
-        "renderBotRows();\n"
-        "console.log(JSON.stringify(document.querySelector('#rows-bot').innerHTML));",
+        f"statsData = {{ by_bot: {json.dumps(by_bot)}, totals: {{ requests: 4, total_tokens: 40, cost_usd: 0.01 }} }};\n"
+        "setUsageGroup('bot'); setCostGroup('bot');\n"
+        "console.log(JSON.stringify({ usage: document.querySelector('#usage-chart-legend').innerHTML,"
+        " cost: document.querySelector('#cost-chart-legend').innerHTML }));",
     )
-    assert html.count('<span class="row-avatar') == 2
-    assert "<ava:coder/>" in html
-    assert '<span class="row-avatar id-chip" title="unknown">?</span>' in html
-    assert ">Coder</span>" in html
-    assert "Chưa gắn bot" in html
+    for html in (out["usage"], out["cost"]):
+        assert 'class="legend-item legend-bot-btn" data-action="select-bot" data-bot-id="coder"' in html
+        assert "background:#123" in html
+        assert ">Coder</span>" in html
+        assert "Chưa gắn bot" in html
+        assert 'data-bot-id="unknown"' not in html
+        assert "background:#a08f68" in html
+    assert "$0.0100" in out["cost"] and "<strong>—</strong>" in out["cost"]
